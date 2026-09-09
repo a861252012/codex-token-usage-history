@@ -20,11 +20,16 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-function sendRequest(port: number, headers: Record<string, string> = {}, method = "GET"): Promise<HttpResult> {
+function sendRequest(port: number, headers: Record<string, string> = {}, method = "GET", path = "/api/history?limit=1"): Promise<HttpResult> {
   return new Promise((resolve, reject) => {
-    const outgoingRequest = request({ hostname: "127.0.0.1", port, path: "/api/history?limit=1", method, headers }, (response) => {
+    const outgoingRequest = request({ hostname: "127.0.0.1", port, path, method, headers }, (response) => {
       let body = "";
       response.setEncoding("utf8");
+      if (path === "/api/stream") {
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, body: "" });
+        response.destroy();
+        return;
+      }
       response.on("data", (chunk) => { body += chunk; });
       response.on("end", () => resolve({
         status: response.statusCode ?? 0,
@@ -88,6 +93,39 @@ describe("dashboard HTTP security", () => {
 
       const crossSiteNavigation = await sendRequest(port, { "Sec-Fetch-Site": "cross-site" });
       expect(crossSiteNavigation.status).toBe(403);
+
+      for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+        const alias = await sendRequest(port, { Host: `${host}:${port}`, Origin: `http://${host}:${port}` });
+        expect(alias.status).toBe(200);
+      }
+      for (const host of [`localhost:${port + 1}`, `127.0.0.1.attacker.example:${port}`, `user@localhost:${port}`]) {
+        expect((await sendRequest(port, { Host: host })).status).toBe(421);
+      }
+      expect((await sendRequest(port, { Host: `localhost:${port}`, Origin: serverUrl })).status).toBe(403);
+      const stream = await sendRequest(port, {}, "GET", "/api/stream");
+      expect(stream.status).toBe(200);
+      expect(stream.headers["cache-control"]).toBe("no-cache, no-store");
+
+      const originalQuery = database.queryRecords.bind(database);
+      let requestedLimit: number | undefined;
+      database.queryRecords = (filters) => {
+        requestedLimit = filters.limit;
+        return originalQuery(filters);
+      };
+      for (const [input, expected] of [["5001", 5000], ["5000", 5000], ["7", 7], ["bad", 50], ["0", 50], ["-1", 50], ["1.5", 50]]) {
+        expect((await sendRequest(port, {}, "GET", `/api/history?limit=${input}`)).status).toBe(200);
+        expect(requestedLimit).toBe(expected);
+      }
+      const originalHourly = database.getHourlyStats.bind(database);
+      let requestedHours: number | undefined;
+      database.getHourlyStats = (hours) => {
+        requestedHours = hours;
+        return originalHourly(hours);
+      };
+      for (const [input, expected] of [["745", 744], ["48", 48], ["bad", 24]]) {
+        expect((await sendRequest(port, {}, "GET", `/api/stats/hourly?hours=${input}`)).status).toBe(200);
+        expect(requestedHours).toBe(expected);
+      }
 
       const post = await sendRequest(port, {}, "POST");
       expect(post.status).toBe(405);

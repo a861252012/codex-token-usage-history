@@ -14,6 +14,45 @@ import type { ModelPricingTier } from "./pricing-calculator.js";
 
 export const UPSTREAM_PRICING_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const MAXIMUM_PRICING_RESPONSE_BYTES = 20 * 1024 * 1024;
+const MAXIMUM_PRICING_MODELS = 20_000;
+
+function isValidTokenPrice(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+async function readBoundedJsonResponse(response: Response): Promise<Record<string, unknown>> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAXIMUM_PRICING_RESPONSE_BYTES) {
+    throw new Error("遠端定價資料超過允許大小");
+  }
+  if (!response.body) throw new Error("遠端定價資料為空");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    receivedBytes += value.byteLength;
+    if (receivedBytes > MAXIMUM_PRICING_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error("遠端定價資料超過允許大小");
+    }
+    chunks.push(value);
+  }
+  const responseBytes = new Uint8Array(receivedBytes);
+  let writeOffset = 0;
+  for (const chunk of chunks) {
+    responseBytes.set(chunk, writeOffset);
+    writeOffset += chunk.byteLength;
+  }
+  const responseText = new TextDecoder().decode(responseBytes);
+  const parsedValue: unknown = JSON.parse(responseText);
+  if (!parsedValue || typeof parsedValue !== "object" || Array.isArray(parsedValue)) {
+    throw new Error("遠端定價資料格式無效");
+  }
+  return parsedValue as Record<string, unknown>;
+}
 
 export interface PricingCacheFile {
   updatedAtMs: number;
@@ -94,13 +133,15 @@ export function parseLiteLlmPricingJson(rawJson: Record<string, any>): ModelPric
   const tiers: ModelPricingTier[] = [];
 
   for (const [modelKey, spec] of Object.entries(rawJson)) {
+    if (tiers.length >= MAXIMUM_PRICING_MODELS) break;
     if (!spec || typeof spec !== "object") continue;
+    if (modelKey.length === 0 || modelKey.length > 256) continue;
 
     // 需包含基本 input / output token cost
     const inputCostPerToken = spec.input_cost_per_token;
     const outputCostPerToken = spec.output_cost_per_token;
 
-    if (typeof inputCostPerToken !== "number" || typeof outputCostPerToken !== "number") {
+    if (!isValidTokenPrice(inputCostPerToken) || !isValidTokenPrice(outputCostPerToken)) {
       continue;
     }
 
@@ -109,12 +150,12 @@ export function parseLiteLlmPricingJson(rawJson: Record<string, any>): ModelPric
     const outputCostPerMillion = outputCostPerToken * 1_000_000;
 
     const cachedInputPerToken = spec.cache_read_input_token_cost;
-    const cachedInputCostPerMillion = typeof cachedInputPerToken === "number"
+    const cachedInputCostPerMillion = isValidTokenPrice(cachedInputPerToken)
       ? cachedInputPerToken * 1_000_000
       : inputCostPerMillion * 0.5; // 若未提供快取價，按常規半價計算
 
     const reasoningPerToken = spec.output_cost_per_reasoning_token;
-    const reasoningOutputCostPerMillion = typeof reasoningPerToken === "number"
+    const reasoningOutputCostPerMillion = isValidTokenPrice(reasoningPerToken)
       ? reasoningPerToken * 1_000_000
       : outputCostPerMillion;
 
@@ -147,9 +188,9 @@ export async function syncPricingFromUpstream(force = false): Promise<SyncPricin
     };
   }
 
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), 6000); // 6 秒逾時保護
   try {
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => controller.abort(), 6000); // 6 秒逾時保護
 
     const response = await fetch(UPSTREAM_PRICING_URL, {
       signal: controller.signal,
@@ -159,13 +200,11 @@ export async function syncPricingFromUpstream(force = false): Promise<SyncPricin
       },
     });
 
-    clearTimeout(timeoutHandle);
-
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
     }
 
-    const payload = (await response.json()) as Record<string, any>;
+    const payload = await readBoundedJsonResponse(response);
     const parsedModels = parseLiteLlmPricingJson(payload);
 
     if (parsedModels.length === 0) {
@@ -215,6 +254,8 @@ export async function syncPricingFromUpstream(force = false): Promise<SyncPricin
       source: "error-fallback",
       message: `遠端同步失敗 (${syncError.message})，維持現有定價`,
     };
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 
