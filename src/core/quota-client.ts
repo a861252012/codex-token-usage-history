@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { QuotaSnapshot, QuotaWindow, AdditionalQuotaLimit } from "./types.js";
@@ -372,7 +372,9 @@ export class QuotaClient {
 
   private persistCache(snapshot: QuotaSnapshot): void {
     try {
-      writeFileSync(this.cachePath, JSON.stringify(snapshot, null, 2), "utf-8");
+      // The snapshot contains account identity and quota details; never create it world-readable.
+      writeFileSync(this.cachePath, JSON.stringify(snapshot, null, 2), { encoding: "utf-8", mode: 0o600 });
+      chmodSync(this.cachePath, 0o600);
     } catch {
       // 寫入失敗不阻擋主流程
     }
@@ -381,6 +383,7 @@ export class QuotaClient {
   private loadPersistedCache(): void {
     try {
       if (existsSync(this.cachePath)) {
+        chmodSync(this.cachePath, 0o600);
         const rawFileContent = readFileSync(this.cachePath, "utf-8");
         const parsedSnapshot = JSON.parse(rawFileContent) as QuotaSnapshot;
         if (parsedSnapshot && typeof parsedSnapshot.updatedAt === "number") {

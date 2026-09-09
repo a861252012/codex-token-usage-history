@@ -7,7 +7,7 @@
  *   3. 本機持久快取: 同步結果儲存至 ~/.codex/pricing_cache.json，具備 24 小時 TTL
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { ModelPricingTier } from "./pricing-calculator.js";
@@ -66,6 +66,7 @@ export function loadCachedUpstreamPricing(): PricingCacheFile | null {
       return null;
     }
 
+    chmodSync(cachePath, 0o600);
     const fileStat = statSync(cachePath);
     if (cachedUpstreamPricingData && fileStat.mtimeMs === cachedUpstreamPricingMtime) {
       return cachedUpstreamPricingData;
@@ -181,7 +182,8 @@ export async function syncPricingFromUpstream(force = false): Promise<SyncPricin
     };
 
     const cachePath = getPricingCacheFilePath();
-    writeFileSync(cachePath, JSON.stringify(cacheData, null, 2), "utf-8");
+    writeFileSync(cachePath, JSON.stringify(cacheData, null, 2), { encoding: "utf-8", mode: 0o600 });
+    chmodSync(cachePath, 0o600);
 
     cachedUpstreamPricingData = cacheData;
     try {
