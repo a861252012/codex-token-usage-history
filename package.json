@@ -10,10 +10,11 @@
   "scripts": {
     "build": "bun build src/cli/index.ts --target node --outdir dist/cli",
     "start": "node --no-warnings dist/cli/index.js",
+    "dashboard": "node --no-warnings dist/cli/index.js dashboard",
     "status": "node --no-warnings dist/cli/index.js status",
     "live": "node --no-warnings dist/cli/index.js live",
     "history": "node --no-warnings dist/cli/index.js history",
-    "serve": "node --no-warnings dist/cli/index.js serve",
+    "serve": "node --no-warnings dist/cli/index.js dashboard",
     "mcp": "node --no-warnings dist/cli/index.js mcp",
     "hud": "node --no-warnings dist/cli/index.js hud",
     "build:menubar": "bash scripts/build-menubar.sh",

@@ -142,18 +142,63 @@ async function main(): Promise<void> {
     return;
   }
 
-  // 6. 啟動 Web 儀表板與 API 伺服器
-  if (commandName === "serve") {
+  // 6. 整合儀表板 (統一匯總命令: 預設啟動 Web 即時儀表板，並支援 --terminal 與 --report 切換)
+  if (
+    commandName === "dashboard" ||
+    commandName === "board" ||
+    commandName === "web" ||
+    commandName === "ui" ||
+    commandName === "serve"
+  ) {
     const { values } = parseArgs({
       args: argumentList.slice(1),
       options: {
         port: { type: "string", short: "p", default: "10200" },
         host: { type: "string", short: "h", default: "127.0.0.1" },
-        open: { type: "boolean", default: false },
+        open: { type: "boolean", default: true },
+        "no-open": { type: "boolean", default: false },
+        terminal: { type: "boolean", short: "t", default: false },
+        tui: { type: "boolean", default: false },
+        report: { type: "boolean", short: "r", default: false },
+        period: { type: "string", default: "daily" },
+        json: { type: "boolean", default: false },
       },
       allowPositionals: true,
     });
 
+    // 模式 A: 終端機 TUI 即時動態儀表板
+    if (values.terminal || values.tui) {
+      await runLiveMonitor();
+      return;
+    }
+
+    // 模式 B: 終端機多週期結算報表儀表板
+    if (values.report) {
+      const periodType = (values.period || "daily") as "daily" | "weekly" | "monthly" | "yearly";
+      const database = new HistoryDatabase();
+      await database.init();
+      const indexer = new SessionIndexer(database);
+      indexer.indexRecent(3);
+
+      const settlementRecords = database.getSettlementRecords(periodType, 14);
+      const planChangeEvents = database.getPlanChangeEvents(10);
+
+      if (values.json) {
+        console.log(JSON.stringify({ settlements: settlementRecords, planChanges: planChangeEvents }, null, 2));
+        database.close();
+        return;
+      }
+
+      console.log(renderSettlementTable(settlementRecords, periodType));
+      if (planChangeEvents.length > 0) {
+        console.log();
+        console.log(renderPlanChangeEventsTable(planChangeEvents));
+      }
+      database.close();
+      return;
+    }
+
+    // 模式 C (預設): 現代化即時 Web 儀表板 (支援 SSE、即時額度、圖表與歷程)
     const port = parseInt(values.port || "10200", 10);
     const host = values.host || "127.0.0.1";
     const database = new HistoryDatabase();
@@ -162,16 +207,18 @@ async function main(): Promise<void> {
     try {
       const serverUrl = await server.start();
       console.log(`==============================================================================`);
-      console.log(`[成功] Codex Token 歷史與配額儀表板已啟動: ${serverUrl}`);
-      console.log(`[說明] 支援 Server-Sent Events 即時推播與多週期結算圖表，請在瀏覽器中檢視`);
+      console.log(`[成功] Codex Token 儀表板已啟動: ${serverUrl}`);
+      console.log(`[說明] 支援即時額度監控、24小時消耗圖表、多週期結算與方案歷程`);
+      console.log(`[提示] 可透過 'codex-usage dashboard --terminal' 切換至終端機動態儀表板`);
       console.log(`[操作] 按 Ctrl+C 停止伺服器`);
       console.log(`==============================================================================`);
 
-      if (values.open) {
+      const shouldOpenBrowser = values.open !== false && values["no-open"] !== true;
+      if (shouldOpenBrowser) {
         exec(`open "${serverUrl}"`);
       }
     } catch (serverError: any) {
-      console.error(`[錯誤] 伺服器啟動失敗: ${serverError.message}`);
+      console.error(`[錯誤] 儀表板啟動失敗: ${serverError.message}`);
       process.exit(1);
     }
     return;
@@ -323,7 +370,7 @@ async function main(): Promise<void> {
     console.log(renderUsageSummary(todaySummary, "本日 Token 消耗統計 (從 00:00 起算)"));
     console.log("");
     console.log(renderRecentRecords(recentRecords, 8));
-    console.log(`\n提示: 執行 'codex-usage hud' 可跳出置頂懸浮列邊用邊看，'codex-usage report' 可查看多週期結算，'codex-usage serve' 可開啟 Web 儀表板。`);
+    console.log(`\n提示: 執行 'codex-usage dashboard' 可開啟完整儀表板，'codex-usage hud' 可跳出置頂懸浮球邊用邊看。`);
     database.close();
   }
 }
