@@ -152,7 +152,8 @@ function setLanguage(targetLanguage) {
 }
 
 function formatNumber(numericValue) {
-  return (numericValue || 0).toLocaleString("en-US");
+  const parsedValue = Number(numericValue || 0);
+  return Number.isFinite(parsedValue) ? parsedValue.toLocaleString("en-US") : "0";
 }
 
 function escapeHtml(rawValue) {

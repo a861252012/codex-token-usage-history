@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { unlinkSync, existsSync } from "node:fs";
+import { unlinkSync, existsSync, chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { HistoryDatabase } from "../src/core/history-db.js";
@@ -20,6 +20,23 @@ describe("HistoryDatabase", () => {
       db.close();
       if (existsSync(dbPath)) unlinkSync(dbPath);
     } catch {}
+  });
+
+  test("restricts new and existing WAL sidecars while another connection stays open", async () => {
+    const paths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
+    for (const path of paths) expect(statSync(path).mode & 0o777).toBe(0o600);
+    db.updateCursor("permission-check", 1, 2, 3);
+    for (const path of paths) chmodSync(path, 0o644);
+    const secondConnection = new HistoryDatabase(dbPath);
+    try {
+      await secondConnection.init();
+      for (const path of paths) expect(statSync(path).mode & 0o777).toBe(0o600);
+      expect(secondConnection.getCursor("permission-check")?.recordsCount).toBe(3);
+      db.updateCursor("permission-check", 4, 5, 6);
+      expect(secondConnection.getCursor("permission-check")?.recordsCount).toBe(6);
+    } finally {
+      secondConnection.close();
+    }
   });
 
   test("正確初始化檔案游標並支援 getCursor 與 updateCursor", () => {

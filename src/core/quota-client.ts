@@ -5,6 +5,7 @@ import type { QuotaSnapshot, QuotaWindow, AdditionalQuotaLimit } from "./types.j
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const CACHE_TTL_MS = 30_000; // 快取 30 秒，避免頻繁請求打滿 API
+const MAXIMUM_QUOTA_RESPONSE_BYTES = 1024 * 1024;
 
 export interface RawWhamResponse {
   user_id?: string;
@@ -38,6 +39,30 @@ export interface RawWhamWindow {
   limit_window_seconds?: number;
   reset_after_seconds?: number;
   reset_at?: number;
+}
+
+async function readBoundedResponseText(response: Response, maximumBytes: number): Promise<string> {
+  if (!response.body) throw new Error("Empty response body");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    receivedBytes += value.byteLength;
+    if (receivedBytes > maximumBytes) {
+      await reader.cancel();
+      throw new Error("Response exceeds size limit");
+    }
+    chunks.push(value);
+  }
+  const responseBytes = new Uint8Array(receivedBytes);
+  let writeOffset = 0;
+  for (const chunk of chunks) {
+    responseBytes.set(chunk, writeOffset);
+    writeOffset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(responseBytes);
 }
 
 export class QuotaClient {
@@ -114,9 +139,9 @@ export class QuotaClient {
       return this.cachedSnapshot || this.getEmptyFallback("無法讀取認證資訊 (未登入 Codex)");
     }
 
+    const abortController = new AbortController();
+    const timeoutIdentifier = setTimeout(() => abortController.abort(), DEFAULT_TIMEOUT_MS);
     try {
-      const abortController = new AbortController();
-      const timeoutIdentifier = setTimeout(() => abortController.abort(), DEFAULT_TIMEOUT_MS);
 
       const httpResponse = await fetch("https://chatgpt.com/backend-api/wham/usage", {
         headers: {
@@ -126,15 +151,18 @@ export class QuotaClient {
         },
         signal: abortController.signal,
       });
-      clearTimeout(timeoutIdentifier);
-
       if (!httpResponse.ok) {
         // 如果遠端端點回傳錯誤，使用快取
         if (this.cachedSnapshot) return this.cachedSnapshot;
         return this.getEmptyFallback(`遠端 API 回應代碼: ${httpResponse.status}`);
       }
 
-      const rawResponsePayload = (await httpResponse.json()) as RawWhamResponse;
+      const declaredLength = Number(httpResponse.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > MAXIMUM_QUOTA_RESPONSE_BYTES) {
+        throw new Error("Quota response exceeds size limit");
+      }
+      const responseText = await readBoundedResponseText(httpResponse, MAXIMUM_QUOTA_RESPONSE_BYTES);
+      const rawResponsePayload = JSON.parse(responseText) as RawWhamResponse;
       const newSnapshot = this.parseWhamResponse(rawResponsePayload);
 
       // 自動比對配額重置或重置券事件
@@ -147,6 +175,8 @@ export class QuotaClient {
       // 網路連線逾時或失敗時，優先回傳已儲存的快取
       if (this.cachedSnapshot) return this.cachedSnapshot;
       return this.getEmptyFallback("無法連線至 OpenAI 配額伺服器");
+    } finally {
+      clearTimeout(timeoutIdentifier);
     }
   }
 
