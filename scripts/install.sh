@@ -43,6 +43,19 @@ PLIST_DIRECTORY="$HOME/Library/LaunchAgents"
 mkdir -p "$PLIST_DIRECTORY"
 PLIST_PATH="$PLIST_DIRECTORY/com.codex.token-usage-monitor.plist"
 
+xml_escape() {
+  local s="$1"
+  s="${s//&/&amp;}"
+  s="${s//</&lt;}"
+  s="${s//>/&gt;}"
+  s="${s//\"/&quot;}"
+  s="${s//\'/&apos;}"
+  printf '%s' "$s"
+}
+
+ESCAPED_BIN="$(xml_escape "$SCRIPT_DIRECTORY/bin/codex-usage")"
+ESCAPED_LOG="$(xml_escape "$HOME/.codex/token-usage-server.log")"
+
 cat << PLIST_EOF > "$PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -52,7 +65,7 @@ cat << PLIST_EOF > "$PLIST_PATH"
   <string>com.codex.token-usage-monitor</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$SCRIPT_DIRECTORY/bin/codex-usage</string>
+    <string>$ESCAPED_BIN</string>
     <string>dashboard</string>
     <string>--port</string>
     <string>10200</string>
@@ -63,9 +76,9 @@ cat << PLIST_EOF > "$PLIST_PATH"
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>$HOME/.codex/token-usage-server.log</string>
+  <string>$ESCAPED_LOG</string>
   <key>StandardErrorPath</key>
-  <string>$HOME/.codex/token-usage-server.log</string>
+  <string>$ESCAPED_LOG</string>
 </dict>
 </plist>
 PLIST_EOF
