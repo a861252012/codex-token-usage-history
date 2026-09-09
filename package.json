@@ -19,7 +19,9 @@
     "hud": "node --no-warnings dist/cli/index.js hud",
     "build:menubar": "bash scripts/build-menubar.sh",
     "build:hud": "bash scripts/build-hud.sh",
-    "install:all": "bash scripts/install.sh"
+    "install:all": "bash scripts/install.sh",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "keywords": [
     "codex",

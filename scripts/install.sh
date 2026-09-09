@@ -20,10 +20,11 @@ else
 fi
 echo "[完成] TypeScript 模組編譯完成。"
 
-# 2. 編譯 MacBook 原生狀態列程式
+# 2. 編譯 MacBook 原生狀態列與置頂懸浮球程式
 echo ""
-echo "[步驟 2/5] 編譯 MacBook 原生狀態列程式 (CodexBar)..."
+echo "[步驟 2/5] 編譯 MacBook 原生狀態列程式 (CodexBar) 與置頂懸浮球 (CodexHud)..."
 bash "$SCRIPT_DIRECTORY/scripts/build-menubar.sh"
+bash "$SCRIPT_DIRECTORY/scripts/build-hud.sh"
 
 # 3. 配置 MCP 伺服器與指令捷徑
 echo ""
@@ -77,7 +78,7 @@ echo ""
 echo "=============================================================================="
 echo " [驗證] 執行狀態檢視："
 echo "=============================================================================="
-"$SCRIPT_DIR/bin/codex-usage" status
+"$SCRIPT_DIRECTORY/bin/codex-usage" status
 
 echo ""
 echo "=============================================================================="
@@ -86,6 +87,6 @@ echo "  1. 終端機狀態查看: codex-usage"
 echo "  2. 啟動全方位儀表板: codex-usage dashboard"
 echo "  3. 啟動置頂懸浮球: codex-usage hud"
 echo "  4. 查詢歷史流水帳: codex-usage history --limit 50"
-echo "  5. 啟動 MacBook 狀態列小圖示: $SCRIPT_DIR/bin/codex-menubar &"
+echo "  5. 啟動 MacBook 狀態列小圖示: $SCRIPT_DIRECTORY/bin/codex-menubar &"
 echo "  6. Codex APP / CLI 原生對話查詢: 詢問「目前剩餘額度」或「今日 Token 消耗」即可"
 echo "=============================================================================="

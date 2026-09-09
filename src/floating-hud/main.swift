@@ -30,30 +30,230 @@ extension NSColor {
     }
 }
 
+// MARK: - Multi-Language Localization System
+
+enum AppLanguage: String, CaseIterable, Codable {
+    case zhHant = "zh-Hant" // 繁體中文
+    case en = "en"         // English
+    case ja = "ja"         // 日本語
+    case zhHans = "zh-Hans" // 简体中文
+
+    var displayName: String {
+        switch self {
+        case .zhHant: return "繁體中文 (Traditional Chinese)"
+        case .en: return "English"
+        case .ja: return "日本語 (Japanese)"
+        case .zhHans: return "简体中文 (Simplified Chinese)"
+        }
+    }
+}
+
+struct HudLocalization {
+    static func string(key: String, language: AppLanguage) -> String {
+        switch language {
+        case .zhHant:
+            switch key {
+            case "header_title": return "Codex 用量懸浮球"
+            case "weekly_quota": return "週配額剩餘"
+            case "five_hour_quota": return "5小時配額剩餘"
+            case "pro_unlimited": return "無限額度 (Pro 方案)"
+            case "reset_credits": return "可用重置券"
+            case "plan_event": return "方案異動"
+            case "today_usage": return "今日累積"
+            case "requests": return "請求次數"
+            case "accent_color": return "色彩主題 (Accent Color)"
+            case "pick_custom_color": return "自訂顏色選擇器..."
+            case "alert_low_quota": return "用量吃緊時亮紅 (<20%)"
+            case "widget_size": return "視窗尺寸 (Widget Size)"
+            case "language": return "介面語言 (Language)"
+            case "open_dashboard": return "開啟 Web 儀表板"
+            case "force_refresh": return "立即強制重新整理"
+            case "switch_to_standard": return "切換至標準雙條視圖 (5小時+週用量)"
+            case "switch_to_pro": return "切換至 Pro 精簡視圖 (僅週用量)"
+            case "quit": return "退出 Codex 懸浮球"
+            case "ready": return "已就緒"
+            case "calls": return "次"
+            default: return key
+            }
+        case .en:
+            switch key {
+            case "header_title": return "Codex Usage Orb"
+            case "weekly_quota": return "Weekly Quota"
+            case "five_hour_quota": return "5-Hour Quota"
+            case "pro_unlimited": return "Unlimited (Pro Tier)"
+            case "reset_credits": return "Reset Credits"
+            case "plan_event": return "Plan Event"
+            case "today_usage": return "Today"
+            case "requests": return "Requests"
+            case "accent_color": return "Accent Color"
+            case "pick_custom_color": return "Pick Custom Color..."
+            case "alert_low_quota": return "Alert Red When Low (<20%)"
+            case "widget_size": return "Widget Size"
+            case "language": return "Language / 語言"
+            case "open_dashboard": return "Open Dashboard (Web)"
+            case "force_refresh": return "Force Refresh"
+            case "switch_to_standard": return "Switch to Standard View (5h + Weekly)"
+            case "switch_to_pro": return "Switch to Pro View (Weekly Only)"
+            case "quit": return "Quit Codex Orb"
+            case "ready": return "Ready"
+            case "calls": return "calls"
+            default: return key
+            }
+        case .ja:
+            switch key {
+            case "header_title": return "Codex 使用量オーブ"
+            case "weekly_quota": return "週間クォータ残り"
+            case "five_hour_quota": return "5時間クォータ残り"
+            case "pro_unlimited": return "無制限 (Pro プラン)"
+            case "reset_credits": return "利用可能なリセットチケット"
+            case "plan_event": return "プラン変更履歴"
+            case "today_usage": return "本日累計"
+            case "requests": return "リクエスト回数"
+            case "accent_color": return "アクセントカラー (Accent Color)"
+            case "pick_custom_color": return "カスタムカラーを選択..."
+            case "alert_low_quota": return "残量低下時に赤色警告 (<20%)"
+            case "widget_size": return "ウィジェットサイズ (Widget Size)"
+            case "language": return "表示言語 (Language)"
+            case "open_dashboard": return "Web ダッシュボードを開く"
+            case "force_refresh": return "今すぐ更新"
+            case "switch_to_standard": return "標準ビューに切替 (5時間+週間)"
+            case "switch_to_pro": return "Pro ビューに切替 (週間のみ)"
+            case "quit": return "Codex オーブを終了"
+            case "ready": return "準備完了"
+            case "calls": return "回"
+            default: return key
+            }
+        case .zhHans:
+            switch key {
+            case "header_title": return "Codex 用量悬浮球"
+            case "weekly_quota": return "周配额剩余"
+            case "five_hour_quota": return "5小时配额剩余"
+            case "pro_unlimited": return "无限额度 (Pro 方案)"
+            case "reset_credits": return "可用重置券"
+            case "plan_event": return "方案变动"
+            case "today_usage": return "今日累计"
+            case "requests": return "请求次数"
+            case "accent_color": return "色彩主题 (Accent Color)"
+            case "pick_custom_color": return "自定义颜色选择器..."
+            case "alert_low_quota": return "用量紧张时亮红 (<20%)"
+            case "widget_size": return "窗口尺寸 (Widget Size)"
+            case "language": return "界面语言 (Language)"
+            case "open_dashboard": return "打开 Web 仪表板"
+            case "force_refresh": return "立即强制刷新"
+            case "switch_to_standard": return "切换至标准双条视图 (5小时+周用量)"
+            case "switch_to_pro": return "切换至 Pro 精简视图 (仅周用量)"
+            case "quit": return "退出 Codex 悬浮球"
+            case "ready": return "就绪"
+            case "calls": return "次"
+            default: return key
+            }
+        }
+    }
+}
+
 // MARK: - Color Preset Configuration
 
 struct ThemeColorPreset {
     let key: String
-    let displayName: String
     let hexCode: String
+    let nameZhHant: String
+    let nameEn: String
+    let nameJa: String
+    let nameZhHans: String
+
+    func getLocalizedName(for language: AppLanguage) -> String {
+        switch language {
+        case .zhHant: return nameZhHant
+        case .en: return nameEn
+        case .ja: return nameJa
+        case .zhHans: return nameZhHans
+        }
+    }
 }
 
 let availableThemePresets: [ThemeColorPreset] = [
-    ThemeColorPreset(key: "lightBlue", displayName: "Light Blue / 淺藍 (Default)", hexCode: "#38B6FF"),
-    ThemeColorPreset(key: "electricBlue", displayName: "Electric Blue (深電光藍)", hexCode: "#0A84FF"),
-    ThemeColorPreset(key: "cyberCyan", displayName: "Cyber Cyan (賽博青藍)", hexCode: "#00F2FE"),
-    ThemeColorPreset(key: "emeraldGreen", displayName: "Emerald Green (翡翠綠)", hexCode: "#30D158"),
-    ThemeColorPreset(key: "neonPurple", displayName: "Neon Purple (賽博紫)", hexCode: "#BF5AF2"),
-    ThemeColorPreset(key: "sunsetAmber", displayName: "Sunset Amber (日落橘)", hexCode: "#FF9F0A"),
-    ThemeColorPreset(key: "radiantPink", displayName: "Radiant Pink (亮粉紅)", hexCode: "#FF375F"),
-    ThemeColorPreset(key: "pureWhite", displayName: "Pure White (極簡白)", hexCode: "#F2F2F7")
+    ThemeColorPreset(
+        key: "dynamicHealth",
+        hexCode: "#30D158",
+        nameZhHant: "動態健康色 (綠滿/紅吃緊) [預設推薦]",
+        nameEn: "Dynamic Health (Green Full / Red Low) [Default]",
+        nameJa: "動的ヘルスカラー (満タン緑/逼迫赤) [推奨]",
+        nameZhHans: "动态健康色 (满绿/红紧张) [默认推荐]"
+    ),
+    ThemeColorPreset(
+        key: "emeraldGreen",
+        hexCode: "#30D158",
+        nameZhHant: "Emerald Green (翡翠綠)",
+        nameEn: "Emerald Green",
+        nameJa: "Emerald Green (エメラルドグリーン)",
+        nameZhHans: "Emerald Green (翡翠绿)"
+    ),
+    ThemeColorPreset(
+        key: "lightBlue",
+        hexCode: "#38B6FF",
+        nameZhHant: "Light Blue (淺天藍)",
+        nameEn: "Light Blue",
+        nameJa: "Light Blue (ライトブルー)",
+        nameZhHans: "Light Blue (浅天蓝)"
+    ),
+    ThemeColorPreset(
+        key: "electricBlue",
+        hexCode: "#0A84FF",
+        nameZhHant: "Electric Blue (深電光藍)",
+        nameEn: "Electric Blue",
+        nameJa: "Electric Blue (エレクトリックブルー)",
+        nameZhHans: "Electric Blue (深电光蓝)"
+    ),
+    ThemeColorPreset(
+        key: "cyberCyan",
+        hexCode: "#00F2FE",
+        nameZhHant: "Cyber Cyan (賽博青)",
+        nameEn: "Cyber Cyan",
+        nameJa: "Cyber Cyan (サイバーシアン)",
+        nameZhHans: "Cyber Cyan (赛博青)"
+    ),
+    ThemeColorPreset(
+        key: "neonPurple",
+        hexCode: "#BF5AF2",
+        nameZhHant: "Neon Purple (賽博紫)",
+        nameEn: "Neon Purple",
+        nameJa: "Neon Purple (ネオンパープル)",
+        nameZhHans: "Neon Purple (霓虹紫)"
+    ),
+    ThemeColorPreset(
+        key: "sunsetAmber",
+        hexCode: "#FF9F0A",
+        nameZhHant: "Sunset Amber (日落橘)",
+        nameEn: "Sunset Amber",
+        nameJa: "Sunset Amber (サンセットアンバー)",
+        nameZhHans: "Sunset Amber (落日橙)"
+    ),
+    ThemeColorPreset(
+        key: "radiantPink",
+        hexCode: "#FF375F",
+        nameZhHant: "Radiant Pink (亮粉紅)",
+        nameEn: "Radiant Pink",
+        nameJa: "Radiant Pink (ラディアントピンク)",
+        nameZhHans: "Radiant Pink (亮粉红)"
+    ),
+    ThemeColorPreset(
+        key: "pureWhite",
+        hexCode: "#F2F2F7",
+        nameZhHant: "Pure White (極簡白)",
+        nameEn: "Pure White",
+        nameJa: "Pure White (ピュアホワイト)",
+        nameZhHans: "Pure White (极简白)"
+    )
 ]
 
 // MARK: - Widget Size Preset Configuration
 
 struct WidgetSizePreset {
     let key: String
-    let displayName: String
+    let nameZhHant: String
+    let nameEn: String
+    let nameJa: String
+    let nameZhHans: String
     let dimension: CGFloat
     let cornerRadius: CGFloat
     let ringRadius: CGFloat
@@ -67,12 +267,24 @@ struct WidgetSizePreset {
     let closeButtonSize: CGFloat
     let closeButtonOffset: CGFloat
     let closeButtonFontSize: CGFloat
+
+    func getLocalizedName(for language: AppLanguage) -> String {
+        switch language {
+        case .zhHant: return nameZhHant
+        case .en: return nameEn
+        case .ja: return nameJa
+        case .zhHans: return nameZhHans
+        }
+    }
 }
 
 let availableSizePresets: [WidgetSizePreset] = [
     WidgetSizePreset(
         key: "small",
-        displayName: "Small (小 - 46px)",
+        nameZhHant: "小尺寸 (Small - 46px)",
+        nameEn: "Small (46px)",
+        nameJa: "スモール (Small - 46px)",
+        nameZhHans: "小尺寸 (Small - 46px)",
         dimension: 46.0,
         cornerRadius: 23.0,
         ringRadius: 18.5,
@@ -89,7 +301,10 @@ let availableSizePresets: [WidgetSizePreset] = [
     ),
     WidgetSizePreset(
         key: "default",
-        displayName: "Default (預設 - 56px)",
+        nameZhHant: "標準 (Default - 56px)",
+        nameEn: "Default (56px)",
+        nameJa: "標準 (Default - 56px)",
+        nameZhHans: "标准 (Default - 56px)",
         dimension: 56.0,
         cornerRadius: 28.0,
         ringRadius: 23.5,
@@ -106,7 +321,10 @@ let availableSizePresets: [WidgetSizePreset] = [
     ),
     WidgetSizePreset(
         key: "large",
-        displayName: "Large (大 - 68px)",
+        nameZhHant: "大尺寸 (Large - 68px)",
+        nameEn: "Large (68px)",
+        nameJa: "ラージ (Large - 68px)",
+        nameZhHans: "大尺寸 (Large - 68px)",
         dimension: 68.0,
         cornerRadius: 34.0,
         ringRadius: 29.0,
@@ -123,7 +341,10 @@ let availableSizePresets: [WidgetSizePreset] = [
     ),
     WidgetSizePreset(
         key: "extraLarge",
-        displayName: "Extra Large (超大 - 84px)",
+        nameZhHant: "特大尺寸 (Extra Large - 84px)",
+        nameEn: "Extra Large (84px)",
+        nameJa: "特大 (Extra Large - 84px)",
+        nameZhHans: "特大尺寸 (Extra Large - 84px)",
         dimension: 84.0,
         cornerRadius: 42.0,
         ringRadius: 36.0,
@@ -145,6 +366,7 @@ struct HudUserConfiguration: Codable {
     var themePresetKey: String
     var enableLowQuotaWarning: Bool
     var widgetSizePresetKey: String?
+    var languageKey: String?
 }
 
 // MARK: - Data Transfer Objects (DTO)
@@ -197,7 +419,7 @@ struct TokenRecordDTO: Codable {
     let weeklyUsedPct: Double?
 }
 
-// MARK: - Close Badge Button Component (Top-Right Quick Dismiss)
+// MARK: - Close Badge Button Component (Bottom-Left Quick Dismiss)
 
 class CloseBadgeButton: NSView {
     var closeActionHandler: (() -> Void)?
@@ -221,24 +443,22 @@ class CloseBadgeButton: NSView {
         layer?.masksToBounds = true
         updateCornerRadius()
 
-        layer?.backgroundColor = NSColor(hex: "#0C2338")?.withAlphaComponent(0.88).cgColor
-            ?? NSColor.black.withAlphaComponent(0.60).cgColor
-        layer?.borderColor = NSColor(hex: "#38B6FF")?.withAlphaComponent(0.75).cgColor
-            ?? NSColor.systemTeal.cgColor
-        layer?.borderWidth = 1.0
+        layer?.backgroundColor = NSColor(hex: "#E5E5EA")?.cgColor ?? NSColor.lightGray.cgColor
+        layer?.borderColor = NSColor(hex: "#8E8E93")?.withAlphaComponent(0.35).cgColor
+        layer?.borderWidth = 0.5
 
         symbolLabel.isEditable = false
         symbolLabel.isSelectable = false
         symbolLabel.isBezeled = false
         symbolLabel.drawsBackground = false
         symbolLabel.alignment = .center
-        symbolLabel.textColor = NSColor(hex: "#38B6FF") ?? NSColor.systemTeal
+        symbolLabel.textColor = NSColor.black
         symbolLabel.font = NSFont.systemFont(ofSize: 8.5, weight: .bold)
-        symbolLabel.stringValue = "✕"
+        symbolLabel.stringValue = "\u{2715}"
         symbolLabel.frame = NSRect(x: 0, y: -0.5, width: bounds.width, height: bounds.height)
 
         addSubview(symbolLabel)
-        self.alphaValue = 0.85
+        self.alphaValue = 0.0
     }
 
     func updateCornerRadius() {
@@ -258,7 +478,7 @@ class CloseBadgeButton: NSView {
             if buttonHoverActive {
                 self.alphaValue = 1.0
             } else {
-                self.alphaValue = hovered ? 1.0 : 0.85
+                self.alphaValue = hovered ? 0.95 : 0.0
             }
         }
     }
@@ -283,8 +503,8 @@ class CloseBadgeButton: NSView {
         self.alphaValue = 1.0
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
-            layer?.backgroundColor = NSColor(hex: "#38B6FF")?.withAlphaComponent(0.95).cgColor
-            layer?.borderColor = NSColor.white.withAlphaComponent(0.85).cgColor
+            layer?.backgroundColor = NSColor(hex: "#FF453A")?.cgColor ?? NSColor.systemRed.cgColor
+            layer?.borderColor = NSColor.systemRed.cgColor
             symbolLabel.textColor = NSColor.white
         }
     }
@@ -293,9 +513,9 @@ class CloseBadgeButton: NSView {
         buttonHoverActive = false
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
-            layer?.backgroundColor = NSColor(hex: "#0C2338")?.withAlphaComponent(0.88).cgColor
-            layer?.borderColor = NSColor(hex: "#38B6FF")?.withAlphaComponent(0.75).cgColor
-            symbolLabel.textColor = NSColor(hex: "#38B6FF") ?? NSColor.systemTeal
+            layer?.backgroundColor = NSColor(hex: "#E5E5EA")?.cgColor ?? NSColor.lightGray.cgColor
+            layer?.borderColor = NSColor(hex: "#8E8E93")?.withAlphaComponent(0.35).cgColor
+            symbolLabel.textColor = NSColor.black
         }
     }
 
@@ -312,7 +532,7 @@ class CloseBadgeButton: NSView {
 
 // MARK: - Circular Ring View Component
 
-class CircularOrbView: NSVisualEffectView {
+class CircularOrbView: NSView {
     var leftClickHandler: (() -> Void)?
     var contextMenuProvider: (() -> NSMenu)?
     var hoverChangeHandler: ((Bool) -> Void)?
@@ -336,9 +556,6 @@ class CircularOrbView: NSVisualEffectView {
     }
 
     private func configureVisualStyling() {
-        self.material = .hudWindow
-        self.blendingMode = .behindWindow
-        self.state = .active
         self.wantsLayer = true
 
         currentDimension = min(frame.width, frame.height)
@@ -346,7 +563,8 @@ class CircularOrbView: NSVisualEffectView {
 
         layer?.cornerRadius = radius
         layer?.masksToBounds = true
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        layer?.backgroundColor = NSColor(hex: "#141518")?.cgColor ?? NSColor.black.cgColor
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
         layer?.borderWidth = 1.0
 
         setupProgressLayers()
@@ -376,7 +594,7 @@ class CircularOrbView: NSVisualEffectView {
 
         // 2. Dynamic Progress Layer
         dynamicProgressLayer.path = ringPath
-        dynamicProgressLayer.strokeColor = NSColor(hex: "#0A84FF")?.cgColor ?? NSColor.systemBlue.cgColor
+        dynamicProgressLayer.strokeColor = NSColor.systemGreen.cgColor
         dynamicProgressLayer.fillColor = NSColor.clear.cgColor
         dynamicProgressLayer.lineWidth = currentRingLineWidth
         dynamicProgressLayer.lineCap = .round
@@ -449,13 +667,13 @@ class CircularOrbView: NSVisualEffectView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.42).cgColor
-        layer?.borderWidth = 1.4
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.35).cgColor
+        layer?.borderWidth = 1.2
         hoverChangeHandler?(true)
     }
 
     override func mouseExited(with event: NSEvent) {
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
         layer?.borderWidth = 1.0
         hoverChangeHandler?(false)
     }
@@ -516,12 +734,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var latestIncrementTokens: Int = 0
 
     // Theme Color State & Preferences
-    private var activeThemeColor: NSColor = NSColor(hex: "#38B6FF") ?? NSColor.systemTeal
-    private var activeThemePresetKey: String = "lightBlue"
+    private var activeThemeColor: NSColor = NSColor(hex: "#30D158") ?? NSColor.systemGreen
+    private var activeThemePresetKey: String = "dynamicHealth"
     private var lowQuotaWarningEnabled: Bool = true
 
     // Size Preset State & Preferences
     private var activeSizePresetKey: String = "default"
+
+    // Language State & Preferences
+    private var currentLanguage: AppLanguage = .zhHant
 
     // Display state
     // 0: Quota view (7d for Pro, 5h+7d for Standard)
@@ -550,21 +771,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        var loadedColorHex = userConfig.themeColorHex
-        if loadedColorHex.uppercased() == "#0A84FF" || userConfig.themePresetKey == "electricBlue" {
-            loadedColorHex = "#38B6FF"
-            activeThemePresetKey = "lightBlue"
-        } else {
+        if !userConfig.themePresetKey.isEmpty {
             activeThemePresetKey = userConfig.themePresetKey
+        } else {
+            activeThemePresetKey = "dynamicHealth"
         }
 
-        if let loadedColor = NSColor(hex: loadedColorHex) {
+        if let loadedColor = NSColor(hex: userConfig.themeColorHex) {
             activeThemeColor = loadedColor
         }
         lowQuotaWarningEnabled = userConfig.enableLowQuotaWarning
         if let savedSize = userConfig.widgetSizePresetKey,
            availableSizePresets.contains(where: { $0.key == savedSize }) {
             activeSizePresetKey = savedSize
+        }
+        if let savedLang = userConfig.languageKey,
+           let lang = AppLanguage(rawValue: savedLang) {
+            currentLanguage = lang
         }
     }
 
@@ -574,7 +797,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             themeColorHex: activeThemeColor.toHex(),
             themePresetKey: activeThemePresetKey,
             enableLowQuotaWarning: lowQuotaWarningEnabled,
-            widgetSizePresetKey: activeSizePresetKey
+            widgetSizePresetKey: activeSizePresetKey,
+            languageKey: currentLanguage.rawValue
         )
 
         guard let encodedData = try? JSONEncoder().encode(configRecord) else {
@@ -604,7 +828,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rootHudCanvasView.wantsLayer = true
         rootHudCanvasView.layer?.backgroundColor = NSColor.clear.cgColor
 
-        orbContainerView = CircularOrbView(frame: NSRect(x: 0, y: 0, width: orbDimension, height: orbDimension))
+        orbContainerView = CircularOrbView(frame: NSRect(x: badgeOverlapMargin, y: badgeOverlapMargin, width: orbDimension, height: orbDimension))
         orbContainerView.applySizePreset(sizePreset)
 
         // Left-click to switch views, Right-click to show contextual menu
@@ -629,10 +853,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupCloseButton(sizePreset: WidgetSizePreset) {
-        let orbDimension = sizePreset.dimension
         let buttonSize = sizePreset.closeButtonSize
-        let buttonX = orbDimension - buttonSize + badgeOverlapMargin
-        let buttonY = orbDimension - buttonSize + badgeOverlapMargin
+        let buttonX: CGFloat = 1.0
+        let buttonY: CGFloat = 1.0
         let closeRect = NSRect(x: buttonX, y: buttonY, width: buttonSize, height: buttonSize)
 
         closeBadgeButton = CloseBadgeButton(frame: closeRect)
@@ -687,15 +910,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         floatingPanel.setFrame(newFrame, display: true, animate: true)
 
         rootHudCanvasView.frame = NSRect(x: 0, y: 0, width: totalWidth, height: totalHeight)
-        orbContainerView.frame = NSRect(x: 0, y: 0, width: preset.dimension, height: preset.dimension)
+        orbContainerView.frame = NSRect(x: badgeOverlapMargin, y: badgeOverlapMargin, width: preset.dimension, height: preset.dimension)
         orbContainerView.applySizePreset(preset)
 
         secondaryTagLabel.frame = NSRect(x: 2, y: preset.tagY, width: preset.dimension - 4, height: preset.tagHeight)
         primaryValueLabel.frame = NSRect(x: 2, y: preset.valueY, width: preset.dimension - 4, height: preset.valueHeight)
 
         let buttonSize = preset.closeButtonSize
-        let buttonX = preset.dimension - buttonSize + badgeOverlapMargin
-        let buttonY = preset.dimension - buttonSize + badgeOverlapMargin
+        let buttonX: CGFloat = 1.0
+        let buttonY: CGFloat = 1.0
         closeBadgeButton.frame = NSRect(x: buttonX, y: buttonY, width: buttonSize, height: buttonSize)
         closeBadgeButton.updateLayoutSize(dimension: buttonSize, fontSize: preset.closeButtonFontSize)
 
@@ -729,7 +952,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu(title: "Codex Orb")
 
         let planName = cachedStatusData?.snapshot.planType ?? "Pro"
-        let headerTitle = "Codex Usage Orb (\(planName))"
+        let headerTitle = "\(HudLocalization.string(key: "header_title", language: currentLanguage)) (\(planName))"
         let headerItem = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
         headerItem.isEnabled = false
         menu.addItem(headerItem)
@@ -738,25 +961,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let snapshot = cachedStatusData?.snapshot {
             let weeklyRem = Int(snapshot.weekly?.remainingPercent ?? 100)
-            let weeklyCountdown = snapshot.weekly?.resetCountdown ?? "Ready"
-            let weeklyItem = NSMenuItem(title: "Weekly Quota: \(weeklyRem)% left (Reset: \(weeklyCountdown))", action: nil, keyEquivalent: "")
+            let readyLabel = HudLocalization.string(key: "ready", language: currentLanguage)
+            let weeklyCountdown = snapshot.weekly?.resetCountdown ?? readyLabel
+            let weeklyTitle = "\(HudLocalization.string(key: "weekly_quota", language: currentLanguage)): \(weeklyRem)% (Reset: \(weeklyCountdown))"
+            let weeklyItem = NSMenuItem(title: weeklyTitle, action: nil, keyEquivalent: "")
             weeklyItem.isEnabled = false
             menu.addItem(weeklyItem)
 
             if let fiveHour = snapshot.fiveHour {
                 let fiveRem = Int(fiveHour.remainingPercent)
                 let fiveCountdown = fiveHour.resetCountdown
-                let fiveItem = NSMenuItem(title: "5-Hour Quota: \(fiveRem)% left (Reset: \(fiveCountdown))", action: nil, keyEquivalent: "")
+                let fiveTitle = "\(HudLocalization.string(key: "five_hour_quota", language: currentLanguage)): \(fiveRem)% (Reset: \(fiveCountdown))"
+                let fiveItem = NSMenuItem(title: fiveTitle, action: nil, keyEquivalent: "")
                 fiveItem.isEnabled = false
                 menu.addItem(fiveItem)
             } else {
-                let unlimItem = NSMenuItem(title: "5-Hour Quota: Unlimited (Pro Tier)", action: nil, keyEquivalent: "")
+                let unlimLabel = HudLocalization.string(key: "pro_unlimited", language: currentLanguage)
+                let fiveTitle = "\(HudLocalization.string(key: "five_hour_quota", language: currentLanguage)): \(unlimLabel)"
+                let unlimItem = NSMenuItem(title: fiveTitle, action: nil, keyEquivalent: "")
                 unlimItem.isEnabled = false
                 menu.addItem(unlimItem)
             }
 
             if let credits = snapshot.resetCredits, credits > 0 {
-                let creditsItem = NSMenuItem(title: "Reset Credits: \(credits) available", action: nil, keyEquivalent: "")
+                let creditsTitle = "\(HudLocalization.string(key: "reset_credits", language: currentLanguage)): \(credits)"
+                let creditsItem = NSMenuItem(title: creditsTitle, action: nil, keyEquivalent: "")
                 creditsItem.isEnabled = false
                 menu.addItem(creditsItem)
             }
@@ -765,7 +994,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Plan Transition History item (if exists)
         if let planChanges = cachedStatusData?.recentPlanChanges, let latestChange = planChanges.first {
             let changeTypeUpper = (latestChange.changeType ?? "change").uppercased()
-            let planHistoryText = "Plan Event: [\(changeTypeUpper)] \(latestChange.description ?? "")"
+            let planHistoryText = "\(HudLocalization.string(key: "plan_event", language: currentLanguage)): [\(changeTypeUpper)] \(latestChange.description ?? "")"
             let planItem = NSMenuItem(title: planHistoryText, action: nil, keyEquivalent: "")
             planItem.isEnabled = false
             menu.addItem(planItem)
@@ -776,11 +1005,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let summary = cachedStatusData?.todaySummary {
             let totalFormatted = formatTokenCount(tokens: summary.totalTokens)
             let costText = summary.formattedCostUsd ?? "$0.00"
-            let summaryItem = NSMenuItem(title: "Today: \(totalFormatted) tokens (\(costText) USD)", action: nil, keyEquivalent: "")
+            let summaryTitle = "\(HudLocalization.string(key: "today_usage", language: currentLanguage)): \(totalFormatted) tokens (\(costText) USD)"
+            let summaryItem = NSMenuItem(title: summaryTitle, action: nil, keyEquivalent: "")
             summaryItem.isEnabled = false
             menu.addItem(summaryItem)
 
-            let requestsItem = NSMenuItem(title: "Requests: \(summary.requests) calls", action: nil, keyEquivalent: "")
+            let callsUnit = HudLocalization.string(key: "calls", language: currentLanguage)
+            let requestsTitle = "\(HudLocalization.string(key: "requests", language: currentLanguage)): \(summary.requests) \(callsUnit)"
+            let requestsItem = NSMenuItem(title: requestsTitle, action: nil, keyEquivalent: "")
             requestsItem.isEnabled = false
             menu.addItem(requestsItem)
         }
@@ -788,10 +1020,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // 1. Accent Color Submenu
-        let colorSubmenu = NSMenu(title: "Accent Color")
+        let colorSubmenuTitle = HudLocalization.string(key: "accent_color", language: currentLanguage)
+        let colorSubmenu = NSMenu(title: colorSubmenuTitle)
         for preset in availableThemePresets {
             let presetItem = NSMenuItem(
-                title: preset.displayName,
+                title: preset.getLocalizedName(for: currentLanguage),
                 action: #selector(handlePresetColorSelected(_:)),
                 keyEquivalent: ""
             )
@@ -804,7 +1037,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         colorSubmenu.addItem(NSMenuItem.separator())
 
         let customPickerItem = NSMenuItem(
-            title: "Pick Custom Color...",
+            title: HudLocalization.string(key: "pick_custom_color", language: currentLanguage),
             action: #selector(openSystemColorPicker),
             keyEquivalent: ""
         )
@@ -815,7 +1048,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         colorSubmenu.addItem(NSMenuItem.separator())
 
         let warningToggleItem = NSMenuItem(
-            title: "Alert Red When Low (<20%)",
+            title: HudLocalization.string(key: "alert_low_quota", language: currentLanguage),
             action: #selector(toggleLowQuotaWarning),
             keyEquivalent: ""
         )
@@ -823,15 +1056,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         warningToggleItem.state = lowQuotaWarningEnabled ? .on : .off
         colorSubmenu.addItem(warningToggleItem)
 
-        let colorMenuItem = NSMenuItem(title: "Accent Color", action: nil, keyEquivalent: "")
+        let colorMenuItem = NSMenuItem(title: colorSubmenuTitle, action: nil, keyEquivalent: "")
         colorMenuItem.submenu = colorSubmenu
         menu.addItem(colorMenuItem)
 
-        // 2. Widget Size Submenu (Small, Default, Large, Extra Large)
-        let sizeSubmenu = NSMenu(title: "Widget Size")
+        // 2. Widget Size Submenu
+        let sizeSubmenuTitle = HudLocalization.string(key: "widget_size", language: currentLanguage)
+        let sizeSubmenu = NSMenu(title: sizeSubmenuTitle)
         for preset in availableSizePresets {
             let sizeItem = NSMenuItem(
-                title: preset.displayName,
+                title: preset.getLocalizedName(for: currentLanguage),
                 action: #selector(handleSizePresetSelected(_:)),
                 keyEquivalent: ""
             )
@@ -841,46 +1075,90 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             sizeSubmenu.addItem(sizeItem)
         }
 
-        let sizeMenuItem = NSMenuItem(title: "Widget Size", action: nil, keyEquivalent: "")
+        let sizeMenuItem = NSMenuItem(title: sizeSubmenuTitle, action: nil, keyEquivalent: "")
         sizeMenuItem.submenu = sizeSubmenu
         menu.addItem(sizeMenuItem)
 
+        // 3. Language Submenu (多語系支援)
+        let langSubmenuTitle = HudLocalization.string(key: "language", language: currentLanguage)
+        let langSubmenu = NSMenu(title: langSubmenuTitle)
+        for lang in AppLanguage.allCases {
+            let langItem = NSMenuItem(
+                title: lang.displayName,
+                action: #selector(handleLanguageSelected(_:)),
+                keyEquivalent: ""
+            )
+            langItem.target = self
+            langItem.representedObject = lang.rawValue
+            langItem.state = (currentLanguage == lang) ? .on : .off
+            langSubmenu.addItem(langItem)
+        }
+
+        let langMenuItem = NSMenuItem(title: langSubmenuTitle, action: nil, keyEquivalent: "")
+        langMenuItem.submenu = langSubmenu
+        menu.addItem(langMenuItem)
+
         menu.addItem(NSMenuItem.separator())
 
-        let webItem = NSMenuItem(title: "Open Dashboard (Web)", action: #selector(openWebDashboard), keyEquivalent: "d")
+        let webItem = NSMenuItem(
+            title: HudLocalization.string(key: "open_dashboard", language: currentLanguage),
+            action: #selector(openWebDashboard),
+            keyEquivalent: "d"
+        )
         webItem.target = self
         menu.addItem(webItem)
 
-        let refreshItem = NSMenuItem(title: "Force Refresh", action: #selector(forceRefreshData), keyEquivalent: "r")
+        let refreshItem = NSMenuItem(
+            title: HudLocalization.string(key: "force_refresh", language: currentLanguage),
+            action: #selector(forceRefreshData),
+            keyEquivalent: "r"
+        )
         refreshItem.target = self
         menu.addItem(refreshItem)
 
         menu.addItem(NSMenuItem.separator())
 
         let proActive = cachedStatusData?.snapshot != nil ? determineProUser(snapshot: cachedStatusData!.snapshot) : true
-        let toggleModeTitle = proActive ? "Switch to Standard View (5h + Weekly)" : "Switch to Pro View (Weekly Only)"
+        let toggleModeTitle = proActive
+            ? HudLocalization.string(key: "switch_to_standard", language: currentLanguage)
+            : HudLocalization.string(key: "switch_to_pro", language: currentLanguage)
         let toggleModeItem = NSMenuItem(title: toggleModeTitle, action: #selector(toggleProModeOverride), keyEquivalent: "")
         toggleModeItem.target = self
         menu.addItem(toggleModeItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "Quit Codex Orb", action: #selector(terminateApplication), keyEquivalent: "q")
+        let quitItem = NSMenuItem(
+            title: HudLocalization.string(key: "quit", language: currentLanguage),
+            action: #selector(terminateApplication),
+            keyEquivalent: "q"
+        )
         quitItem.target = self
         menu.addItem(quitItem)
 
         return menu
     }
 
-    @objc private func handlePresetColorSelected(_ sender: NSMenuItem) {
-        guard let selectedPresetKey = sender.representedObject as? String,
-              let matchedPreset = availableThemePresets.first(where: { $0.key == selectedPresetKey }),
-              let resolvedColor = NSColor(hex: matchedPreset.hexCode) else {
+    @objc private func handleLanguageSelected(_ sender: NSMenuItem) {
+        guard let langRaw = sender.representedObject as? String,
+              let selectedLang = AppLanguage(rawValue: langRaw) else {
             return
         }
 
-        activeThemeColor = resolvedColor
+        currentLanguage = selectedLang
+        saveUserConfiguration()
+    }
+
+    @objc private func handlePresetColorSelected(_ sender: NSMenuItem) {
+        guard let selectedPresetKey = sender.representedObject as? String,
+              let matchedPreset = availableThemePresets.first(where: { $0.key == selectedPresetKey }) else {
+            return
+        }
+
         activeThemePresetKey = matchedPreset.key
+        if let resolvedColor = NSColor(hex: matchedPreset.hexCode) {
+            activeThemeColor = resolvedColor
+        }
         saveUserConfiguration()
 
         if let status = cachedStatusData {
@@ -1106,47 +1384,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let proActive = determineProUser(snapshot: snapshot)
         let sizePreset = getCurrentSizePreset()
 
-        // Token feeding detection
-        if previousTotalTokens > 0 && summary.totalTokens > previousTotalTokens {
-            latestIncrementTokens = summary.totalTokens - previousTotalTokens
-            feedingCountdownRounds = 3
-            orbContainerView.triggerPulseAnimation()
-        } else if feedingCountdownRounds > 0 {
-            feedingCountdownRounds -= 1
-        }
-        previousTotalTokens = summary.totalTokens
-
         let weeklyRemaining = Int(snapshot.weekly?.remainingPercent ?? 100)
         let fiveHourRemaining = Int(snapshot.fiveHour?.remainingPercent ?? 100)
 
         let targetPercentage: Double = proActive ? Double(weeklyRemaining) : Double(min(weeklyRemaining, fiveHourRemaining))
 
-        // Ring Tint Color Calculation based on user-chosen accent color and health rules
-        var ringTint: NSColor = activeThemeColor
+        // Ring Tint Color Calculation
+        var ringTint: NSColor
 
-        if feedingCountdownRounds > 0 {
-            // Bright highlight pulse during feeding
-            ringTint = NSColor(hex: "#00F2FE") ?? NSColor.systemTeal
-        } else if lowQuotaWarningEnabled && targetPercentage < 20.0 {
-            // Alert red when critically low
-            ringTint = NSColor.systemRed
-        } else if lowQuotaWarningEnabled && targetPercentage < 40.0 && activeThemePresetKey == "electricBlue" {
-            // Subtle amber warning if using default blue
-            ringTint = NSColor.systemYellow
+        if activeThemePresetKey == "dynamicHealth" {
+            // 動態健康色階: 滿綠 -> 黃 -> 橘 -> 吃緊紅
+            if targetPercentage >= 60.0 {
+                ringTint = NSColor(hex: "#30D158") ?? NSColor.systemGreen
+            } else if targetPercentage >= 35.0 {
+                ringTint = NSColor(hex: "#FFD60A") ?? NSColor.systemYellow
+            } else if targetPercentage >= 20.0 {
+                ringTint = NSColor(hex: "#FF9F0A") ?? NSColor.systemOrange
+            } else {
+                ringTint = NSColor(hex: "#FF453A") ?? NSColor.systemRed
+            }
+        } else {
+            // 使用者自訂選取 Accent Color (例如 霓虹紫、日落橘、亮粉紅、極簡白、自訂色等)
+            if lowQuotaWarningEnabled && targetPercentage < 20.0 {
+                ringTint = NSColor(hex: "#FF453A") ?? NSColor.systemRed
+            } else {
+                ringTint = activeThemeColor
+            }
         }
 
         orbContainerView.updateRingProgress(percentage: targetPercentage, tintColor: ringTint)
-
-        // Text display according to state
-        if feedingCountdownRounds > 0 {
-            secondaryTagLabel.stringValue = "FEED"
-            secondaryTagLabel.textColor = ringTint
-            secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
-            primaryValueLabel.stringValue = "+\(formatTokenCount(tokens: latestIncrementTokens))"
-            primaryValueLabel.textColor = ringTint
-            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize - 1.5, weight: .bold)
-            return
-        }
 
         primaryValueLabel.textColor = NSColor.white
 
@@ -1167,7 +1433,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             // View 0: Primary quota view
             if proActive {
-                // Pro tier: Focus strictly on 7-day weekly quota (clean, elegant, zero 5h noise)
+                // Pro tier: Focus strictly on 7-day weekly quota
                 secondaryTagLabel.stringValue = "7d"
                 secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
                 secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
@@ -1176,7 +1442,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 // Standard tier: Present both 5-hour and 7-day limits compactly
                 secondaryTagLabel.stringValue = "5h:\(fiveHourRemaining)%"
-                secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.8)
+                secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.75)
                 secondaryTagLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
                 primaryValueLabel.stringValue = "7d:\(weeklyRemaining)%"
                 primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)

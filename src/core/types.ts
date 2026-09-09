@@ -32,6 +32,8 @@ export interface QuotaSnapshot {
   email: string | null;
   /** 方案類型 (例: prolite, plus, pro, team) */
   planType: string | null;
+  /** 是否為 Pro 級方案 (pro / prolite，或 WHAM 僅有週視窗而無五小時視窗) */
+  proTier: boolean;
   /** 五小時限制視窗 (短時間滾動配額) */
   fiveHour: QuotaWindow | null;
   /** 一週限制視窗 (7天滾動配額) */
@@ -42,6 +44,8 @@ export interface QuotaSnapshot {
   resetCredits: number;
   /** 資料來源: "wham" (官方 API), "cache" (本機快取), "fallback" */
   source: "wham" | "cache" | "fallback";
+  /** fallback 失敗原因 (成功快照可省略；舊快取可能沒有此欄) */
+  errorReason?: string | null;
 }
 
 export interface TokenRecord {
@@ -109,6 +113,14 @@ export interface FilterOptions {
   agentRole?: string;
 }
 
+export interface FileScanCursor {
+  filePath: string;
+  mtime: number;
+  size: number;
+  lastScannedAt: number;
+  recordsCount: number;
+}
+
 /**
  * OpenAI 配額重置事件與重置券變動歷史紀錄
  */
@@ -116,7 +128,7 @@ export interface QuotaResetEvent {
   id?: number;
   timestamp: number;
   datetime: string;
-  eventType: "periodic_reset" | "credit_change" | "manual_reset";
+  eventType: "periodic_reset" | "credit_change" | "credit_received" | "credit_consumed" | "manual_reset";
   previousFiveHourUsedPercent: number | null;
   newFiveHourUsedPercent: number | null;
   previousWeeklyUsedPercent: number | null;

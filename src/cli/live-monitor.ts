@@ -17,13 +17,24 @@ export async function runLiveMonitor(): Promise<void> {
   let currentSnapshot: QuotaSnapshot = await quotaClient.getQuotaSnapshot();
   let exitingActive = false;
 
+  let cachedTodaySummary = database.getSummary(new Date().setHours(0, 0, 0, 0));
+  let { records: cachedRecentRecords } = database.queryRecords({ limit: 8 });
+
+  function reloadDatabaseData(): void {
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    cachedTodaySummary = database.getSummary(todayMidnight.getTime());
+    const queryResult = database.queryRecords({ limit: 8 });
+    cachedRecentRecords = queryResult.records;
+  }
+
   sessionWatcher.on("quotaUpdated", (quotaSnapshot: QuotaSnapshot) => {
     currentSnapshot = quotaSnapshot;
-    renderMonitorDashboard();
+    renderMonitorDashboard(true);
   });
 
   sessionWatcher.on("newRecords", () => {
-    renderMonitorDashboard();
+    renderMonitorDashboard(true);
   });
 
   sessionWatcher.start(30_000);
@@ -35,8 +46,12 @@ export async function runLiveMonitor(): Promise<void> {
     process.stdout.write("\x1b[?25h\n");
   }
 
-  function renderMonitorDashboard(): void {
+  function renderMonitorDashboard(shouldRefreshDatabase = false): void {
     if (exitingActive) return;
+
+    if (shouldRefreshDatabase) {
+      reloadDatabaseData();
+    }
 
     // 平滑原地覆寫，消除全螢幕閃爍 (No-Flicker Repositioning)
     process.stdout.write("\x1b[H");
@@ -48,14 +63,8 @@ export async function runLiveMonitor(): Promise<void> {
     ].join("\n");
 
     const quotaSection = renderQuotaStatus(currentSnapshot);
-
-    const todayMidnight = new Date();
-    todayMidnight.setHours(0, 0, 0, 0);
-    const todaySummary = database.getSummary(todayMidnight.getTime());
-    const summarySection = renderUsageSummary(todaySummary, "本日 Token 消耗統計 (從 00:00 起算)");
-
-    const { records: recentRecords } = database.queryRecords({ limit: 8 });
-    const recordsSection = renderRecentRecords(recentRecords, 8);
+    const summarySection = renderUsageSummary(cachedTodaySummary, "本日 Token 消耗統計 (從 00:00 起算)");
+    const recordsSection = renderRecentRecords(cachedRecentRecords, 8);
 
     const fullOutput = [
       header,
@@ -70,11 +79,11 @@ export async function runLiveMonitor(): Promise<void> {
     process.stdout.write(fullOutput);
   }
 
-  renderMonitorDashboard();
+  renderMonitorDashboard(true);
 
-  // 每 1 秒平滑重繪動態倒數秒數
+  // 每 1 秒平滑重繪動態倒數秒數 (僅重算時間差，不重查資料庫)
   const tickInterval = setInterval(() => {
-    renderMonitorDashboard();
+    renderMonitorDashboard(false);
   }, 1000);
 
   if (process.stdin.isTTY) {
@@ -93,7 +102,7 @@ export async function runLiveMonitor(): Promise<void> {
       if (pressedKey.name === "r") {
         currentSnapshot = await quotaClient.getQuotaSnapshot(true);
         sessionIndexer.indexRecent(1);
-        renderMonitorDashboard();
+        renderMonitorDashboard(true);
       }
     });
   }

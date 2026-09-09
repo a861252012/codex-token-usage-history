@@ -5,8 +5,8 @@ import Foundation
 struct QuotaWindowDTO: Codable {
     let usedPercent: Double
     let remainingPercent: Double
-    let limitWindowSeconds: Int
-    let resetAfterSeconds: Int
+    let limitWindowSeconds: Int?
+    let resetAfterSeconds: Int?
     let resetCountdown: String
 }
 
@@ -15,7 +15,7 @@ struct QuotaSnapshotDTO: Codable {
     let planType: String?
     let fiveHour: QuotaWindowDTO?
     let weekly: QuotaWindowDTO?
-    let resetCredits: Int
+    let resetCredits: Int?
 }
 
 struct TodaySummaryDTO: Codable {
@@ -24,6 +24,7 @@ struct TodaySummaryDTO: Codable {
     let inputTokens: Int
     let outputTokens: Int
     let hourlyBurnRate: Int
+    let formattedCostUsd: String?
 }
 
 struct RecentRecordDTO: Codable {
@@ -110,7 +111,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                    let snap = try? JSONDecoder().decode(QuotaSnapshotDTO.self, from: d) {
                     statusData = StatusOutputDTO(
                         snapshot: snap,
-                        todaySummary: TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0),
+                        todaySummary: TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0, formattedCostUsd: nil),
                         recentRecords: []
                     )
                 }
@@ -179,7 +180,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             item.isEnabled = false
             menu.addItem(item)
         } else {
-            let item = NSMenuItem(title: "五小時額度: 未配置短週期視窗限制", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "五小時額度: 無限額度 (Pro 方案)", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         }
@@ -191,8 +192,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(item)
         }
 
-        if quotaSnapshot.resetCredits > 0 {
-            let creditMenuItem = NSMenuItem(title: "重設信用額度: \(quotaSnapshot.resetCredits) 次可用", action: nil, keyEquivalent: "")
+        if let credits = quotaSnapshot.resetCredits, credits > 0 {
+            let creditMenuItem = NSMenuItem(title: "重設信用額度: \(credits) 次可用", action: nil, keyEquivalent: "")
             creditMenuItem.isEnabled = false
             menu.addItem(creditMenuItem)
         }
@@ -202,7 +203,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 本日消耗真實統計 (非假資料)
         let todaySummary = data.todaySummary
         if todaySummary.requests > 0 || todaySummary.totalTokens > 0 {
-            let summaryMenuItem = NSMenuItem(title: "本日消耗總計: \(formatNumber(todaySummary.totalTokens)) tokens (\(formatNumber(todaySummary.requests)) 次請求)", action: nil, keyEquivalent: "")
+            let costText = todaySummary.formattedCostUsd != nil ? " (~$\(todaySummary.formattedCostUsd!) USD)" : ""
+            let summaryMenuItem = NSMenuItem(title: "本日消耗總計: \(formatNumber(todaySummary.totalTokens)) tokens\(costText)", action: nil, keyEquivalent: "")
             summaryMenuItem.isEnabled = false
             menu.addItem(summaryMenuItem)
 

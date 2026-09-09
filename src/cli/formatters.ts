@@ -58,18 +58,26 @@ export function renderQuotaStatus(snapshot: QuotaSnapshot): string {
   const lines: string[] = [];
   const divider = "=".repeat(78);
 
+  const sourceDescription = snapshot.source === "wham"
+    ? "官方 API"
+    : snapshot.source === "cache"
+      ? "本機快取"
+      : "離線備援";
+
   lines.push(`${COLOR_CYAN}${divider}${COLOR_RESET}`);
-  lines.push(`${STYLE_BOLD}Codex 即時配額狀態監控${COLOR_RESET} (來源: ${snapshot.source === "wham" ? "官方 API" : "本機快取"})`);
+  lines.push(`${STYLE_BOLD}Codex 即時配額狀態監控${COLOR_RESET} (來源: ${sourceDescription})`);
   lines.push(`${COLOR_CYAN}${divider}${COLOR_RESET}`);
 
-  if (snapshot.email) {
+  if (snapshot.source === "fallback") {
+    lines.push(`  連線狀態      : ${COLOR_YELLOW}離線或尚未登入，無法取得官方配額${COLOR_RESET}`);
+  } else if (snapshot.email) {
     lines.push(`  帳號身份      : ${STYLE_BOLD}${snapshot.email}${COLOR_RESET} (方案: ${snapshot.planType || "一般"})`);
   } else {
     lines.push(`  方案狀態      : ${snapshot.planType || "已連線"}`);
   }
 
   lines.push("");
-  const isProUser = (snapshot.planType || "").toLowerCase().includes("pro") || snapshot.fiveHour == null;
+  const isProUser = isProPlanSnapshot(snapshot);
 
   if (isProUser) {
     lines.push(`  五小時配額    : ${COLOR_GREEN}[Pro 方案無限額度 - 僅依週用量控管]${COLOR_RESET}`);
@@ -317,7 +325,7 @@ export function renderPlanChangeEventsTable(events: PlanChangeEvent[]): string {
   lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
 
   for (const event of events) {
-    let typeColored = event.changeType;
+    let typeColored: string = event.changeType;
     if (event.changeType === "upgrade") {
       typeColored = `${COLOR_GREEN}升級 (Upgrade)${COLOR_RESET}`;
     } else if (event.changeType === "downgrade") {
@@ -342,8 +350,11 @@ export function renderPlanChangeEventsTable(events: PlanChangeEvent[]): string {
 
 export function renderPromptString(snapshot: QuotaSnapshot): string {
   const parts: string[] = [];
-  const isProUser = (snapshot.planType || "").toLowerCase().includes("pro") || snapshot.fiveHour == null;
+  const isProUser = isProPlanSnapshot(snapshot);
 
+  if (snapshot.source === "fallback") {
+    return "[Codex: 離線]";
+  }
   if (!isProUser && snapshot.fiveHour) {
     const remainingPercent = snapshot.fiveHour.remainingPercent;
     parts.push(`5h: ${remainingPercent}%`);
@@ -354,4 +365,25 @@ export function renderPromptString(snapshot: QuotaSnapshot): string {
   }
   if (parts.length === 0) return "[Codex: 線上]";
   return `[Codex ${parts.join(" | ")}]`;
+}
+
+function isProPlanSnapshot(snapshot: QuotaSnapshot): boolean {
+  if (snapshot.source === "fallback") {
+    return false;
+  }
+
+  const snapshotWithOptionalProTier = snapshot as QuotaSnapshot & { proTier?: boolean };
+  if (typeof snapshotWithOptionalProTier.proTier === "boolean") {
+    return snapshotWithOptionalProTier.proTier;
+  }
+
+  const planTypeNormalized = (snapshot.planType || "").toLowerCase();
+  if (!planTypeNormalized) {
+    return false;
+  }
+
+  return planTypeNormalized === "pro"
+    || planTypeNormalized === "prolite"
+    || planTypeNormalized.startsWith("pro")
+    || planTypeNormalized.startsWith("prolite");
 }

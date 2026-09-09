@@ -255,22 +255,24 @@ export class QuotaClient {
       free: 0,
       standard: 1,
       plus: 2,
-      pro: 3,
-      team: 4,
-      business: 5,
-      enterprise: 6,
+      prolite: 3,
+      pro: 4,
+      team: 5,
+      business: 6,
+      enterprise: 7,
     };
 
-    const previousTier = planTierHierarchy[previousPlan] ?? 1;
-    const newTier = planTierHierarchy[newPlan] ?? 1;
+    const previousTier = planTierHierarchy[previousPlan];
+    const newTier = planTierHierarchy[newPlan];
+    const hasUnknownPlan = previousTier === undefined || newTier === undefined;
 
     let changeType: "upgrade" | "downgrade" | "change" = "change";
     let changeDescription = `方案由 ${previousPlan} 變更為 ${newPlan}`;
 
-    if (newTier > previousTier) {
+    if (!hasUnknownPlan && newTier > previousTier) {
       changeType = "upgrade";
       changeDescription = `[方案升級] 成功由 ${previousPlan.toUpperCase()} 升級至 ${newPlan.toUpperCase()}`;
-    } else if (newTier < previousTier) {
+    } else if (!hasUnknownPlan && newTier < previousTier) {
       changeType = "downgrade";
       changeDescription = `[方案降級] 方案由 ${previousPlan.toUpperCase()} 降級為 ${newPlan.toUpperCase()}`;
     }
@@ -349,20 +351,17 @@ export class QuotaClient {
           primaryWindow: primaryWindowLimit,
           secondaryWindow: secondaryWindowLimit,
         });
-
-        // 若主配額沒有 5 小時時間視窗，但附加配額有
-        if (!fiveHourWindow && primaryWindowLimit && primaryWindowLimit.limitWindowSeconds <= 86400 && primaryWindowLimit.limitWindowSeconds > 0) {
-          fiveHourWindow = primaryWindowLimit;
-        }
       }
     }
 
     const resetCredits = responsePayload.rate_limit_reset_credits?.available_count ?? 0;
+    const planType = responsePayload.plan_type || null;
 
     return {
       updatedAt: currentTimeMs,
       email: responsePayload.email || null,
-      planType: responsePayload.plan_type || null,
+      planType,
+      proTier: computeProTier(planType, fiveHourWindow, weeklyWindow, "wham"),
       fiveHour: fiveHourWindow,
       weekly: weeklyWindow,
       additionalLimits,
@@ -385,6 +384,9 @@ export class QuotaClient {
         const rawFileContent = readFileSync(this.cachePath, "utf-8");
         const parsedSnapshot = JSON.parse(rawFileContent) as QuotaSnapshot;
         if (parsedSnapshot && typeof parsedSnapshot.updatedAt === "number") {
+          if (typeof parsedSnapshot.proTier !== "boolean") {
+            parsedSnapshot.proTier = isProTierSnapshot(parsedSnapshot);
+          }
           parsedSnapshot.source = "cache";
           this.cachedSnapshot = parsedSnapshot;
         }
@@ -398,12 +400,37 @@ export class QuotaClient {
     return {
       updatedAt: Date.now(),
       email: null,
-      planType: reasonDescription,
+      planType: null,
+      proTier: false,
       fiveHour: null,
       weekly: null,
       additionalLimits: [],
       resetCredits: 0,
       source: "fallback",
+      errorReason: reasonDescription,
     };
   }
+}
+
+function computeProTier(
+  planType: string | null,
+  fiveHour: QuotaWindow | null,
+  weekly: QuotaWindow | null,
+  source: QuotaSnapshot["source"]
+): boolean {
+  const normalizedPlanType = (planType || "").trim().toLowerCase();
+  if (normalizedPlanType === "pro" || normalizedPlanType === "prolite") {
+    return true;
+  }
+  return source === "wham" && fiveHour == null && weekly != null;
+}
+
+/**
+ * 判斷快照是否為 Pro 級方案；舊快取若缺少 proTier 則依方案與視窗推斷
+ */
+export function isProTierSnapshot(snapshot: QuotaSnapshot): boolean {
+  if (typeof snapshot.proTier === "boolean") {
+    return snapshot.proTier;
+  }
+  return computeProTier(snapshot.planType, snapshot.fiveHour, snapshot.weekly, snapshot.source);
 }
