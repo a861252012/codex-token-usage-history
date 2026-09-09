@@ -1,7 +1,6 @@
 import readline from "node:readline";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
-import { SessionIndexer } from "../core/session-indexer.js";
 
 /**
  * 輕量級標準 MCP (Model Context Protocol) 伺服器
@@ -10,14 +9,7 @@ import { SessionIndexer } from "../core/session-indexer.js";
 export async function runMcpServer(): Promise<void> {
   const db = new HistoryDatabase();
   await db.init();
-
   const quotaClient = new QuotaClient();
-  const indexer = new SessionIndexer(db);
-
-  // 預先執行一次增量索引
-  try {
-    indexer.indexRecent(1);
-  } catch {}
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -107,7 +99,7 @@ export async function runMcpServer(): Promise<void> {
       return;
     }
 
-    // 3. 執行工具呼叫
+    // 3. 執行工具呼叫 (直接從 SQLite 讀取，零 I/O 阻塞)
     if (method === "tools/call") {
       const toolName = params?.name;
       const args = params?.arguments || {};
@@ -139,7 +131,6 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_usage_history") {
         try {
-          indexer.indexRecent(1);
           const limit = typeof args.limit === "number" ? args.limit : 10;
           const { records, total } = db.queryRecords({ limit, model: args.model });
 
@@ -181,7 +172,6 @@ export async function runMcpServer(): Promise<void> {
       return;
     }
 
-    // 其他未處理方法回傳方法不存在
     if (id !== undefined) {
       sendResponse({
         jsonrpc: "2.0",

@@ -8,7 +8,7 @@
     "codex-usage": "bin/codex-usage"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "bun build src/cli/index.ts --target node --outdir dist/cli",
     "start": "node --no-warnings dist/cli/index.js",
     "status": "node --no-warnings dist/cli/index.js status",
     "live": "node --no-warnings dist/cli/index.js live",

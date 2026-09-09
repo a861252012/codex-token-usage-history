@@ -119,6 +119,22 @@
       <div id="additional-limits-list" class="additional-grid"></div>
     </section>
 
+    <!-- 過去 24 小時 Token 燃燒趨勢圖 -->
+    <section class="chart-section card">
+      <div class="card-header">
+        <div class="header-titles">
+          <h3>過去 24 小時 Token 燃燒趨勢</h3>
+          <span id="chart-total-tokens" class="count-tag">近 24 小時累計: 0 tokens</span>
+        </div>
+        <span class="window-tag">每小時分布</span>
+      </div>
+      <div class="card-body">
+        <div id="hourly-chart-container" class="hourly-chart-container">
+          <div class="text-center" style="color: var(--text-secondary); padding: 48px;">載入圖表資料中...</div>
+        </div>
+      </div>
+    </section>
+
     <!-- 模型消耗分佈區塊 -->
     <section class="models-section card">
       <div class="card-header">
@@ -131,6 +147,10 @@
 
     <!-- 消耗歷史紀錄流水帳表格 -->
     <section class="history-section card">
+      <div id="new-records-notification" class="new-records-banner" style="display: none;">
+        <span>偵測到最新 Token 消耗紀錄入庫</span>
+        <button id="btn-load-new-records" class="btn btn-sm">立即載入第 1 頁</button>
+      </div>
       <div class="card-header history-header">
         <div class="header-titles">
           <h3>Token 消耗歷史紀錄流水帳</h3>

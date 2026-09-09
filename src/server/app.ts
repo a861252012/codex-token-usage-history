@@ -99,7 +99,26 @@ export class DashboardServer {
       return;
     }
 
-    // 2. API: 消耗歷史清單
+    // 2. API: 一站式狀態端點 (包含配額、今日統計與近期紀錄，供 Menu Bar 與快速查詢)
+    if (pathname === "/api/status") {
+      const force = parsedUrl.searchParams.get("force") === "true";
+      const snap = await this.quotaClient.getQuotaSnapshot(force);
+
+      const todayMidnight = new Date();
+      todayMidnight.setHours(0, 0, 0, 0);
+      const summary = this.db.getSummary(todayMidnight.getTime());
+      const { records } = this.db.queryRecords({ limit: 5 });
+
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({
+        snapshot: snap,
+        todaySummary: summary,
+        recentRecords: records,
+      }));
+      return;
+    }
+
+    // 3. API: 消耗歷史清單
     if (pathname === "/api/history") {
       const limit = parseInt(parsedUrl.searchParams.get("limit") || "50", 10);
       const offset = parseInt(parsedUrl.searchParams.get("offset") || "0", 10);
@@ -112,7 +131,7 @@ export class DashboardServer {
       return;
     }
 
-    // 3. API: 彙總統計
+    // 4. API: 彙總統計
     if (pathname === "/api/summary") {
       const sinceMs = parsedUrl.searchParams.get("since") ? parseInt(parsedUrl.searchParams.get("since")!, 10) : undefined;
       const summary = this.db.getSummary(sinceMs);
@@ -121,7 +140,7 @@ export class DashboardServer {
       return;
     }
 
-    // 4. API: 每小時統計
+    // 5. API: 每小時統計 (24小時燃燒趨勢)
     if (pathname === "/api/stats/hourly") {
       const hours = parseInt(parsedUrl.searchParams.get("hours") || "24", 10);
       const stats = this.db.getHourlyStats(hours);
@@ -130,7 +149,7 @@ export class DashboardServer {
       return;
     }
 
-    // 5. API: 每日統計
+    // 6. API: 每日統計 (14天趨勢)
     if (pathname === "/api/stats/daily") {
       const days = parseInt(parsedUrl.searchParams.get("days") || "14", 10);
       const stats = this.db.getDailyStats(days);
@@ -139,7 +158,7 @@ export class DashboardServer {
       return;
     }
 
-    // 6. API: Server-Sent Events 即時串流
+    // 7. API: Server-Sent Events 即時串流
     if (pathname === "/api/stream") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -160,7 +179,7 @@ export class DashboardServer {
       return;
     }
 
-    // 7. 靜態檔案服務 (Web 儀表板)
+    // 8. 靜態檔案服務 (Web 儀表板)
     let filePath = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
     const staticDir = join(__dirname, "../web");
     const absolutePath = join(staticDir, filePath);

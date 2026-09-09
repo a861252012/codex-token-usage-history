@@ -270,6 +270,86 @@ body {
   gap: 16px;
 }
 
+.chart-section {
+  margin-bottom: 24px;
+}
+
+.hourly-chart-container {
+  width: 100%;
+  height: 190px;
+  position: relative;
+}
+
+.hourly-chart-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.chart-bar {
+  fill: var(--color-blue);
+  transition: fill 0.15s ease;
+  cursor: pointer;
+}
+
+.chart-bar:hover {
+  fill: var(--color-cyan);
+}
+
+.chart-bar.current-hour {
+  fill: var(--color-yellow);
+}
+
+.chart-bar.current-hour:hover {
+  fill: #eac54f;
+}
+
+.chart-axis-line {
+  stroke: var(--border-color);
+  stroke-width: 1;
+}
+
+.chart-grid-line {
+  stroke: rgba(46, 52, 70, 0.5);
+  stroke-dasharray: 2 4;
+}
+
+.chart-axis-text {
+  fill: var(--text-secondary);
+  font-size: 11px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-anchor: middle;
+}
+
+.chart-tooltip {
+  position: absolute;
+  background: #1c212c;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -100%);
+  margin-top: -8px;
+  white-space: nowrap;
+}
+
+.new-records-banner {
+  background-color: rgba(88, 166, 255, 0.12);
+  border: 1px solid var(--color-blue);
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
 .model-bars {
   display: flex;
   flex-direction: column;
