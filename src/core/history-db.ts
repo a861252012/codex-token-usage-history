@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { createSqliteDb, type SqliteDb } from "./sqlite-adapter.js";
 import { calculateTokenCost } from "./pricing-calculator.js";
 import type {
@@ -33,6 +33,9 @@ export class HistoryDatabase {
   public async init(): Promise<void> {
     if (this.databaseInstance) return;
     this.databaseInstance = await createSqliteDb(this.databaseFilePath);
+    if (this.databaseFilePath !== ":memory:") {
+      chmodSync(this.databaseFilePath, 0o600);
+    }
 
     // 1. Token 消耗紀錄表
     this.databaseInstance.exec(`
