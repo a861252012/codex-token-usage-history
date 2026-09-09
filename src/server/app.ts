@@ -33,7 +33,7 @@ export class DashboardServer {
     this.indexer = new SessionIndexer(db);
     this.watcher = new SessionWatcher(this.indexer, this.quotaClient);
 
-    // 監聽並廣播至所有 SSE 客戶端
+    // 監聽並廣播至所有 SSE 用戶端
     this.watcher.on("quotaUpdated", (snap: QuotaSnapshot) => {
       this.broadcastSse("quota", snap);
     });

@@ -22,7 +22,7 @@
 ```
 +-----------------------------------------------------------------------------+
 |                               資料核心 (Core)                               |
-|  - QuotaClient: 直連 OpenAI WHAM API，精確解析 5小時/週用量窗口與重設倒數  |
+|  - QuotaClient: 直連 OpenAI WHAM API，精確解析 5小時/週用量視窗與重設倒數  |
 |  - HistoryDatabase: SQLite 儲存每筆請求之輸入/快取/輸出 Token 與配額快照    |
 |  - SessionIndexer: 增量解析 ~/.codex/sessions/**/*.jsonl                     |
 |  - SessionWatcher: 監聽最新對話寫入，Token 產生時發布即時事件               |
@@ -128,7 +128,7 @@ args = ["mcp"]
 enabled = true
 ```
 
-在 Codex APP (ChatGPT 桌面版 Codex 模式) 或 `codex` 指令交談中，直接輸入以下問題，AI 將自動呼叫工具回覆真實權威數據：
+在 Codex APP (ChatGPT 桌面版 Codex 模式) 或 `codex` 指令交談中，直接輸入以下問題，AI 將自動呼叫工具回覆真實權威資料：
 - 「幫我查一下目前五小時額度跟週用量還剩多少？」
 - 「我今天總共消耗了多少 token？」
 - 「幫我列出最近 5 筆 token 消耗流水帳」
@@ -208,7 +208,7 @@ codex-token-usage-history/
 ├── src/
 │   ├── core/
 │   │   ├── types.ts          # 資料型別定義
-│   │   ├── quota-client.ts   # 配額 API 客戶端
+│   │   ├── quota-client.ts   # 配額 API 用戶端
 │   │   ├── sqlite-adapter.ts # 跨 Node / Bun SQLite 配接器
 │   │   ├── history-db.ts     # 消耗紀錄 SQLite 資料庫
 │   │   ├── session-indexer.ts# 增量 Session 掃描器

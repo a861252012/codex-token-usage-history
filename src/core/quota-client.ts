@@ -198,7 +198,7 @@ export class QuotaClient {
           secondaryWindow: sec,
         });
 
-        // 若主配額沒有 5 小時窗口，但附加配額有 (常見於 prolite 方案配屬 5小時 burst 窗口)
+        // 若主配額沒有 5 小時時間視窗，但附加配額有 (常見於 prolite 方案配屬 5小時 burst 視窗)
         if (!fiveHourWindow && prim && prim.limitWindowSeconds <= 86400 && prim.limitWindowSeconds > 0) {
           fiveHourWindow = prim;
         }

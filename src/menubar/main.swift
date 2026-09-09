@@ -173,18 +173,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // 5小時窗口
+        // 5小時時間視窗
         if let p5 = snap.fiveHour {
             let item = NSMenuItem(title: "五小時額度: 剩餘 \(Int(p5.remainingPercent))% (已用 \(Int(p5.usedPercent))% · 重設: \(p5.resetCountdown))", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         } else {
-            let item = NSMenuItem(title: "五小時額度: 未配置短窗口限制", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "五小時額度: 未配置短週期視窗限制", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         }
 
-        // 週用量窗口
+        // 週用量時間視窗
         if let pw = snap.weekly {
             let item = NSMenuItem(title: "週用量額度: 剩餘 \(Int(pw.remainingPercent))% (已用 \(Int(pw.usedPercent))% · 重設: \(pw.resetCountdown))", action: nil, keyEquivalent: "")
             item.isEnabled = false
@@ -233,7 +233,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(NSMenuItem.separator())
         }
 
-        // 動作項目
+        // 操作選項
         let webItem = NSMenuItem(title: "開啟 Web 歷史儀表板", action: #selector(openWebDashboard), keyEquivalent: "o")
         menu.addItem(webItem)
 
