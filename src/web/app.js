@@ -827,7 +827,10 @@ function setupSse() {
 
 function escapeCsvField(fieldValue) {
   if (fieldValue === null || fieldValue === undefined) return "";
-  const stringContent = String(fieldValue);
+  const rawContent = String(fieldValue);
+  const stringContent = typeof fieldValue === "string" && /^[\t\r\n ]*[=+\-@]/.test(rawContent)
+    ? `'${rawContent}`
+    : rawContent;
   if (stringContent.includes(",") || stringContent.includes("\"") || stringContent.includes("\n") || stringContent.includes("\r")) {
     return `"${stringContent.replace(/"/g, "\"\"")}"`;
   }

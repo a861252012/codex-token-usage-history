@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname, resolve, relative, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,8 +40,34 @@ function resolveWebStaticDirectoryPath(): string {
   return cachedWebStaticDirectoryPath;
 }
 
+const MAXIMUM_API_RECORD_LIMIT = 5_000;
+const MAXIMUM_HOURLY_RANGE = 24 * 31;
+
+function normalizeHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "");
+}
+
 function isLoopbackHostAddress(hostAddress: string): boolean {
-  return hostAddress === "127.0.0.1" || hostAddress === "localhost";
+  const normalizedHost = normalizeHostname(hostAddress);
+  return normalizedHost === "127.0.0.1" || normalizedHost === "localhost" || normalizedHost === "::1";
+}
+
+function formatHostForUrl(hostAddress: string): string {
+  return normalizeHostname(hostAddress).includes(":") ? `[${normalizeHostname(hostAddress)}]` : normalizeHostname(hostAddress);
+}
+
+function parseBoundedInteger(rawValue: string | null, defaultValue: number, minimum: number, maximum: number): number {
+  if (rawValue === null || !/^\d+$/.test(rawValue)) return defaultValue;
+  const parsedValue = Number(rawValue);
+  return Number.isSafeInteger(parsedValue) && parsedValue >= minimum && parsedValue <= maximum
+    ? parsedValue
+    : defaultValue;
+}
+
+function parseOptionalTimestamp(rawValue: string | null): number | undefined {
+  if (rawValue === null || !/^\d+$/.test(rawValue)) return undefined;
+  const parsedValue = Number(rawValue);
+  return Number.isSafeInteger(parsedValue) && parsedValue >= 0 ? parsedValue : undefined;
 }
 
 export interface DashboardServerOptions {
@@ -62,6 +89,12 @@ export class DashboardServer {
   constructor(database: HistoryDatabase, options: DashboardServerOptions = {}) {
     this.portNumber = options.port ?? 10200;
     this.hostAddress = options.host ?? "127.0.0.1";
+    if (!Number.isInteger(this.portNumber) || this.portNumber < 0 || this.portNumber > 65_535) {
+      throw new Error("Dashboard port must be an integer between 0 and 65535");
+    }
+    if (!isLoopbackHostAddress(this.hostAddress)) {
+      throw new Error("For security, the dashboard may only listen on a loopback address");
+    }
     this.databaseInstance = database;
     this.quotaClient = new QuotaClient(undefined, this.databaseInstance);
     this.sessionIndexer = new SessionIndexer(database);
@@ -85,17 +118,25 @@ export class DashboardServer {
     return new Promise((resolve, reject) => {
       this.serverInstance = createServer((incomingRequest, serverResponse) => {
         this.handleHttpRequest(incomingRequest, serverResponse).catch((handlingError) => {
+          console.error("[dashboard] Request handling failed:", handlingError);
+          if (serverResponse.headersSent) {
+            serverResponse.end();
+            return;
+          }
           serverResponse.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-          serverResponse.end(JSON.stringify({ error: handlingError.message }));
+          serverResponse.end(JSON.stringify({ error: "Internal server error" }));
         });
       });
 
-      this.serverInstance.on("error", (networkError) => {
+      this.serverInstance.once("error", (networkError) => {
+        this.sessionWatcher.stop();
         reject(networkError);
       });
 
       this.serverInstance.listen(this.portNumber, this.hostAddress, () => {
-        resolve(`http://${this.hostAddress}:${this.portNumber}`);
+        const listeningAddress = this.serverInstance?.address() as AddressInfo | null;
+        if (listeningAddress) this.portNumber = listeningAddress.port;
+        resolve(`http://${formatHostForUrl(this.hostAddress)}:${this.portNumber}`);
       });
     });
   }
@@ -129,19 +170,64 @@ export class DashboardServer {
   }
 
   private async handleHttpRequest(incomingRequest: IncomingMessage, serverResponse: ServerResponse): Promise<void> {
-    const parsedUrl = new URL(incomingRequest.url || "/", `http://${this.hostAddress}:${this.portNumber}`);
+    const serverOrigin = `http://${formatHostForUrl(this.hostAddress)}:${this.portNumber}`;
+    const parsedUrl = new URL(incomingRequest.url || "/", serverOrigin);
     const pathname = parsedUrl.pathname;
 
-    if (isLoopbackHostAddress(this.hostAddress)) {
-      serverResponse.setHeader("Access-Control-Allow-Origin", "*");
+    serverResponse.setHeader("X-Content-Type-Options", "nosniff");
+    serverResponse.setHeader("X-Frame-Options", "DENY");
+    serverResponse.setHeader("Referrer-Policy", "no-referrer");
+    serverResponse.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+
+    // A browser can otherwise use DNS rebinding or permissive CORS to read local
+    // account and usage data. The dashboard is intentionally same-origin only.
+    const requestHost = incomingRequest.headers.host;
+    const expectedHost = new URL(serverOrigin).host.toLowerCase();
+    if (!requestHost || requestHost.toLowerCase() !== expectedHost) {
+      serverResponse.writeHead(421, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify({ error: "Misdirected request" }));
+      return;
     }
-    serverResponse.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    serverResponse.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    const requestOrigin = incomingRequest.headers.origin;
+    if (requestOrigin) {
+      let originHost: string | null = null;
+      try {
+        const originUrl = new URL(requestOrigin);
+        originHost = originUrl.protocol === "http:" ? originUrl.host.toLowerCase() : null;
+      } catch {
+        originHost = null;
+      }
+      if (originHost !== expectedHost) {
+        serverResponse.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
+        serverResponse.end(JSON.stringify({ error: "Cross-origin requests are not allowed" }));
+        return;
+      }
+    }
+
+    const fetchSite = incomingRequest.headers["sec-fetch-site"];
+    if (fetchSite === "cross-site") {
+      serverResponse.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify({ error: "Cross-site requests are not allowed" }));
+      return;
+    }
 
     if (incomingRequest.method === "OPTIONS") {
+      serverResponse.setHeader("Allow", "GET, HEAD, OPTIONS");
       serverResponse.writeHead(204);
       serverResponse.end();
       return;
+    }
+
+    if (incomingRequest.method !== "GET" && incomingRequest.method !== "HEAD") {
+      serverResponse.setHeader("Allow", "GET, HEAD, OPTIONS");
+      serverResponse.writeHead(405, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify({ error: "Method not allowed" }));
+      return;
+    }
+
+    if (pathname.startsWith("/api/")) {
+      serverResponse.setHeader("Cache-Control", "no-store");
     }
 
     // 1. API: 即時配額狀態
@@ -182,13 +268,11 @@ export class DashboardServer {
 
     // 3. API: 消耗歷史清單
     if (pathname === "/api/history") {
-      const limit = parseInt(parsedUrl.searchParams.get("limit") || "50", 10);
-      const offset = parseInt(parsedUrl.searchParams.get("offset") || "0", 10);
+      const limit = parseBoundedInteger(parsedUrl.searchParams.get("limit"), 50, 1, MAXIMUM_API_RECORD_LIMIT);
+      const offset = parseBoundedInteger(parsedUrl.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
       const model = parsedUrl.searchParams.get("model") || undefined;
       const role = parsedUrl.searchParams.get("role") || parsedUrl.searchParams.get("agent_role") || undefined;
-      const sinceTimestampMs = parsedUrl.searchParams.get("since")
-        ? parseInt(parsedUrl.searchParams.get("since")!, 10)
-        : undefined;
+      const sinceTimestampMs = parseOptionalTimestamp(parsedUrl.searchParams.get("since"));
 
       const historyData = this.databaseInstance.queryRecords({
         limit,
@@ -204,9 +288,7 @@ export class DashboardServer {
 
     // 4. API: 彙總統計
     if (pathname === "/api/summary") {
-      const sinceTimestampMs = parsedUrl.searchParams.get("since")
-        ? parseInt(parsedUrl.searchParams.get("since")!, 10)
-        : undefined;
+      const sinceTimestampMs = parseOptionalTimestamp(parsedUrl.searchParams.get("since"));
       const usageSummary = this.databaseInstance.getSummary(sinceTimestampMs);
       const pricingConfig = getActivePricingConfig();
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
@@ -222,7 +304,7 @@ export class DashboardServer {
 
     // 5. API: 每小時燃燒趨勢統計 (24小時)
     if (pathname === "/api/stats/hourly") {
-      const hours = parseInt(parsedUrl.searchParams.get("hours") || "24", 10);
+      const hours = parseBoundedInteger(parsedUrl.searchParams.get("hours"), 24, 1, MAXIMUM_HOURLY_RANGE);
       const hourlyStats = this.databaseInstance.getHourlyStats(hours);
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       serverResponse.end(JSON.stringify(hourlyStats));
@@ -231,8 +313,11 @@ export class DashboardServer {
 
     // 6. API: 多週期結算報表 (每日、每週、每月、每年)
     if (pathname === "/api/settlement") {
-      const periodType = (parsedUrl.searchParams.get("period") || "daily") as "daily" | "weekly" | "monthly" | "yearly";
-      const limitCount = parseInt(parsedUrl.searchParams.get("limit") || "30", 10);
+      const requestedPeriod = parsedUrl.searchParams.get("period");
+      const periodType = requestedPeriod === "weekly" || requestedPeriod === "monthly" || requestedPeriod === "yearly"
+        ? requestedPeriod
+        : "daily";
+      const limitCount = parseBoundedInteger(parsedUrl.searchParams.get("limit"), 30, 1, MAXIMUM_API_RECORD_LIMIT);
       const settlementRecords = this.databaseInstance.getSettlementRecords(periodType, limitCount);
       const planChangeEvents = this.databaseInstance.getPlanChangeEvents(10);
 
@@ -246,7 +331,7 @@ export class DashboardServer {
 
     // 7. API: OpenAI 配額重置歷史與重置券變動
     if (pathname === "/api/resets") {
-      const limitCount = parseInt(parsedUrl.searchParams.get("limit") || "20", 10);
+      const limitCount = parseBoundedInteger(parsedUrl.searchParams.get("limit"), 20, 1, MAXIMUM_API_RECORD_LIMIT);
       const resetEvents = this.databaseInstance.getResetEvents(limitCount);
 
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
@@ -256,7 +341,7 @@ export class DashboardServer {
 
     // 8. API: OpenAI 帳號方案變更歷史 (升級/降級歷程)
     if (pathname === "/api/plan-changes") {
-      const limitCount = parseInt(parsedUrl.searchParams.get("limit") || "20", 10);
+      const limitCount = parseBoundedInteger(parsedUrl.searchParams.get("limit"), 20, 1, MAXIMUM_API_RECORD_LIMIT);
       const planChanges = this.databaseInstance.getPlanChangeEvents(limitCount);
 
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });

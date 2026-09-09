@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { exec } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
 import { SessionIndexer } from "../core/session-indexer.js";
@@ -51,7 +52,11 @@ function parseCappedLimit(rawValue: string | undefined, defaultValue: number): n
 
 function escapeCsvField(fieldValue: string | number | null | undefined): string {
   if (fieldValue === null || fieldValue === undefined) return "";
-  const stringContent = String(fieldValue);
+  // Prevent spreadsheet programs from evaluating session-controlled values as formulas.
+  const rawContent = String(fieldValue);
+  const stringContent = typeof fieldValue === "string" && /^[\t\r\n ]*[=+\-@]/.test(rawContent)
+    ? `'${rawContent}`
+    : rawContent;
   if (stringContent.includes(",") || stringContent.includes("\"") || stringContent.includes("\n") || stringContent.includes("\r")) {
     return `"${stringContent.replace(/"/g, "\"\"")}"`;
   }
@@ -120,17 +125,17 @@ async function main(): Promise<void> {
 
   // 2. 原生置頂懸浮膠囊列 (Always-on-Top Floating HUD)
   if (commandName === "hud" || commandName === "bar" || commandName === "pet") {
-    const hudExecutablePath = new URL("../../bin/codex-hud", import.meta.url).pathname;
+    const hudExecutablePath = fileURLToPath(new URL("../../bin/codex-hud", import.meta.url));
     if (!existsSync(hudExecutablePath)) {
       console.error("[錯誤] 找不到置頂懸浮列執行檔 bin/codex-hud，請先執行 scripts/build-hud.sh 進行編譯。");
       process.exitCode = 1;
       return;
     }
-    exec(`"${hudExecutablePath}" &`, (executionError) => {
-      if (executionError) {
-        console.error(`[錯誤] 無法啟動置頂懸浮列: ${executionError.message}`);
-      }
+    const hudProcess = spawn(hudExecutablePath, [], { detached: true, stdio: "ignore" });
+    hudProcess.once("error", (executionError) => {
+      console.error(`[錯誤] 無法啟動置頂懸浮列: ${executionError.message}`);
     });
+    hudProcess.unref();
     console.log("[成功] 已啟動 MacBook 原生置頂懸浮列 (Always-on-Top Floating HUD)");
     console.log("[說明] 懸浮列已置頂顯示於螢幕上方，滑鼠可直接拖曳移動位置，點擊本體可切換心情面板，按右上角 × 可關閉。");
     return;
@@ -387,7 +392,11 @@ async function main(): Promise<void> {
 
       const shouldOpenBrowser = values.open !== false && values["no-open"] !== true;
       if (shouldOpenBrowser) {
-        exec(`open "${serverUrl}"`);
+        const browserProcess = spawn("open", [serverUrl], { detached: true, stdio: "ignore" });
+        browserProcess.once("error", (executionError) => {
+          console.error(`[警告] 無法自動開啟瀏覽器: ${executionError.message}`);
+        });
+        browserProcess.unref();
       }
     } catch (serverError: any) {
       console.error(`[錯誤] 儀表板啟動失敗: ${serverError.message}`);
