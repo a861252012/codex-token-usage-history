@@ -145,3 +145,16 @@ export interface SettlementRecord {
   formattedCostUsd: string;
   topModel: string;
 }
+
+/**
+ * 方案變更事件 (升級、降級、方案切換紀錄)
+ */
+export interface PlanChangeEvent {
+  id?: number;
+  timestamp: number;
+  datetime: string;
+  previousPlan: string;
+  newPlan: string;
+  changeType: "upgrade" | "downgrade" | "change" | "initial";
+  description: string;
+}

@@ -227,6 +227,65 @@ export class QuotaClient {
         description: `週用量時間視窗滾動重置（使用率自 ${previousWeeklyUsedPercent.toFixed(1)}% 降至 ${newWeeklyUsedPercent.toFixed(1)}%）`,
       });
     }
+
+    // 4. 偵測用戶方案異動 (升級、降級)
+    this.detectAndRecordPlanChanges(newSnapshot);
+  }
+
+  /**
+   * 偵測用戶方案升級或降級調整並記錄歷史
+   */
+  private detectAndRecordPlanChanges(newSnapshot: QuotaSnapshot): void {
+    if (!this.cachedSnapshot || !this.databaseInstance) {
+      return;
+    }
+
+    if (this.cachedSnapshot.source === "fallback" || newSnapshot.source === "fallback") {
+      return;
+    }
+
+    const previousPlan = (this.cachedSnapshot.planType || "").trim().toLowerCase();
+    const newPlan = (newSnapshot.planType || "").trim().toLowerCase();
+
+    if (!previousPlan || !newPlan || previousPlan === newPlan) {
+      return;
+    }
+
+    const planTierHierarchy: Record<string, number> = {
+      free: 0,
+      standard: 1,
+      plus: 2,
+      pro: 3,
+      team: 4,
+      business: 5,
+      enterprise: 6,
+    };
+
+    const previousTier = planTierHierarchy[previousPlan] ?? 1;
+    const newTier = planTierHierarchy[newPlan] ?? 1;
+
+    let changeType: "upgrade" | "downgrade" | "change" = "change";
+    let changeDescription = `方案由 ${previousPlan} 變更為 ${newPlan}`;
+
+    if (newTier > previousTier) {
+      changeType = "upgrade";
+      changeDescription = `[方案升級] 成功由 ${previousPlan.toUpperCase()} 升級至 ${newPlan.toUpperCase()}`;
+    } else if (newTier < previousTier) {
+      changeType = "downgrade";
+      changeDescription = `[方案降級] 方案由 ${previousPlan.toUpperCase()} 降級為 ${newPlan.toUpperCase()}`;
+    }
+
+    const currentTimeMs = Date.now();
+    const currentIsoString = new Date(currentTimeMs).toISOString();
+
+    this.databaseInstance.insertPlanChangeEvent({
+      timestamp: currentTimeMs,
+      datetime: currentIsoString,
+      previousPlan,
+      newPlan,
+      changeType,
+      description: changeDescription,
+    });
   }
 
   /**

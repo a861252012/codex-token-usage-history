@@ -127,12 +127,14 @@ export class DashboardServer {
       todayMidnight.setHours(0, 0, 0, 0);
       const todaySummary = this.databaseInstance.getSummary(todayMidnight.getTime());
       const { records: recentRecords } = this.databaseInstance.queryRecords({ limit: 5 });
+      const recentPlanChanges = this.databaseInstance.getPlanChangeEvents(5);
 
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       serverResponse.end(JSON.stringify({
         snapshot: quotaSnapshot,
         todaySummary,
         recentRecords,
+        recentPlanChanges,
       }));
       return;
     }
@@ -184,9 +186,13 @@ export class DashboardServer {
       const periodType = (parsedUrl.searchParams.get("period") || "daily") as "daily" | "weekly" | "monthly" | "yearly";
       const limitCount = parseInt(parsedUrl.searchParams.get("limit") || "30", 10);
       const settlementRecords = this.databaseInstance.getSettlementRecords(periodType, limitCount);
+      const planChangeEvents = this.databaseInstance.getPlanChangeEvents(10);
 
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      serverResponse.end(JSON.stringify(settlementRecords));
+      serverResponse.end(JSON.stringify({
+        settlements: settlementRecords,
+        planChanges: planChangeEvents,
+      }));
       return;
     }
 
@@ -197,6 +203,16 @@ export class DashboardServer {
 
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       serverResponse.end(JSON.stringify(resetEvents));
+      return;
+    }
+
+    // 8. API: OpenAI 帳號方案變更歷史 (升級/降級歷程)
+    if (pathname === "/api/plan-changes") {
+      const limitCount = parseInt(parsedUrl.searchParams.get("limit") || "20", 10);
+      const planChanges = this.databaseInstance.getPlanChangeEvents(limitCount);
+
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify(planChanges));
       return;
     }
 

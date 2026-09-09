@@ -30,12 +30,15 @@ OpenAI applies different rate limiting tiers: users spending $100+/mo or subscri
 A sleek, unobtrusive macOS circular glassmorphism widget (`bin/codex-hud`):
 - **Circular Progress Ring**: 56px precision circular orb with smooth `CAShapeLayer` arc progress indicating remaining allowance.
 - **Electric Blue Default & Full Custom Palette**: Shipped out of the box in iconic **Electric Blue** (`#0A84FF`), with 7 built-in presets (Cyber Cyan, Emerald Green, Neon Purple, Sunset Amber, Radiant Pink, Pure White) and a native macOS system **Color Picker** for choosing any bespoke hue. Preference is automatically persisted to `~/.codex/hud_config.json`.
+- **4-Tier Widget & Font Scaling**: Freely toggle between **Small** (46px), **Default** (56px), **Large** (68px), and **Extra Large** (84px). The orb geometry, stroke line-width, and typography scale synchronously.
+- **Account Plan Transition Tracking**: Automatically captures subscription changes (e.g. upgrades/downgrades between Free, Plus, Pro, Team), displaying event history directly in the detailed report, Web dashboard, and context menu.
 - **Pro Tier Perfection**: Clean, distraction-free display focusing purely on the **7-day weekly quota** (e.g. `7d` / `37%`), completely eliminating redundant "5h: 100%" noise. Non-Pro mode displays both 5-hour and 7-day limits compactly.
 - **Desktop Pet Feeding Animation**: Spring scale bounce and teal pulse animation displaying `+XXk` tokens fed in real time.
 - **Rich Context Menu (Right-Click)**:
-  - Detailed quota breakdowns and countdowns.
+  - Detailed quota breakdowns, countdowns, and plan change history.
   - Today's cumulative token usage and estimated USD cost.
   - **Accent Color Selection**: Switch presets, launch the system color picker, or toggle smart red alerts when quota drops below 20%.
+  - **Widget Size Selection**: Small (46px), Default (56px), Large (68px), Extra Large (84px).
   - Instant toggle between Pro Mode (Weekly Only) and Standard Mode (5h + Weekly).
   - One-click launcher for the Web Dashboard.
 - **Left-Click Quick View Cycle**: Cycle between Quota %, Today's Tokens, and Today's USD Cost.
@@ -297,18 +300,20 @@ codex-token-usage-history/
 1. **極簡圓形環狀進度靈動球 (Always-on-Top Circular Ring Orb HUD)**：
    - 56px × 56px 精緻正圓形毛玻璃 Widget，置頂懸浮於所有視窗之上，擺脫長條扁平外觀。
    - **預設科技藍與自訂色彩**：出廠預設為質感**科技電光藍**（Electric Blue `#0A84FF`），並內建 7 款預設主題色（賽博青藍、翡翠綠、賽博紫、日落橘、亮粉紅、極簡白），更可直接喚起 macOS 原生系統調色盤（Color Picker）自訂任意色彩，偏好設定自動持久化於 `~/.codex/hud_config.json`。
+   - **4 檔尺寸與字體自由切換**：支援**小 (46px)**、**預設 (56px)**、**大 (68px)**、**超大 (84px)** 四種檔位，圓形幾何、進度線寬與字體大小等比例同步縮放。
    - **環狀進度條**：以 QuartzCore 繪製順時針動態進度弧線，支援智慧低電量（<20%）轉紅警示切換。
    - **Pro 用戶極致精簡**：自動識別 Pro / 100$+ 方案，僅顯示週用量（例如上方標籤 `7d`，中心數字 `37%`），消除無意義的「5h: 100%」與贅述文字。非 Pro 模式則精巧並列 5h 與 7d。
    - **桌面寵物級進食反饋**：Codex 消耗 Token 時觸發彈性縮放跳動並微光顯示 `+XXk`。
-   - **多模式切換與右鍵選單**：左鍵點擊在週配額、今日總 Token、今日美金金額循環切換；右鍵彈出完整配額數據與控制選單。
-2. **多週期結算體系 (日/週/月/年)**：
-   - 執行 `codex-usage report --period daily|weekly|monthly|yearly` 隨時產生完整的 Token 與官方美金結算報表。
+   - **多模式切換與右鍵選單**：左鍵點擊在週配額、今日總 Token、今日美金金額循環切換；右鍵彈出完整配額數據、方案異動紀錄與尺寸/配色控制選單。
+2. **多週期結算體系 (日/週/月/年) 與方案升降級紀錄**：
+   - 執行 `codex-usage report --period daily|weekly|monthly|yearly` 隨時產生完整的 Token 與官方美金結算報表，並同步呈現帳號方案升級/降級歷程。
+   - 執行 `codex-usage plans` 可單獨檢視方案歷程紀錄。
 3. **OpenAI 配額重置事件與重置券紀錄**：
    - 自動捕捉週期性重置與重置券（Reset Credits）發送/消耗紀錄，支援 `codex-usage resets` 隨時回溯。
 4. **subAgent 消耗分離標記**：
    - 區分主程式與背景 subAgent 的 Token 佔比與花費。
 5. **Codex APP 直接對話支援 (MCP)**：
-   - 於對話中直接詢問「目前剩餘額度」、「本週消耗結算」等。
+   - 於對話中直接詢問「目前剩餘額度」、「本週消耗結算」、「帳號方案歷程」等。
 
 ---
 

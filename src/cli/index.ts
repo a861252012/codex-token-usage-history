@@ -13,6 +13,7 @@ import {
   renderRecentRecords,
   renderSettlementTable,
   renderResetEventsTable,
+  renderPlanChangeEventsTable,
   renderPromptString,
 } from "./formatters.js";
 
@@ -68,14 +69,19 @@ async function main(): Promise<void> {
     indexer.indexRecent(3);
 
     const settlementRecords = database.getSettlementRecords(periodType, limitCount);
+    const planChangeEvents = database.getPlanChangeEvents(10);
 
     if (values.json) {
-      console.log(JSON.stringify(settlementRecords, null, 2));
+      console.log(JSON.stringify({ settlements: settlementRecords, planChanges: planChangeEvents }, null, 2));
       database.close();
       return;
     }
 
     console.log(renderSettlementTable(settlementRecords, periodType));
+    if (planChangeEvents.length > 0) {
+      console.log();
+      console.log(renderPlanChangeEventsTable(planChangeEvents));
+    }
     database.close();
     return;
   }
@@ -104,6 +110,34 @@ async function main(): Promise<void> {
     }
 
     console.log(renderResetEventsTable(resetEvents));
+    database.close();
+    return;
+  }
+
+  // 6. 查詢 OpenAI 帳號方案變更歷程 (升級/降級)
+  if (commandName === "plans" || commandName === "tiers") {
+    const { values } = parseArgs({
+      args: argumentList.slice(1),
+      options: {
+        limit: { type: "string", short: "l", default: "20" },
+        json: { type: "boolean", default: false },
+      },
+      allowPositionals: true,
+    });
+
+    const limitCount = parseInt(values.limit || "20", 10);
+    const database = new HistoryDatabase();
+    await database.init();
+
+    const planChanges = database.getPlanChangeEvents(limitCount);
+
+    if (values.json) {
+      console.log(JSON.stringify(planChanges, null, 2));
+      database.close();
+      return;
+    }
+
+    console.log(renderPlanChangeEventsTable(planChanges));
     database.close();
     return;
   }

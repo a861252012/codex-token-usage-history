@@ -37,6 +37,7 @@ const i18nDictionary = {
     chartTag: "Hourly Breakdown",
     modelsTitle: "Token Distribution by Model",
     resetsTitle: "OpenAI Quota Resets & Voucher History",
+    plansTitle: "Account Plan Transitions",
     historyTitle: "Token Usage Transaction Log",
     btnDaily: "Daily",
     btnWeekly: "Weekly",
@@ -75,6 +76,7 @@ const i18nDictionary = {
     chartTag: "每小時分布",
     modelsTitle: "各模型 Token 消耗比例",
     resetsTitle: "OpenAI 配額重置與重置券變動歷史",
+    plansTitle: "帳號方案調整歷程 (升級/降級紀錄)",
     historyTitle: "Token 消耗歷史紀錄流水帳",
     btnDaily: "每日結算",
     btnWeekly: "每週結算",
@@ -129,6 +131,7 @@ function setLanguage(targetLanguage) {
   updateText("tag-chart", texts.chartTag);
   updateText("label-models-title", texts.modelsTitle);
   updateText("label-resets-title", texts.resetsTitle);
+  updateText("label-plans-title", texts.plansTitle);
   updateText("label-history-title", texts.historyTitle);
   updateText("btn-export-csv", texts.exportCsv);
   updateText("btn-prev-page", texts.prevPage);
@@ -578,6 +581,55 @@ async function fetchResetEvents() {
   }
 }
 
+async function fetchPlanChangeEvents() {
+  try {
+    const response = await fetch("/api/plan-changes?limit=20");
+    if (!response.ok) return;
+    const planChanges = await response.json();
+
+    const countTag = document.getElementById("plans-count-tag");
+    if (countTag) {
+      countTag.textContent = `${planChanges.length} events`;
+    }
+
+    const tbody = document.getElementById("plans-table-body");
+    if (!tbody) return;
+
+    if (!planChanges || planChanges.length === 0) {
+      const emptyMsg = currentLanguage === "zh-TW"
+        ? "目前尚無方案調整紀錄（帳號維持現有方案）"
+        : "No plan transitions recorded yet (maintaining current plan)";
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center">${emptyMsg}</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = planChanges.map((event) => {
+      const timeString = event.datetime ? event.datetime.replace("T", " ").slice(0, 19) : "—";
+      let badgeStyle = "background: rgba(59, 130, 246, 0.15); color: #60a5fa;";
+      let typeLabel = "Change";
+      if (event.changeType === "upgrade") {
+        badgeStyle = "background: rgba(34, 197, 94, 0.15); color: #4ade80;";
+        typeLabel = currentLanguage === "zh-TW" ? "方案升級" : "Upgrade";
+      } else if (event.changeType === "downgrade") {
+        badgeStyle = "background: rgba(239, 68, 68, 0.15); color: #f87171;";
+        typeLabel = currentLanguage === "zh-TW" ? "方案降級" : "Downgrade";
+      }
+
+      return `
+        <tr>
+          <td>${timeString}</td>
+          <td><span class="badge" style="${badgeStyle}">${typeLabel}</span></td>
+          <td><strong>${(event.previousPlan || "—").toUpperCase()}</strong></td>
+          <td><strong>${(event.newPlan || "—").toUpperCase()}</strong></td>
+          <td>${event.description || "—"}</td>
+        </tr>
+      `;
+    }).join("");
+  } catch (caughtError) {
+    console.error("Failed to fetch plan change events:", caughtError);
+  }
+}
+
 async function fetchHistory() {
   try {
     const offset = (currentPage - 1) * pageSize;
@@ -767,6 +819,7 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchHourlyStats();
   fetchSettlementReport("daily");
   fetchResetEvents();
+  fetchPlanChangeEvents();
   fetchHistory();
   setupSse();
 
@@ -778,6 +831,7 @@ document.addEventListener("DOMContentLoaded", () => {
     fetchHourlyStats();
     fetchSettlementReport(currentSettlementPeriod);
     fetchResetEvents();
+    fetchPlanChangeEvents();
     fetchHistory();
   });
 
