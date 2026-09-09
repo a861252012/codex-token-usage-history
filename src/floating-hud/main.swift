@@ -2,6 +2,58 @@ import Cocoa
 import Foundation
 import QuartzCore
 
+// MARK: - Color Hex Conversion Extension
+
+extension NSColor {
+    convenience init?(hex: String) {
+        var cleanHex = hex.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if cleanHex.hasPrefix("#") {
+            cleanHex.remove(at: cleanHex.startIndex)
+        }
+        guard cleanHex.count == 6, let rgbValue = UInt32(cleanHex, radix: 16) else {
+            return nil
+        }
+        let redComponent = CGFloat((rgbValue & 0xFF0000) >> 16) / 255.0
+        let greenComponent = CGFloat((rgbValue & 0x00FF00) >> 8) / 255.0
+        let blueComponent = CGFloat(rgbValue & 0x0000FF) / 255.0
+        self.init(red: redComponent, green: greenComponent, blue: blueComponent, alpha: 1.0)
+    }
+
+    func toHex() -> String {
+        guard let rgbColor = self.usingColorSpace(.sRGB) else {
+            return "#0A84FF"
+        }
+        let redInt = Int(round(rgbColor.redComponent * 255.0))
+        let greenInt = Int(round(rgbColor.greenComponent * 255.0))
+        let blueInt = Int(round(rgbColor.blueComponent * 255.0))
+        return String(format: "#%02X%02X%02X", redInt, greenInt, blueInt)
+    }
+}
+
+// MARK: - Color Preset Configuration
+
+struct ThemeColorPreset {
+    let key: String
+    let displayName: String
+    let hexCode: String
+}
+
+let availableThemePresets: [ThemeColorPreset] = [
+    ThemeColorPreset(key: "electricBlue", displayName: "Electric Blue (Default)", hexCode: "#0A84FF"),
+    ThemeColorPreset(key: "cyberCyan", displayName: "Cyber Cyan", hexCode: "#00F2FE"),
+    ThemeColorPreset(key: "emeraldGreen", displayName: "Emerald Green", hexCode: "#30D158"),
+    ThemeColorPreset(key: "neonPurple", displayName: "Neon Purple", hexCode: "#BF5AF2"),
+    ThemeColorPreset(key: "sunsetAmber", displayName: "Sunset Amber", hexCode: "#FF9F0A"),
+    ThemeColorPreset(key: "radiantPink", displayName: "Radiant Pink", hexCode: "#FF375F"),
+    ThemeColorPreset(key: "pureWhite", displayName: "Pure White", hexCode: "#F2F2F7")
+]
+
+struct HudUserConfiguration: Codable {
+    var themeColorHex: String
+    var themePresetKey: String
+    var enableLowQuotaWarning: Bool
+}
+
 // MARK: - Data Transfer Objects (DTO)
 
 struct WindowQuotaDTO: Codable {
@@ -104,7 +156,7 @@ class CircularOrbView: NSVisualEffectView {
 
         // 2. Dynamic Progress Layer
         dynamicProgressLayer.path = ringPath
-        dynamicProgressLayer.strokeColor = NSColor.systemGreen.cgColor
+        dynamicProgressLayer.strokeColor = NSColor(hex: "#0A84FF")?.cgColor ?? NSColor.systemBlue.cgColor
         dynamicProgressLayer.fillColor = NSColor.clear.cgColor
         dynamicProgressLayer.lineWidth = 3.2
         dynamicProgressLayer.lineCap = .round
@@ -211,6 +263,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var feedingCountdownRounds: Int = 0
     private var latestIncrementTokens: Int = 0
 
+    // Theme Color State & Preferences
+    private var activeThemeColor: NSColor = NSColor(hex: "#0A84FF") ?? NSColor.systemBlue
+    private var activeThemePresetKey: String = "electricBlue"
+    private var lowQuotaWarningEnabled: Bool = true
+
     // Display state
     // 0: Quota view (7d for Pro, 5h+7d for Standard)
     // 1: Today tokens view
@@ -221,9 +278,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cachedStatusData: FullStatusDTO?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        loadUserConfiguration()
         setupFloatingWindow()
         loadLatestData()
         startPeriodicTimer()
+    }
+
+    private func getConfigurationFilePath() -> String {
+        return "\(homeDirectoryPath)/.codex/hud_config.json"
+    }
+
+    private func loadUserConfiguration() {
+        let configurationFilePath = getConfigurationFilePath()
+        guard let configurationData = try? Data(contentsOf: URL(fileURLWithPath: configurationFilePath)),
+              let userConfig = try? JSONDecoder().decode(HudUserConfiguration.self, from: configurationData) else {
+            return
+        }
+
+        if let loadedColor = NSColor(hex: userConfig.themeColorHex) {
+            activeThemeColor = loadedColor
+        }
+        activeThemePresetKey = userConfig.themePresetKey
+        lowQuotaWarningEnabled = userConfig.enableLowQuotaWarning
+    }
+
+    private func saveUserConfiguration() {
+        let configurationFilePath = getConfigurationFilePath()
+        let configRecord = HudUserConfiguration(
+            themeColorHex: activeThemeColor.toHex(),
+            themePresetKey: activeThemePresetKey,
+            enableLowQuotaWarning: lowQuotaWarningEnabled
+        )
+
+        guard let encodedData = try? JSONEncoder().encode(configRecord) else {
+            return
+        }
+        try? encodedData.write(to: URL(fileURLWithPath: configurationFilePath))
     }
 
     private func setupFloatingWindow() {
@@ -351,6 +441,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // Accent Color Submenu
+        let colorSubmenu = NSMenu(title: "Accent Color")
+        for preset in availableThemePresets {
+            let presetItem = NSMenuItem(
+                title: preset.displayName,
+                action: #selector(handlePresetColorSelected(_:)),
+                keyEquivalent: ""
+            )
+            presetItem.target = self
+            presetItem.representedObject = preset.key
+            presetItem.state = (activeThemePresetKey == preset.key) ? .on : .off
+            colorSubmenu.addItem(presetItem)
+        }
+
+        colorSubmenu.addItem(NSMenuItem.separator())
+
+        let customPickerItem = NSMenuItem(
+            title: "Pick Custom Color...",
+            action: #selector(openSystemColorPicker),
+            keyEquivalent: ""
+        )
+        customPickerItem.target = self
+        customPickerItem.state = (activeThemePresetKey == "custom") ? .on : .off
+        colorSubmenu.addItem(customPickerItem)
+
+        colorSubmenu.addItem(NSMenuItem.separator())
+
+        let warningToggleItem = NSMenuItem(
+            title: "Alert Red When Low (<20%)",
+            action: #selector(toggleLowQuotaWarning),
+            keyEquivalent: ""
+        )
+        warningToggleItem.target = self
+        warningToggleItem.state = lowQuotaWarningEnabled ? .on : .off
+        colorSubmenu.addItem(warningToggleItem)
+
+        let colorMenuItem = NSMenuItem(title: "Accent Color", action: nil, keyEquivalent: "")
+        colorMenuItem.submenu = colorSubmenu
+        menu.addItem(colorMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let webItem = NSMenuItem(title: "Open Web Dashboard", action: #selector(openWebDashboard), keyEquivalent: "d")
         webItem.target = self
         menu.addItem(webItem)
@@ -374,6 +506,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
 
         return menu
+    }
+
+    @objc private func handlePresetColorSelected(_ sender: NSMenuItem) {
+        guard let selectedPresetKey = sender.representedObject as? String,
+              let matchedPreset = availableThemePresets.first(where: { $0.key == selectedPresetKey }),
+              let resolvedColor = NSColor(hex: matchedPreset.hexCode) else {
+            return
+        }
+
+        activeThemeColor = resolvedColor
+        activeThemePresetKey = matchedPreset.key
+        saveUserConfiguration()
+
+        if let status = cachedStatusData {
+            updateUserInterface(with: status)
+        }
+    }
+
+    @objc private func openSystemColorPicker() {
+        let colorPanel = NSColorPanel.shared
+        colorPanel.color = activeThemeColor
+        colorPanel.setTarget(self)
+        colorPanel.setAction(#selector(handleCustomColorFromPanel(_:)))
+        colorPanel.orderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func handleCustomColorFromPanel(_ sender: NSColorPanel) {
+        activeThemeColor = sender.color
+        activeThemePresetKey = "custom"
+        saveUserConfiguration()
+
+        if let status = cachedStatusData {
+            updateUserInterface(with: status)
+        }
+    }
+
+    @objc private func toggleLowQuotaWarning() {
+        lowQuotaWarningEnabled = !lowQuotaWarningEnabled
+        saveUserConfiguration()
+
+        if let status = cachedStatusData {
+            updateUserInterface(with: status)
+        }
     }
 
     @objc private func openWebDashboard() {
@@ -510,16 +686,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let targetPercentage: Double = proActive ? Double(weeklyRemaining) : Double(min(weeklyRemaining, fiveHourRemaining))
 
-        // Ring Tint Color Calculation
-        var ringTint: NSColor = NSColor.systemGreen
+        // Ring Tint Color Calculation based on user-chosen accent color and health rules
+        var ringTint: NSColor = activeThemeColor
+
         if feedingCountdownRounds > 0 {
-            ringTint = NSColor.systemTeal
-        } else if targetPercentage >= 50 {
-            ringTint = NSColor.systemGreen
-        } else if targetPercentage >= 20 {
-            ringTint = NSColor.systemYellow
-        } else {
+            // Bright highlight pulse during feeding
+            ringTint = NSColor(hex: "#00F2FE") ?? NSColor.systemTeal
+        } else if lowQuotaWarningEnabled && targetPercentage < 20.0 {
+            // Alert red when critically low
             ringTint = NSColor.systemRed
+        } else if lowQuotaWarningEnabled && targetPercentage < 40.0 && activeThemePresetKey == "electricBlue" {
+            // Subtle amber warning if using default blue
+            ringTint = NSColor.systemYellow
         }
 
         orbContainerView.updateRingProgress(percentage: targetPercentage, tintColor: ringTint)
@@ -527,9 +705,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Text display according to state
         if feedingCountdownRounds > 0 {
             secondaryTagLabel.stringValue = "FEED"
-            secondaryTagLabel.textColor = NSColor.systemTeal
+            secondaryTagLabel.textColor = ringTint
             primaryValueLabel.stringValue = "+\(formatTokenCount(tokens: latestIncrementTokens))"
-            primaryValueLabel.textColor = NSColor.systemTeal
+            primaryValueLabel.textColor = ringTint
             primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
             return
         }
@@ -593,4 +771,5 @@ application.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
 application.delegate = delegate
 application.run()
+
 
