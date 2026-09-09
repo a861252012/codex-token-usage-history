@@ -39,13 +39,14 @@ struct ThemeColorPreset {
 }
 
 let availableThemePresets: [ThemeColorPreset] = [
-    ThemeColorPreset(key: "electricBlue", displayName: "Electric Blue (Default)", hexCode: "#0A84FF"),
-    ThemeColorPreset(key: "cyberCyan", displayName: "Cyber Cyan", hexCode: "#00F2FE"),
-    ThemeColorPreset(key: "emeraldGreen", displayName: "Emerald Green", hexCode: "#30D158"),
-    ThemeColorPreset(key: "neonPurple", displayName: "Neon Purple", hexCode: "#BF5AF2"),
-    ThemeColorPreset(key: "sunsetAmber", displayName: "Sunset Amber", hexCode: "#FF9F0A"),
-    ThemeColorPreset(key: "radiantPink", displayName: "Radiant Pink", hexCode: "#FF375F"),
-    ThemeColorPreset(key: "pureWhite", displayName: "Pure White", hexCode: "#F2F2F7")
+    ThemeColorPreset(key: "lightBlue", displayName: "Light Blue / 淺藍 (Default)", hexCode: "#38B6FF"),
+    ThemeColorPreset(key: "electricBlue", displayName: "Electric Blue (深電光藍)", hexCode: "#0A84FF"),
+    ThemeColorPreset(key: "cyberCyan", displayName: "Cyber Cyan (賽博青藍)", hexCode: "#00F2FE"),
+    ThemeColorPreset(key: "emeraldGreen", displayName: "Emerald Green (翡翠綠)", hexCode: "#30D158"),
+    ThemeColorPreset(key: "neonPurple", displayName: "Neon Purple (賽博紫)", hexCode: "#BF5AF2"),
+    ThemeColorPreset(key: "sunsetAmber", displayName: "Sunset Amber (日落橘)", hexCode: "#FF9F0A"),
+    ThemeColorPreset(key: "radiantPink", displayName: "Radiant Pink (亮粉紅)", hexCode: "#FF375F"),
+    ThemeColorPreset(key: "pureWhite", displayName: "Pure White (極簡白)", hexCode: "#F2F2F7")
 ]
 
 // MARK: - Widget Size Preset Configuration
@@ -82,8 +83,8 @@ let availableSizePresets: [WidgetSizePreset] = [
         valueFontSize: 11.0,
         valueY: 9.0,
         valueHeight: 15.0,
-        closeButtonSize: 11.5,
-        closeButtonOffset: 3.5,
+        closeButtonSize: 12.0,
+        closeButtonOffset: 3.0,
         closeButtonFontSize: 7.5
     ),
     WidgetSizePreset(
@@ -99,8 +100,8 @@ let availableSizePresets: [WidgetSizePreset] = [
         valueFontSize: 13.5,
         valueY: 12.0,
         valueHeight: 18.0,
-        closeButtonSize: 13.5,
-        closeButtonOffset: 4.5,
+        closeButtonSize: 14.5,
+        closeButtonOffset: 4.0,
         closeButtonFontSize: 8.5
     ),
     WidgetSizePreset(
@@ -116,9 +117,9 @@ let availableSizePresets: [WidgetSizePreset] = [
         valueFontSize: 16.5,
         valueY: 14.0,
         valueHeight: 22.0,
-        closeButtonSize: 15.0,
-        closeButtonOffset: 5.5,
-        closeButtonFontSize: 9.5
+        closeButtonSize: 16.5,
+        closeButtonOffset: 5.0,
+        closeButtonFontSize: 10.0
     ),
     WidgetSizePreset(
         key: "extraLarge",
@@ -133,9 +134,9 @@ let availableSizePresets: [WidgetSizePreset] = [
         valueFontSize: 20.0,
         valueY: 17.0,
         valueHeight: 26.0,
-        closeButtonSize: 17.5,
-        closeButtonOffset: 7.0,
-        closeButtonFontSize: 11.0
+        closeButtonSize: 19.0,
+        closeButtonOffset: 6.0,
+        closeButtonFontSize: 11.5
     )
 ]
 
@@ -220,22 +221,24 @@ class CloseBadgeButton: NSView {
         layer?.masksToBounds = true
         updateCornerRadius()
 
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.40).cgColor
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
-        layer?.borderWidth = 0.8
+        layer?.backgroundColor = NSColor(hex: "#0C2338")?.withAlphaComponent(0.88).cgColor
+            ?? NSColor.black.withAlphaComponent(0.60).cgColor
+        layer?.borderColor = NSColor(hex: "#38B6FF")?.withAlphaComponent(0.75).cgColor
+            ?? NSColor.systemTeal.cgColor
+        layer?.borderWidth = 1.0
 
         symbolLabel.isEditable = false
         symbolLabel.isSelectable = false
         symbolLabel.isBezeled = false
         symbolLabel.drawsBackground = false
         symbolLabel.alignment = .center
-        symbolLabel.textColor = NSColor.white.withAlphaComponent(0.85)
+        symbolLabel.textColor = NSColor(hex: "#38B6FF") ?? NSColor.systemTeal
         symbolLabel.font = NSFont.systemFont(ofSize: 8.5, weight: .bold)
         symbolLabel.stringValue = "✕"
         symbolLabel.frame = NSRect(x: 0, y: -0.5, width: bounds.width, height: bounds.height)
 
         addSubview(symbolLabel)
-        self.alphaValue = 0.35
+        self.alphaValue = 0.85
     }
 
     func updateCornerRadius() {
@@ -255,7 +258,7 @@ class CloseBadgeButton: NSView {
             if buttonHoverActive {
                 self.alphaValue = 1.0
             } else {
-                self.alphaValue = hovered ? 0.95 : 0.35
+                self.alphaValue = hovered ? 1.0 : 0.85
             }
         }
     }
@@ -280,8 +283,8 @@ class CloseBadgeButton: NSView {
         self.alphaValue = 1.0
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
-            layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.92).cgColor
-            layer?.borderColor = NSColor.white.withAlphaComponent(0.65).cgColor
+            layer?.backgroundColor = NSColor(hex: "#38B6FF")?.withAlphaComponent(0.95).cgColor
+            layer?.borderColor = NSColor.white.withAlphaComponent(0.85).cgColor
             symbolLabel.textColor = NSColor.white
         }
     }
@@ -290,9 +293,9 @@ class CloseBadgeButton: NSView {
         buttonHoverActive = false
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
-            layer?.backgroundColor = NSColor.black.withAlphaComponent(0.40).cgColor
-            layer?.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
-            symbolLabel.textColor = NSColor.white.withAlphaComponent(0.85)
+            layer?.backgroundColor = NSColor(hex: "#0C2338")?.withAlphaComponent(0.88).cgColor
+            layer?.borderColor = NSColor(hex: "#38B6FF")?.withAlphaComponent(0.75).cgColor
+            symbolLabel.textColor = NSColor(hex: "#38B6FF") ?? NSColor.systemTeal
         }
     }
 
@@ -497,12 +500,14 @@ class ModernFloatingHudPanel: NSPanel {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var floatingPanel: ModernFloatingHudPanel!
+    private var rootHudCanvasView: NSView!
     private var orbContainerView: CircularOrbView!
+    private var closeBadgeButton: CloseBadgeButton!
+    private let badgeOverlapMargin: CGFloat = 8.0
 
     // Text Subviews inside Circular Orb
     private var secondaryTagLabel: NSTextField!
     private var primaryValueLabel: NSTextField!
-    private var closeBadgeButton: CloseBadgeButton!
 
     private var refreshTimer: Timer?
     private let homeDirectoryPath = FileManager.default.homeDirectoryForCurrentUser.path
@@ -511,8 +516,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var latestIncrementTokens: Int = 0
 
     // Theme Color State & Preferences
-    private var activeThemeColor: NSColor = NSColor(hex: "#0A84FF") ?? NSColor.systemBlue
-    private var activeThemePresetKey: String = "electricBlue"
+    private var activeThemeColor: NSColor = NSColor(hex: "#38B6FF") ?? NSColor.systemTeal
+    private var activeThemePresetKey: String = "lightBlue"
     private var lowQuotaWarningEnabled: Bool = true
 
     // Size Preset State & Preferences
@@ -545,10 +550,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if let loadedColor = NSColor(hex: userConfig.themeColorHex) {
+        var loadedColorHex = userConfig.themeColorHex
+        if loadedColorHex.uppercased() == "#0A84FF" || userConfig.themePresetKey == "electricBlue" {
+            loadedColorHex = "#38B6FF"
+            activeThemePresetKey = "lightBlue"
+        } else {
+            activeThemePresetKey = userConfig.themePresetKey
+        }
+
+        if let loadedColor = NSColor(hex: loadedColorHex) {
             activeThemeColor = loadedColor
         }
-        activeThemePresetKey = userConfig.themePresetKey
         lowQuotaWarningEnabled = userConfig.enableLowQuotaWarning
         if let savedSize = userConfig.widgetSizePresetKey,
            availableSizePresets.contains(where: { $0.key == savedSize }) {
@@ -580,11 +592,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let sizePreset = getCurrentSizePreset()
         let orbDimension = sizePreset.dimension
-        let initialX = screenFrame.origin.x + (screenFrame.width - orbDimension) / 2
-        let initialY = screenFrame.origin.y + screenFrame.height - orbDimension - 14
+        let totalWidth = orbDimension + badgeOverlapMargin
+        let totalHeight = orbDimension + badgeOverlapMargin
+        let initialX = screenFrame.origin.x + (screenFrame.width - totalWidth) / 2
+        let initialY = screenFrame.origin.y + screenFrame.height - totalHeight - 14
 
-        let panelRect = NSRect(x: initialX, y: initialY, width: orbDimension, height: orbDimension)
+        let panelRect = NSRect(x: initialX, y: initialY, width: totalWidth, height: totalHeight)
         floatingPanel = ModernFloatingHudPanel(contentRect: panelRect)
+
+        rootHudCanvasView = NSView(frame: NSRect(x: 0, y: 0, width: totalWidth, height: totalHeight))
+        rootHudCanvasView.wantsLayer = true
+        rootHudCanvasView.layer?.backgroundColor = NSColor.clear.cgColor
 
         orbContainerView = CircularOrbView(frame: NSRect(x: 0, y: 0, width: orbDimension, height: orbDimension))
         orbContainerView.applySizePreset(sizePreset)
@@ -601,9 +619,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         buildTextLabels(sizePreset: sizePreset)
+        rootHudCanvasView.addSubview(orbContainerView)
 
-        floatingPanel.contentView = orbContainerView
+        setupCloseButton(sizePreset: sizePreset)
+        rootHudCanvasView.addSubview(closeBadgeButton)
+
+        floatingPanel.contentView = rootHudCanvasView
         floatingPanel.makeKeyAndOrderFront(nil)
+    }
+
+    private func setupCloseButton(sizePreset: WidgetSizePreset) {
+        let orbDimension = sizePreset.dimension
+        let buttonSize = sizePreset.closeButtonSize
+        let buttonX = orbDimension - buttonSize + badgeOverlapMargin
+        let buttonY = orbDimension - buttonSize + badgeOverlapMargin
+        let closeRect = NSRect(x: buttonX, y: buttonY, width: buttonSize, height: buttonSize)
+
+        closeBadgeButton = CloseBadgeButton(frame: closeRect)
+        closeBadgeButton.updateLayoutSize(dimension: buttonSize, fontSize: sizePreset.closeButtonFontSize)
+        closeBadgeButton.closeActionHandler = {
+            NSApplication.shared.terminate(nil)
+        }
     }
 
     private func buildTextLabels(sizePreset: WidgetSizePreset) {
@@ -632,20 +668,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize, weight: .bold)
         primaryValueLabel.stringValue = "--%"
         orbContainerView.addSubview(primaryValueLabel)
-
-        // Top-right close badge button (Quick Dismiss)
-        let buttonSize = sizePreset.closeButtonSize
-        let buttonOffset = sizePreset.closeButtonOffset
-        let buttonX = orbDimension - buttonSize - buttonOffset
-        let buttonY = orbDimension - buttonSize - buttonOffset
-        let closeRect = NSRect(x: buttonX, y: buttonY, width: buttonSize, height: buttonSize)
-
-        closeBadgeButton = CloseBadgeButton(frame: closeRect)
-        closeBadgeButton.updateLayoutSize(dimension: buttonSize, fontSize: sizePreset.closeButtonFontSize)
-        closeBadgeButton.closeActionHandler = {
-            NSApplication.shared.terminate(nil)
-        }
-        orbContainerView.addSubview(closeBadgeButton)
     }
 
     private func applyWidgetSizePreset(_ preset: WidgetSizePreset) {
@@ -653,13 +675,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         saveUserConfiguration()
 
         let currentFrame = floatingPanel.frame
-        let centerX = currentFrame.origin.x + currentFrame.width / 2
-        let centerY = currentFrame.origin.y + currentFrame.height / 2
-        let newOriginX = centerX - preset.dimension / 2
-        let newOriginY = centerY - preset.dimension / 2
+        let currentCenterX = currentFrame.origin.x + currentFrame.width / 2
+        let currentCenterY = currentFrame.origin.y + currentFrame.height / 2
 
-        let newFrame = NSRect(x: newOriginX, y: newOriginY, width: preset.dimension, height: preset.dimension)
+        let totalWidth = preset.dimension + badgeOverlapMargin
+        let totalHeight = preset.dimension + badgeOverlapMargin
+        let newOriginX = currentCenterX - totalWidth / 2
+        let newOriginY = currentCenterY - totalHeight / 2
+
+        let newFrame = NSRect(x: newOriginX, y: newOriginY, width: totalWidth, height: totalHeight)
         floatingPanel.setFrame(newFrame, display: true, animate: true)
+
+        rootHudCanvasView.frame = NSRect(x: 0, y: 0, width: totalWidth, height: totalHeight)
         orbContainerView.frame = NSRect(x: 0, y: 0, width: preset.dimension, height: preset.dimension)
         orbContainerView.applySizePreset(preset)
 
@@ -667,9 +694,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         primaryValueLabel.frame = NSRect(x: 2, y: preset.valueY, width: preset.dimension - 4, height: preset.valueHeight)
 
         let buttonSize = preset.closeButtonSize
-        let buttonOffset = preset.closeButtonOffset
-        let buttonX = preset.dimension - buttonSize - buttonOffset
-        let buttonY = preset.dimension - buttonSize - buttonOffset
+        let buttonX = preset.dimension - buttonSize + badgeOverlapMargin
+        let buttonY = preset.dimension - buttonSize + badgeOverlapMargin
         closeBadgeButton.frame = NSRect(x: buttonX, y: buttonY, width: buttonSize, height: buttonSize)
         closeBadgeButton.updateLayoutSize(dimension: buttonSize, fontSize: preset.closeButtonFontSize)
 
