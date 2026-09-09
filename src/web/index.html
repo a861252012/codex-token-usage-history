@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codex 額度與 Token 消耗即時監控</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <div class="header-left">
+        <h1>Codex Token 額度與消耗歷史</h1>
+        <span class="sub-title">MacBook 即時監控儀表板</span>
+      </div>
+      <div class="header-right">
+        <span id="connection-status" class="status-badge connecting">連線中...</span>
+        <span id="account-badge" class="badge">讀取中...</span>
+        <button id="btn-refresh" class="btn btn-secondary">立即重新整理</button>
+      </div>
+    </header>
+
+    <!-- 配額卡片區塊 -->
+    <section class="quota-cards-grid">
+      <!-- 五小時配額卡片 -->
+      <div class="card quota-card" id="card-five-hour">
+        <div class="card-header">
+          <h3>五小時短週期額度</h3>
+          <span class="window-tag">5-Hour Window</span>
+        </div>
+        <div class="card-body">
+          <div class="progress-container">
+            <div class="progress-bar-bg">
+              <div id="bar-five-hour" class="progress-bar-fill" style="width: 0%;"></div>
+            </div>
+            <div class="progress-stats">
+              <span id="text-five-hour-used" class="stat-used">已用 0%</span>
+              <span id="text-five-hour-rem" class="stat-remaining">剩餘 100%</span>
+            </div>
+          </div>
+          <div class="quota-meta">
+            <div class="meta-item">
+              <span class="meta-label">重設倒數</span>
+              <span id="text-five-hour-reset" class="meta-value">—</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">狀態評估</span>
+              <span id="text-five-hour-status" class="meta-value ok">額度充足</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 週用量配額卡片 -->
+      <div class="card quota-card" id="card-weekly">
+        <div class="card-header">
+          <h3>週用量長週期額度</h3>
+          <span class="window-tag">Weekly Window</span>
+        </div>
+        <div class="card-body">
+          <div class="progress-container">
+            <div class="progress-bar-bg">
+              <div id="bar-weekly" class="progress-bar-fill" style="width: 0%;"></div>
+            </div>
+            <div class="progress-stats">
+              <span id="text-weekly-used" class="stat-used">已用 0%</span>
+              <span id="text-weekly-rem" class="stat-remaining">剩餘 100%</span>
+            </div>
+          </div>
+          <div class="quota-meta">
+            <div class="meta-item">
+              <span class="meta-label">重設倒數</span>
+              <span id="text-weekly-reset" class="meta-value">—</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">狀態評估</span>
+              <span id="text-weekly-status" class="meta-value ok">額度充足</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 本日消耗統計卡片 -->
+      <div class="card summary-card">
+        <div class="card-header">
+          <h3>本日 Token 消耗統計</h3>
+          <span class="window-tag">今日累計</span>
+        </div>
+        <div class="card-body">
+          <div class="summary-total">
+            <span class="summary-num" id="text-today-tokens">0</span>
+            <span class="summary-unit">Tokens</span>
+          </div>
+          <div class="summary-breakdown">
+            <div class="breakdown-row">
+              <span>輸入 / 快取:</span>
+              <strong id="text-today-input">0</strong>
+            </div>
+            <div class="breakdown-row">
+              <span>輸出 / 推理:</span>
+              <strong id="text-today-output">0</strong>
+            </div>
+            <div class="breakdown-row">
+              <span>總請求次數:</span>
+              <strong id="text-today-requests">0 次</strong>
+            </div>
+            <div class="breakdown-row">
+              <span>每小時消耗率:</span>
+              <strong id="text-today-burn-rate">0 / hr</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 附加配額顯示 (Spark 等) -->
+    <section id="additional-limits-section" class="additional-section" style="display: none;">
+      <h4>附加模型配額</h4>
+      <div id="additional-limits-list" class="additional-grid"></div>
+    </section>
+
+    <!-- 模型消耗分佈區塊 -->
+    <section class="models-section card">
+      <div class="card-header">
+        <h3>各模型 Token 消耗比例</h3>
+      </div>
+      <div class="card-body">
+        <div id="model-bars-container" class="model-bars"></div>
+      </div>
+    </section>
+
+    <!-- 消耗歷史紀錄流水帳表格 -->
+    <section class="history-section card">
+      <div class="card-header history-header">
+        <div class="header-titles">
+          <h3>Token 消耗歷史紀錄流水帳</h3>
+          <span id="history-total-count" class="count-tag">0 筆紀錄</span>
+        </div>
+        <div class="history-controls">
+          <input type="text" id="filter-model" placeholder="依模型篩選 (例: gpt-6)..." class="input-filter">
+          <button id="btn-export-csv" class="btn btn-secondary">匯出 CSV</button>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>時間</th>
+              <th>模型</th>
+              <th>總 Token 數</th>
+              <th>輸入 Token</th>
+              <th>快取 Token</th>
+              <th>輸出 Token</th>
+              <th>推理 Token</th>
+              <th>週配額快照</th>
+              <th>Session ID</th>
+            </tr>
+          </thead>
+          <tbody id="history-table-body">
+            <tr>
+              <td colspan="9" class="text-center">載入歷史紀錄中...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination-container">
+        <button id="btn-prev-page" class="btn btn-sm" disabled>上一頁</button>
+        <span id="page-indicator" class="page-indicator">第 1 頁</span>
+        <button id="btn-next-page" class="btn btn-sm">下一頁</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

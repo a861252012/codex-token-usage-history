@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -e
+
+REAL_SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$REAL_SCRIPT_PATH")/.." && pwd)"
+
+# 若有 bun 優先使用 (啟動時間僅數毫秒且原生支援 ts)
+if command -v bun >/dev/null 2>&1; then
+  exec bun run "$SCRIPT_DIR/src/cli/index.ts" "$@"
+else
+  if [ ! -f "$SCRIPT_DIR/dist/cli/index.js" ]; then
+    (cd "$SCRIPT_DIR" && npx tsc)
+  fi
+  exec node --no-warnings "$SCRIPT_DIR/dist/cli/index.js" "$@"
+fi
