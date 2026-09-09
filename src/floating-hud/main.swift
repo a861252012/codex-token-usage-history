@@ -48,10 +48,87 @@ let availableThemePresets: [ThemeColorPreset] = [
     ThemeColorPreset(key: "pureWhite", displayName: "Pure White", hexCode: "#F2F2F7")
 ]
 
+// MARK: - Widget Size Preset Configuration
+
+struct WidgetSizePreset {
+    let key: String
+    let displayName: String
+    let dimension: CGFloat
+    let cornerRadius: CGFloat
+    let ringRadius: CGFloat
+    let ringLineWidth: CGFloat
+    let tagFontSize: CGFloat
+    let tagY: CGFloat
+    let tagHeight: CGFloat
+    let valueFontSize: CGFloat
+    let valueY: CGFloat
+    let valueHeight: CGFloat
+}
+
+let availableSizePresets: [WidgetSizePreset] = [
+    WidgetSizePreset(
+        key: "small",
+        displayName: "Small (小 - 46px)",
+        dimension: 46.0,
+        cornerRadius: 23.0,
+        ringRadius: 18.5,
+        ringLineWidth: 2.8,
+        tagFontSize: 7.0,
+        tagY: 26.0,
+        tagHeight: 10.0,
+        valueFontSize: 11.0,
+        valueY: 9.0,
+        valueHeight: 15.0
+    ),
+    WidgetSizePreset(
+        key: "default",
+        displayName: "Default (預設 - 56px)",
+        dimension: 56.0,
+        cornerRadius: 28.0,
+        ringRadius: 23.5,
+        ringLineWidth: 3.2,
+        tagFontSize: 8.5,
+        tagY: 31.0,
+        tagHeight: 12.0,
+        valueFontSize: 13.5,
+        valueY: 12.0,
+        valueHeight: 18.0
+    ),
+    WidgetSizePreset(
+        key: "large",
+        displayName: "Large (大 - 68px)",
+        dimension: 68.0,
+        cornerRadius: 34.0,
+        ringRadius: 29.0,
+        ringLineWidth: 3.8,
+        tagFontSize: 10.0,
+        tagY: 38.0,
+        tagHeight: 14.0,
+        valueFontSize: 16.5,
+        valueY: 14.0,
+        valueHeight: 22.0
+    ),
+    WidgetSizePreset(
+        key: "extraLarge",
+        displayName: "Extra Large (超大 - 84px)",
+        dimension: 84.0,
+        cornerRadius: 42.0,
+        ringRadius: 36.0,
+        ringLineWidth: 4.8,
+        tagFontSize: 12.0,
+        tagY: 48.0,
+        tagHeight: 16.0,
+        valueFontSize: 20.0,
+        valueY: 17.0,
+        valueHeight: 26.0
+    )
+]
+
 struct HudUserConfiguration: Codable {
     var themeColorHex: String
     var themePresetKey: String
     var enableLowQuotaWarning: Bool
+    var widgetSizePresetKey: String?
 }
 
 // MARK: - Data Transfer Objects (DTO)
@@ -71,10 +148,20 @@ struct QuotaSnapshotDTO: Codable {
     let resetCredits: Int?
 }
 
+struct PlanChangeEventDTO: Codable {
+    let timestamp: Int64
+    let datetime: String
+    let previousPlan: String?
+    let newPlan: String?
+    let changeType: String?
+    let description: String?
+}
+
 struct FullStatusDTO: Codable {
     let snapshot: QuotaSnapshotDTO
     let todaySummary: TodaySummaryDTO
     let recentRecords: [TokenRecordDTO]
+    let recentPlanChanges: [PlanChangeEventDTO]?
 }
 
 struct TodaySummaryDTO: Codable {
@@ -104,6 +191,10 @@ class CircularOrbView: NSVisualEffectView {
     private let dynamicProgressLayer = CAShapeLayer()
     private var trackingAreaInstance: NSTrackingArea?
 
+    private var currentDimension: CGFloat = 56.0
+    private var currentRingRadius: CGFloat = 23.5
+    private var currentRingLineWidth: CGFloat = 3.2
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         configureVisualStyling()
@@ -120,27 +211,26 @@ class CircularOrbView: NSVisualEffectView {
         self.state = .active
         self.wantsLayer = true
 
-        let dimension = min(frame.width, frame.height)
-        let radius = dimension / 2
+        currentDimension = min(frame.width, frame.height)
+        let radius = currentDimension / 2
 
         layer?.cornerRadius = radius
         layer?.masksToBounds = true
         layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
         layer?.borderWidth = 1.0
 
-        setupProgressLayers(dimension: dimension)
+        setupProgressLayers()
     }
 
-    private func setupProgressLayers(dimension: CGFloat) {
-        let centerPoint = CGPoint(x: dimension / 2, y: dimension / 2)
-        let arcRadius: CGFloat = (dimension / 2) - 4.5
+    private func setupProgressLayers() {
+        let centerPoint = CGPoint(x: currentDimension / 2, y: currentDimension / 2)
         let startAngle: CGFloat = -CGFloat.pi / 2
         let endAngle: CGFloat = 1.5 * CGFloat.pi
 
         let ringPath = CGMutablePath()
         ringPath.addArc(
             center: centerPoint,
-            radius: arcRadius,
+            radius: currentRingRadius,
             startAngle: startAngle,
             endAngle: endAngle,
             clockwise: false
@@ -150,7 +240,7 @@ class CircularOrbView: NSVisualEffectView {
         backgroundTrackLayer.path = ringPath
         backgroundTrackLayer.strokeColor = NSColor.white.withAlphaComponent(0.12).cgColor
         backgroundTrackLayer.fillColor = NSColor.clear.cgColor
-        backgroundTrackLayer.lineWidth = 3.2
+        backgroundTrackLayer.lineWidth = currentRingLineWidth
         backgroundTrackLayer.lineCap = .round
         layer?.addSublayer(backgroundTrackLayer)
 
@@ -158,11 +248,38 @@ class CircularOrbView: NSVisualEffectView {
         dynamicProgressLayer.path = ringPath
         dynamicProgressLayer.strokeColor = NSColor(hex: "#0A84FF")?.cgColor ?? NSColor.systemBlue.cgColor
         dynamicProgressLayer.fillColor = NSColor.clear.cgColor
-        dynamicProgressLayer.lineWidth = 3.2
+        dynamicProgressLayer.lineWidth = currentRingLineWidth
         dynamicProgressLayer.lineCap = .round
         dynamicProgressLayer.strokeStart = 0.0
         dynamicProgressLayer.strokeEnd = 0.0
         layer?.addSublayer(dynamicProgressLayer)
+    }
+
+    func applySizePreset(_ preset: WidgetSizePreset) {
+        currentDimension = preset.dimension
+        currentRingRadius = preset.ringRadius
+        currentRingLineWidth = preset.ringLineWidth
+
+        layer?.cornerRadius = preset.cornerRadius
+
+        let centerPoint = CGPoint(x: currentDimension / 2, y: currentDimension / 2)
+        let startAngle: CGFloat = -CGFloat.pi / 2
+        let endAngle: CGFloat = 1.5 * CGFloat.pi
+
+        let ringPath = CGMutablePath()
+        ringPath.addArc(
+            center: centerPoint,
+            radius: currentRingRadius,
+            startAngle: startAngle,
+            endAngle: endAngle,
+            clockwise: false
+        )
+
+        backgroundTrackLayer.path = ringPath
+        backgroundTrackLayer.lineWidth = currentRingLineWidth
+
+        dynamicProgressLayer.path = ringPath
+        dynamicProgressLayer.lineWidth = currentRingLineWidth
     }
 
     func updateRingProgress(percentage: Double, tintColor: NSColor) {
@@ -268,6 +385,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var activeThemePresetKey: String = "electricBlue"
     private var lowQuotaWarningEnabled: Bool = true
 
+    // Size Preset State & Preferences
+    private var activeSizePresetKey: String = "default"
+
     // Display state
     // 0: Quota view (7d for Pro, 5h+7d for Standard)
     // 1: Today tokens view
@@ -300,6 +420,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         activeThemePresetKey = userConfig.themePresetKey
         lowQuotaWarningEnabled = userConfig.enableLowQuotaWarning
+        if let savedSize = userConfig.widgetSizePresetKey,
+           availableSizePresets.contains(where: { $0.key == savedSize }) {
+            activeSizePresetKey = savedSize
+        }
     }
 
     private func saveUserConfiguration() {
@@ -307,7 +431,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let configRecord = HudUserConfiguration(
             themeColorHex: activeThemeColor.toHex(),
             themePresetKey: activeThemePresetKey,
-            enableLowQuotaWarning: lowQuotaWarningEnabled
+            enableLowQuotaWarning: lowQuotaWarningEnabled,
+            widgetSizePresetKey: activeSizePresetKey
         )
 
         guard let encodedData = try? JSONEncoder().encode(configRecord) else {
@@ -316,9 +441,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         try? encodedData.write(to: URL(fileURLWithPath: configurationFilePath))
     }
 
+    private func getCurrentSizePreset() -> WidgetSizePreset {
+        return availableSizePresets.first(where: { $0.key == activeSizePresetKey })
+            ?? availableSizePresets[1] // default 56px
+    }
+
     private func setupFloatingWindow() {
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let orbDimension: CGFloat = 56.0
+        let sizePreset = getCurrentSizePreset()
+        let orbDimension = sizePreset.dimension
         let initialX = screenFrame.origin.x + (screenFrame.width - orbDimension) / 2
         let initialY = screenFrame.origin.y + screenFrame.height - orbDimension - 14
 
@@ -326,6 +457,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         floatingPanel = ModernFloatingHudPanel(contentRect: panelRect)
 
         orbContainerView = CircularOrbView(frame: NSRect(x: 0, y: 0, width: orbDimension, height: orbDimension))
+        orbContainerView.applySizePreset(sizePreset)
 
         // Left-click to switch views, Right-click to show contextual menu
         orbContainerView.leftClickHandler = { [weak self] in
@@ -335,36 +467,61 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return self?.buildContextMenu() ?? NSMenu()
         }
 
-        buildTextLabels(orbDimension: orbDimension)
+        buildTextLabels(sizePreset: sizePreset)
 
         floatingPanel.contentView = orbContainerView
         floatingPanel.makeKeyAndOrderFront(nil)
     }
 
-    private func buildTextLabels(orbDimension: CGFloat) {
+    private func buildTextLabels(sizePreset: WidgetSizePreset) {
+        let orbDimension = sizePreset.dimension
+
         // Upper tiny category tag
-        secondaryTagLabel = NSTextField(frame: NSRect(x: 4, y: 31, width: orbDimension - 8, height: 12))
+        secondaryTagLabel = NSTextField(frame: NSRect(x: 2, y: sizePreset.tagY, width: orbDimension - 4, height: sizePreset.tagHeight))
         secondaryTagLabel.isEditable = false
         secondaryTagLabel.isSelectable = false
         secondaryTagLabel.isBezeled = false
         secondaryTagLabel.drawsBackground = false
         secondaryTagLabel.alignment = .center
         secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
-        secondaryTagLabel.font = NSFont.systemFont(ofSize: 8.5, weight: .bold)
+        secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
         secondaryTagLabel.stringValue = "7d"
         orbContainerView.addSubview(secondaryTagLabel)
 
         // Center prominent metric text
-        primaryValueLabel = NSTextField(frame: NSRect(x: 4, y: 12, width: orbDimension - 8, height: 18))
+        primaryValueLabel = NSTextField(frame: NSRect(x: 2, y: sizePreset.valueY, width: orbDimension - 4, height: sizePreset.valueHeight))
         primaryValueLabel.isEditable = false
         primaryValueLabel.isSelectable = false
         primaryValueLabel.isBezeled = false
         primaryValueLabel.drawsBackground = false
         primaryValueLabel.alignment = .center
         primaryValueLabel.textColor = NSColor.white
-        primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13.0, weight: .bold)
+        primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize, weight: .bold)
         primaryValueLabel.stringValue = "--%"
         orbContainerView.addSubview(primaryValueLabel)
+    }
+
+    private func applyWidgetSizePreset(_ preset: WidgetSizePreset) {
+        activeSizePresetKey = preset.key
+        saveUserConfiguration()
+
+        let currentFrame = floatingPanel.frame
+        let centerX = currentFrame.origin.x + currentFrame.width / 2
+        let centerY = currentFrame.origin.y + currentFrame.height / 2
+        let newOriginX = centerX - preset.dimension / 2
+        let newOriginY = centerY - preset.dimension / 2
+
+        let newFrame = NSRect(x: newOriginX, y: newOriginY, width: preset.dimension, height: preset.dimension)
+        floatingPanel.setFrame(newFrame, display: true, animate: true)
+        orbContainerView.frame = NSRect(x: 0, y: 0, width: preset.dimension, height: preset.dimension)
+        orbContainerView.applySizePreset(preset)
+
+        secondaryTagLabel.frame = NSRect(x: 2, y: preset.tagY, width: preset.dimension - 4, height: preset.tagHeight)
+        primaryValueLabel.frame = NSRect(x: 2, y: preset.valueY, width: preset.dimension - 4, height: preset.valueHeight)
+
+        if let status = cachedStatusData {
+            updateUserInterface(with: status)
+        }
     }
 
     private func cycleNextDisplayMode() {
@@ -425,6 +582,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Plan Transition History item (if exists)
+        if let planChanges = cachedStatusData?.recentPlanChanges, let latestChange = planChanges.first {
+            let changeTypeUpper = (latestChange.changeType ?? "change").uppercased()
+            let planHistoryText = "Plan Event: [\(changeTypeUpper)] \(latestChange.description ?? "")"
+            let planItem = NSMenuItem(title: planHistoryText, action: nil, keyEquivalent: "")
+            planItem.isEnabled = false
+            menu.addItem(planItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
 
         if let summary = cachedStatusData?.todaySummary {
@@ -441,7 +607,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Accent Color Submenu
+        // 1. Accent Color Submenu
         let colorSubmenu = NSMenu(title: "Accent Color")
         for preset in availableThemePresets {
             let presetItem = NSMenuItem(
@@ -480,6 +646,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let colorMenuItem = NSMenuItem(title: "Accent Color", action: nil, keyEquivalent: "")
         colorMenuItem.submenu = colorSubmenu
         menu.addItem(colorMenuItem)
+
+        // 2. Widget Size Submenu (Small, Default, Large, Extra Large)
+        let sizeSubmenu = NSMenu(title: "Widget Size")
+        for preset in availableSizePresets {
+            let sizeItem = NSMenuItem(
+                title: preset.displayName,
+                action: #selector(handleSizePresetSelected(_:)),
+                keyEquivalent: ""
+            )
+            sizeItem.target = self
+            sizeItem.representedObject = preset.key
+            sizeItem.state = (activeSizePresetKey == preset.key) ? .on : .off
+            sizeSubmenu.addItem(sizeItem)
+        }
+
+        let sizeMenuItem = NSMenuItem(title: "Widget Size", action: nil, keyEquivalent: "")
+        sizeMenuItem.submenu = sizeSubmenu
+        menu.addItem(sizeMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -522,6 +706,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let status = cachedStatusData {
             updateUserInterface(with: status)
         }
+    }
+
+    @objc private func handleSizePresetSelected(_ sender: NSMenuItem) {
+        guard let selectedSizeKey = sender.representedObject as? String,
+              let matchedPreset = availableSizePresets.first(where: { $0.key == selectedSizeKey }) else {
+            return
+        }
+
+        applyWidgetSizePreset(matchedPreset)
     }
 
     @objc private func openSystemColorPicker() {
@@ -607,10 +800,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if let rawData = try? Data(contentsOf: URL(fileURLWithPath: cacheFilePath)),
                    let snapshot = try? JSONDecoder().decode(QuotaSnapshotDTO.self, from: rawData) {
                     let sqliteTodaySummary = self.queryTodaySummaryFromDatabase()
+                    let latestPlanChange = self.queryRecentPlanChangeFromDatabase()
+                    let planChangeList = latestPlanChange != nil ? [latestPlanChange!] : []
+
                     fetchedStatus = FullStatusDTO(
                         snapshot: snapshot,
                         todaySummary: sqliteTodaySummary,
-                        recentRecords: []
+                        recentRecords: [],
+                        recentPlanChanges: planChangeList
                     )
                 }
             }
@@ -622,6 +819,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.updateUserInterface(with: statusData)
             }
         }
+    }
+
+    private func queryRecentPlanChangeFromDatabase() -> PlanChangeEventDTO? {
+        let databasePath = "\(homeDirectoryPath)/.codex/token_usage_history.sqlite"
+        guard FileManager.default.fileExists(atPath: databasePath) else { return nil }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [
+            databasePath,
+            "SELECT timestamp, datetime, previous_plan, new_plan, change_type, description FROM plan_change_events ORDER BY timestamp DESC LIMIT 1;"
+        ]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        try? process.run()
+        process.waitUntilExit()
+
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        if let outputString = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !outputString.isEmpty {
+            let components = outputString.components(separatedBy: "|")
+            if components.count >= 6 {
+                return PlanChangeEventDTO(
+                    timestamp: Int64(components[0]) ?? 0,
+                    datetime: components[1],
+                    previousPlan: components[2],
+                    newPlan: components[3],
+                    changeType: components[4],
+                    description: components[5]
+                )
+            }
+        }
+        return nil
     }
 
     private func queryTodaySummaryFromDatabase() -> TodaySummaryDTO {
@@ -670,6 +900,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let snapshot = statusData.snapshot
         let summary = statusData.todaySummary
         let proActive = determineProUser(snapshot: snapshot)
+        let sizePreset = getCurrentSizePreset()
 
         // Token feeding detection
         if previousTotalTokens > 0 && summary.totalTokens > previousTotalTokens {
@@ -706,9 +937,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if feedingCountdownRounds > 0 {
             secondaryTagLabel.stringValue = "FEED"
             secondaryTagLabel.textColor = ringTint
+            secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
             primaryValueLabel.stringValue = "+\(formatTokenCount(tokens: latestIncrementTokens))"
             primaryValueLabel.textColor = ringTint
-            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
+            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize - 1.5, weight: .bold)
             return
         }
 
@@ -718,32 +950,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // View 1: Today total tokens
             secondaryTagLabel.stringValue = "TODAY"
             secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
-            secondaryTagLabel.font = NSFont.systemFont(ofSize: 7.5, weight: .bold)
+            secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize - 1.0, weight: .bold)
             primaryValueLabel.stringValue = formatTokenCount(tokens: summary.totalTokens)
-            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12.0, weight: .bold)
+            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize - 1.0, weight: .bold)
         } else if displayModeIndex == 2 {
             // View 2: Today estimated cost
             secondaryTagLabel.stringValue = "COST"
             secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
-            secondaryTagLabel.font = NSFont.systemFont(ofSize: 7.5, weight: .bold)
+            secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize - 1.0, weight: .bold)
             primaryValueLabel.stringValue = summary.formattedCostUsd ?? "$0.00"
-            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .bold)
+            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize - 2.0, weight: .bold)
         } else {
             // View 0: Primary quota view
             if proActive {
                 // Pro tier: Focus strictly on 7-day weekly quota (clean, elegant, zero 5h noise)
                 secondaryTagLabel.stringValue = "7d"
                 secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
-                secondaryTagLabel.font = NSFont.systemFont(ofSize: 8.5, weight: .bold)
+                secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
                 primaryValueLabel.stringValue = "\(weeklyRemaining)%"
-                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13.5, weight: .bold)
+                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize, weight: .bold)
             } else {
                 // Standard tier: Present both 5-hour and 7-day limits compactly
                 secondaryTagLabel.stringValue = "5h:\(fiveHourRemaining)%"
                 secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.8)
-                secondaryTagLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .bold)
+                secondaryTagLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
                 primaryValueLabel.stringValue = "7d:\(weeklyRemaining)%"
-                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .bold)
+                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
             }
         }
     }
@@ -771,5 +1003,6 @@ application.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
 application.delegate = delegate
 application.run()
+
 
 

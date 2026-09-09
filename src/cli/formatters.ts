@@ -5,6 +5,7 @@ import type {
   QuotaWindow,
   SettlementRecord,
   QuotaResetEvent,
+  PlanChangeEvent,
 } from "../core/types.js";
 import { QuotaClient } from "../core/quota-client.js";
 
@@ -283,6 +284,54 @@ export function renderResetEventsTable(events: QuotaResetEvent[]): string {
       formatNumber(event.availableCredits).padStart(8),
       deltaText.padStart(8),
       event.description.slice(0, 26).padEnd(26),
+    ].join("  ");
+    lines.push(row);
+  }
+
+  lines.push(divider);
+  return lines.join("\n");
+}
+
+/**
+ * 渲染 OpenAI 帳號方案調整歷程表格 (升級/降級紀錄)
+ */
+export function renderPlanChangeEventsTable(events: PlanChangeEvent[]): string {
+  const lines: string[] = [];
+  const divider = "-".repeat(84);
+
+  lines.push(`${STYLE_BOLD}OpenAI 帳號方案升降級歷程 (Plan Changes):${COLOR_RESET}`);
+  lines.push(divider);
+
+  if (events.length === 0) {
+    lines.push("目前尚無方案調整紀錄（帳號方案維持現狀）。");
+    return lines.join("\n");
+  }
+
+  const header = [
+    "異動時間 (UTC+8)".padEnd(20),
+    "變更前方案".padEnd(14),
+    "變更後方案".padEnd(14),
+    "異動類型".padEnd(12),
+    "詳細說明".padEnd(22),
+  ].join("  ");
+  lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
+
+  for (const event of events) {
+    let typeColored = event.changeType;
+    if (event.changeType === "upgrade") {
+      typeColored = `${COLOR_GREEN}升級 (Upgrade)${COLOR_RESET}`;
+    } else if (event.changeType === "downgrade") {
+      typeColored = `${COLOR_RED}降級 (Downgrade)${COLOR_RESET}`;
+    } else {
+      typeColored = "方案變更";
+    }
+
+    const row = [
+      event.datetime.replace("T", " ").slice(0, 19).padEnd(20),
+      event.previousPlan.padEnd(14),
+      event.newPlan.padEnd(14),
+      typeColored.padEnd(21),
+      event.description.slice(0, 22).padEnd(22),
     ].join("  ");
     lines.push(row);
   }

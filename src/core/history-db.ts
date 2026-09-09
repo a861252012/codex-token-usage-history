@@ -10,6 +10,7 @@ import type {
   FilterOptions,
   QuotaResetEvent,
   SettlementRecord,
+  PlanChangeEvent,
 } from "./types.js";
 
 export class HistoryDatabase {
@@ -98,6 +99,21 @@ export class HistoryDatabase {
       );
 
       CREATE INDEX IF NOT EXISTS idx_quota_reset_events_timestamp ON quota_reset_events(timestamp);
+    `);
+
+    // 4. OpenAI 方案異動歷史紀錄表 (升級、降級、切換)
+    this.databaseInstance.exec(`
+      CREATE TABLE IF NOT EXISTS plan_change_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL,
+        datetime TEXT NOT NULL,
+        previous_plan TEXT NOT NULL,
+        new_plan TEXT NOT NULL,
+        change_type TEXT NOT NULL,
+        description TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_plan_change_events_timestamp ON plan_change_events(timestamp);
     `);
   }
 
@@ -278,6 +294,56 @@ export class HistoryDatabase {
       newWeeklyUsedPercent: row.new_weekly_used_pct,
       availableCredits: row.available_credits,
       creditDelta: row.credit_delta,
+      description: row.description || "",
+    }));
+  }
+
+  /**
+   * 寫入 OpenAI 方案變更事件 (升級、降級、方案切換紀錄)
+   */
+  public insertPlanChangeEvent(event: PlanChangeEvent): boolean {
+    const database = this.ensureDatabase();
+    try {
+      const statement = database.prepare(`
+        INSERT INTO plan_change_events (
+          timestamp, datetime, previous_plan, new_plan, change_type, description
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+
+      const executionResult = statement.run(
+        event.timestamp,
+        event.datetime,
+        event.previousPlan,
+        event.newPlan,
+        event.changeType,
+        event.description
+      );
+
+      return executionResult.changes > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 查詢方案變更歷史事件紀錄
+   */
+  public getPlanChangeEvents(limitCount = 20): PlanChangeEvent[] {
+    const database = this.ensureDatabase();
+    const rows = database.prepare(`
+      SELECT id, timestamp, datetime, previous_plan, new_plan, change_type, description
+      FROM plan_change_events
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `).all(limitCount);
+
+    return rows.map((row: any) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      datetime: row.datetime,
+      previousPlan: row.previous_plan,
+      newPlan: row.new_plan,
+      changeType: row.change_type as any,
       description: row.description || "",
     }));
   }

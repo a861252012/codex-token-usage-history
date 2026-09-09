@@ -128,6 +128,19 @@ export async function runMcpServer(): Promise<void> {
                 },
               },
             },
+            {
+              name: "get_codex_plan_changes",
+              description: "查詢 OpenAI 帳號方案變更歷程 (升級/降級記錄)",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  limit: {
+                    type: "number",
+                    description: "回傳紀錄筆數上限 (預設 20)",
+                  },
+                },
+              },
+            },
           ],
         },
       });
@@ -210,6 +223,7 @@ export async function runMcpServer(): Promise<void> {
             : "daily";
           const periodLimit = typeof toolArguments.limit === "number" ? toolArguments.limit : 14;
           const settlementRecords = database.getSettlementRecords(settlementPeriod, periodLimit);
+          const planChanges = database.getPlanChangeEvents(10);
 
           sendResponse({
             jsonrpc: "2.0",
@@ -222,6 +236,7 @@ export async function runMcpServer(): Promise<void> {
                     period: settlementPeriod,
                     count: settlementRecords.length,
                     records: settlementRecords,
+                    planChanges,
                   }, null, 2),
                 },
               ],
@@ -262,6 +277,36 @@ export async function runMcpServer(): Promise<void> {
             jsonrpc: "2.0",
             id,
             error: { code: -32603, message: caughtError.message || "取得配額重置紀錄失敗" },
+          });
+        }
+        return;
+      }
+
+      if (toolName === "get_codex_plan_changes") {
+        try {
+          const planLimit = typeof toolArguments.limit === "number" ? toolArguments.limit : 20;
+          const planChanges = database.getPlanChangeEvents(planLimit);
+
+          sendResponse({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    count: planChanges.length,
+                    planChanges,
+                  }, null, 2),
+                },
+              ],
+            },
+          });
+        } catch (caughtError: any) {
+          sendResponse({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32603, message: caughtError.message || "取得方案調整歷程失敗" },
           });
         }
         return;
