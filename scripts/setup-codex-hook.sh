@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN_PATH="$SCRIPT_DIR/bin/codex-usage"
+SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN_PATH="$SCRIPT_DIRECTORY/bin/codex-usage"
 CODEX_CONFIG="$HOME/.codex/config.toml"
 
 echo "[設定] 開始配置 Codex APP 與 CLI 整合..."

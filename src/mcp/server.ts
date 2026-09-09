@@ -7,31 +7,31 @@ import { HistoryDatabase } from "../core/history-db.js";
  * 透過標準輸入輸出 (stdio) 運作，零外部相依套件，提供 Codex APP 與 CLI 即時查詢工具
  */
 export async function runMcpServer(): Promise<void> {
-  const db = new HistoryDatabase();
-  await db.init();
-  const quotaClient = new QuotaClient();
+  const database = new HistoryDatabase();
+  await database.init();
+  const quotaClient = new QuotaClient(undefined, database);
 
-  const rl = readline.createInterface({
+  const readlineInterface = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: false,
   });
 
-  const sendResponse = (response: any) => {
-    process.stdout.write(JSON.stringify(response) + "\n");
+  const sendResponse = (responsePayload: any) => {
+    process.stdout.write(JSON.stringify(responsePayload) + "\n");
   };
 
-  rl.on("line", async (line) => {
-    if (!line.trim()) return;
+  readlineInterface.on("line", async (inputLine) => {
+    if (!inputLine.trim()) return;
 
-    let request: any;
+    let jsonRpcRequest: any;
     try {
-      request = JSON.parse(line);
+      jsonRpcRequest = JSON.parse(inputLine);
     } catch {
       return;
     }
 
-    const { id, method, params } = request;
+    const { id, method, params } = jsonRpcRequest;
 
     // 1. 初始化方法
     if (method === "initialize") {
@@ -65,7 +65,7 @@ export async function runMcpServer(): Promise<void> {
           tools: [
             {
               name: "get_codex_quota",
-              description: "取得 Codex 目前帳號的即時剩餘額度 (包含五小時短週期與週用量長週期視窗及重設倒數時間)",
+              description: "取得 Codex 目前帳號的即時剩餘額度 (包含五小時短週期與週用量長週期視窗、重置券數量及重設倒數時間)",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -78,7 +78,7 @@ export async function runMcpServer(): Promise<void> {
             },
             {
               name: "get_codex_usage_history",
-              description: "取得 Codex 的 Token 消耗歷史紀錄與今日使用量統計",
+              description: "取得 Codex 的 Token 消耗歷史紀錄與今日使用量統計 (包含主程式與 subAgent 分離資料及 USD 換算金額)",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -90,6 +90,41 @@ export async function runMcpServer(): Promise<void> {
                     type: "string",
                     description: "指定模型名稱篩選 (選填)",
                   },
+                  agent_role: {
+                    type: "string",
+                    description: "代理人角色篩選 (main 或 subagent，選填)",
+                  },
+                },
+              },
+            },
+            {
+              name: "get_codex_settlement_report",
+              description: "取得 Token 消耗與官方 API 美元金額的多週期結算報表 (支援 daily、weekly、monthly、yearly)",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  period: {
+                    type: "string",
+                    enum: ["daily", "weekly", "monthly", "yearly"],
+                    description: "結算週期類型 (預設 daily)",
+                  },
+                  limit: {
+                    type: "number",
+                    description: "回傳之週期筆數上限 (預設 14)",
+                  },
+                },
+              },
+            },
+            {
+              name: "get_codex_reset_events",
+              description: "查詢 OpenAI 配額重置事件與重置券發送/使用歷史紀錄",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  limit: {
+                    type: "number",
+                    description: "回傳紀錄筆數上限 (預設 20)",
+                  },
                 },
               },
             },
@@ -99,14 +134,14 @@ export async function runMcpServer(): Promise<void> {
       return;
     }
 
-    // 3. 執行工具呼叫 (直接從 SQLite 讀取，零 I/O 阻塞)
+    // 3. 執行工具呼叫
     if (method === "tools/call") {
       const toolName = params?.name;
-      const args = params?.arguments || {};
+      const toolArguments = params?.arguments || {};
 
       if (toolName === "get_codex_quota") {
         try {
-          const snapshot = await quotaClient.getQuotaSnapshot(args.force_refresh === true);
+          const quotaSnapshot = await quotaClient.getQuotaSnapshot(toolArguments.force_refresh === true);
           sendResponse({
             jsonrpc: "2.0",
             id,
@@ -114,16 +149,16 @@ export async function runMcpServer(): Promise<void> {
               content: [
                 {
                   type: "text",
-                  text: JSON.stringify(snapshot, null, 2),
+                  text: JSON.stringify(quotaSnapshot, null, 2),
                 },
               ],
             },
           });
-        } catch (err: any) {
+        } catch (caughtError: any) {
           sendResponse({
             jsonrpc: "2.0",
             id,
-            error: { code: -32603, message: err.message || "取得配額失敗" },
+            error: { code: -32603, message: caughtError.message || "取得配額失敗" },
           });
         }
         return;
@@ -131,12 +166,16 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_usage_history") {
         try {
-          const limit = typeof args.limit === "number" ? args.limit : 10;
-          const { records, total } = db.queryRecords({ limit, model: args.model });
+          const recordLimit = typeof toolArguments.limit === "number" ? toolArguments.limit : 10;
+          const { records, total } = database.queryRecords({
+            limit: recordLimit,
+            model: toolArguments.model,
+            agentRole: toolArguments.agent_role,
+          });
 
           const todayMidnight = new Date();
           todayMidnight.setHours(0, 0, 0, 0);
-          const todaySummary = db.getSummary(todayMidnight.getTime());
+          const todaySummary = database.getSummary(todayMidnight.getTime());
 
           sendResponse({
             jsonrpc: "2.0",
@@ -154,11 +193,75 @@ export async function runMcpServer(): Promise<void> {
               ],
             },
           });
-        } catch (err: any) {
+        } catch (caughtError: any) {
           sendResponse({
             jsonrpc: "2.0",
             id,
-            error: { code: -32603, message: err.message || "取得消耗歷史失敗" },
+            error: { code: -32603, message: caughtError.message || "取得消耗歷史失敗" },
+          });
+        }
+        return;
+      }
+
+      if (toolName === "get_codex_settlement_report") {
+        try {
+          const settlementPeriod = toolArguments.period === "weekly" || toolArguments.period === "monthly" || toolArguments.period === "yearly"
+            ? toolArguments.period
+            : "daily";
+          const periodLimit = typeof toolArguments.limit === "number" ? toolArguments.limit : 14;
+          const settlementRecords = database.getSettlementRecords(settlementPeriod, periodLimit);
+
+          sendResponse({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    period: settlementPeriod,
+                    count: settlementRecords.length,
+                    records: settlementRecords,
+                  }, null, 2),
+                },
+              ],
+            },
+          });
+        } catch (caughtError: any) {
+          sendResponse({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32603, message: caughtError.message || "取得結算報表失敗" },
+          });
+        }
+        return;
+      }
+
+      if (toolName === "get_codex_reset_events") {
+        try {
+          const eventLimit = typeof toolArguments.limit === "number" ? toolArguments.limit : 20;
+          const resetEvents = database.getResetEvents(eventLimit);
+
+          sendResponse({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    count: resetEvents.length,
+                    events: resetEvents,
+                  }, null, 2),
+                },
+              ],
+            },
+          });
+        } catch (caughtError: any) {
+          sendResponse({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32603, message: caughtError.message || "取得配額重置紀錄失敗" },
           });
         }
         return;

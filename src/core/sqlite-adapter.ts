@@ -12,88 +12,95 @@ export interface PreparedStatement {
 export interface SqliteDb {
   exec(sql: string): void;
   prepare(sql: string): PreparedStatement;
-  transaction<T>(fn: () => T): T;
+  runTransaction<T>(actionCallback: () => T): T;
+  transaction<T>(actionCallback: () => T): T;
   close(): void;
 }
 
 export async function createSqliteDb(filePath: string): Promise<SqliteDb> {
-  const isBun = typeof (globalThis as any).Bun !== "undefined";
+  const bunRuntimeEnvironment = typeof (globalThis as any).Bun !== "undefined";
 
-  if (isBun) {
+  if (bunRuntimeEnvironment) {
     const { Database } = await import("bun:sqlite");
-    const db = new Database(filePath);
-    db.run("PRAGMA journal_mode = WAL;");
-    db.run("PRAGMA synchronous = NORMAL;");
+    const database = new Database(filePath);
+    database.run("PRAGMA journal_mode = WAL;");
+    database.run("PRAGMA synchronous = NORMAL;");
+
+    const runTransaction = <T>(actionCallback: () => T): T => {
+      const transactionRunner = database.transaction(actionCallback);
+      return transactionRunner();
+    };
 
     return {
       exec(sql: string): void {
-        db.run(sql);
+        database.run(sql);
       },
       prepare(sql: string): PreparedStatement {
-        const stmt = db.query(sql);
+        const statement = database.query(sql);
         return {
           run(...params: any[]) {
-            const res = stmt.run(...params);
-            return { changes: res.changes, lastInsertRowid: res.lastInsertRowid };
+            const executionResult = statement.run(...params);
+            return { changes: executionResult.changes, lastInsertRowid: executionResult.lastInsertRowid };
           },
           all(...params: any[]) {
-            return stmt.all(...params);
+            return statement.all(...params);
           },
           get(...params: any[]) {
-            return stmt.get(...params);
+            return statement.get(...params);
           },
         };
       },
-      transaction<T>(fn: () => T): T {
-        const tx = db.transaction(fn);
-        return tx();
-      },
+      runTransaction,
+      transaction: runTransaction,
       close(): void {
-        db.close();
+        database.close();
       },
     };
   } else {
     // Node.js 22+ 內建 node:sqlite
     const { DatabaseSync } = await import("node:sqlite");
-    const db = new DatabaseSync(filePath);
-    db.exec("PRAGMA journal_mode = WAL;");
-    db.exec("PRAGMA synchronous = NORMAL;");
+    const database = new DatabaseSync(filePath);
+    database.exec("PRAGMA journal_mode = WAL;");
+    database.exec("PRAGMA synchronous = NORMAL;");
+
+    const runTransaction = <T>(actionCallback: () => T): T => {
+      database.exec("BEGIN TRANSACTION;");
+      try {
+        const actionResult = actionCallback();
+        database.exec("COMMIT;");
+        return actionResult;
+      } catch (caughtError) {
+        database.exec("ROLLBACK;");
+        throw caughtError;
+      }
+    };
 
     return {
       exec(sql: string): void {
-        db.exec(sql);
+        database.exec(sql);
       },
       prepare(sql: string): PreparedStatement {
-        const stmt = db.prepare(sql);
+        const statement = database.prepare(sql);
         return {
           run(...params: any[]) {
-            const res = stmt.run(...params);
+            const executionResult = statement.run(...params);
             return {
-              changes: Number(res.changes ?? 0),
-              lastInsertRowid: res.lastInsertRowid ?? 0,
+              changes: Number(executionResult.changes ?? 0),
+              lastInsertRowid: executionResult.lastInsertRowid ?? 0,
             };
           },
           all(...params: any[]) {
-            return stmt.all(...params);
+            return statement.all(...params);
           },
           get(...params: any[]) {
-            return stmt.get(...params);
+            return statement.get(...params);
           },
         };
       },
-      transaction<T>(fn: () => T): T {
-        db.exec("BEGIN TRANSACTION;");
-        try {
-          const result = fn();
-          db.exec("COMMIT;");
-          return result;
-        } catch (error) {
-          db.exec("ROLLBACK;");
-          throw error;
-        }
-      },
+      runTransaction,
+      transaction: runTransaction,
       close(): void {
-        db.close();
+        database.close();
       },
     };
   }
