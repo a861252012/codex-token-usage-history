@@ -68,7 +68,13 @@ export function renderQuotaStatus(snapshot: QuotaSnapshot): string {
   }
 
   lines.push("");
-  lines.push(renderWindowLine("五小時配額", snapshot.fiveHour));
+  const isProUser = (snapshot.planType || "").toLowerCase().includes("pro") || snapshot.fiveHour == null;
+
+  if (isProUser) {
+    lines.push(`  五小時配額    : ${COLOR_GREEN}[Pro 方案無限額度 - 僅依週用量控管]${COLOR_RESET}`);
+  } else {
+    lines.push(renderWindowLine("五小時配額", snapshot.fiveHour));
+  }
   lines.push(renderWindowLine("週用量配額", snapshot.weekly));
 
   if (snapshot.additionalLimits.length > 0) {
@@ -287,7 +293,9 @@ export function renderResetEventsTable(events: QuotaResetEvent[]): string {
 
 export function renderPromptString(snapshot: QuotaSnapshot): string {
   const parts: string[] = [];
-  if (snapshot.fiveHour) {
+  const isProUser = (snapshot.planType || "").toLowerCase().includes("pro") || snapshot.fiveHour == null;
+
+  if (!isProUser && snapshot.fiveHour) {
     const remainingPercent = snapshot.fiveHour.remainingPercent;
     parts.push(`5h: ${remainingPercent}%`);
   }

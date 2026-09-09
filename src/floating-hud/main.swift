@@ -1,7 +1,7 @@
 import Cocoa
 import Foundation
 
-// MARK: - 資料模型定義 (語意明確，杜絕縮寫)
+// MARK: - Data Transfer Objects (DTO)
 
 struct WindowQuotaDTO: Codable {
     let usedPercent: Double
@@ -30,6 +30,7 @@ struct TodaySummaryDTO: Codable {
     let inputTokens: Int
     let outputTokens: Int
     let hourlyBurnRate: Int
+    let formattedCostUsd: String?
 }
 
 struct TokenRecordDTO: Codable {
@@ -40,25 +41,32 @@ struct TokenRecordDTO: Codable {
     let weeklyUsedPct: Double?
 }
 
-// MARK: - 點擊互動毛玻璃面板 (支援點選切換心情面板)
+// MARK: - Interactive Effect View with Context Menu
 
 class InteractiveEffectView: NSVisualEffectView {
-    var clickActionHandler: (() -> Void)?
+    var leftClickHandler: (() -> Void)?
+    var contextMenuProvider: (() -> NSMenu)?
 
     override func mouseUp(with event: NSEvent) {
-        let clickLocation = convert(event.locationInWindow, from: nil)
-        // 排除右上角關閉按鈕區域 (最右側 30px)
-        if clickLocation.x < bounds.width - 30 {
-            clickActionHandler?()
+        if event.clickCount == 1 {
+            leftClickHandler?()
         } else {
             super.mouseUp(with: event)
         }
     }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if let menu = contextMenuProvider?() {
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+        } else {
+            super.rightMouseDown(with: event)
+        }
+    }
 }
 
-// MARK: - 浮動視窗面板 (Always-on-Top Floating Panel)
+// MARK: - Modern Always-on-Top Floating Panel
 
-class FloatingHudPanel: NSPanel {
+class ModernFloatingHudPanel: NSPanel {
     init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
@@ -75,29 +83,26 @@ class FloatingHudPanel: NSPanel {
     }
 }
 
-// MARK: - 應用程式主委派 (Application Delegate)
+// MARK: - Application Delegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    private var floatingPanel: FloatingHudPanel!
+    private var floatingPanel: ModernFloatingHudPanel!
     private var containerView: InteractiveEffectView!
 
-    // 寵物狀態與指示燈
-    private var companionVitalityDot: NSView!
-    private var companionMoodLabel: NSTextField!
-    private var firstMetricLabel: NSTextField!
-    private var secondMetricLabel: NSTextField!
-    private var thirdMetricLabel: NSTextField!
-    private var feedingActivityLabel: NSTextField!
-    private var closeButton: NSButton!
+    // UI Elements
+    private var vitalityIndicatorDot: NSView!
+    private var primaryMetricLabel: NSTextField!
 
     private var refreshTimer: Timer?
     private let homeDirectoryPath = FileManager.default.homeDirectoryForCurrentUser.path
     private var previousTotalTokens: Int = 0
     private var feedingAnimationCountdown: Int = 0
     private var latestIncrementTokens: Int = 0
-    private var displayModeIndex: Int = 0 // 0: 配額模式, 1: 戰報模式
 
-    // 快取最新狀態資料以供點擊即時切換
+    // User preferences & toggle state
+    private var displayModeIndex: Int = 0 // 0: Quota, 1: Today Usage
+    private var forceProMode: Bool? = nil // nil = auto detect, true = Pro, false = Standard
+
     private var cachedStatusData: FullStatusDTO?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -108,128 +113,195 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupFloatingWindow() {
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let panelWidth: CGFloat = 560
-        let panelHeight: CGFloat = 38
-        let initialX = screenFrame.origin.x + (screenFrame.width - panelWidth) / 2
-        let initialY = screenFrame.origin.y + screenFrame.height - panelHeight - 14
+        let initialWidth: CGFloat = 142
+        let panelHeight: CGFloat = 28
+        let initialX = screenFrame.origin.x + (screenFrame.width - initialWidth) / 2
+        let initialY = screenFrame.origin.y + screenFrame.height - panelHeight - 12
 
-        let panelRect = NSRect(x: initialX, y: initialY, width: panelWidth, height: panelHeight)
-        floatingPanel = FloatingHudPanel(contentRect: panelRect)
+        let panelRect = NSRect(x: initialX, y: initialY, width: initialWidth, height: panelHeight)
+        floatingPanel = ModernFloatingHudPanel(contentRect: panelRect)
 
-        // 膠囊毛玻璃主容器
-        containerView = InteractiveEffectView(frame: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight))
+        // Glassmorphism Container
+        containerView = InteractiveEffectView(frame: NSRect(x: 0, y: 0, width: initialWidth, height: panelHeight))
         containerView.material = .hudWindow
         containerView.blendingMode = .behindWindow
         containerView.state = .active
         containerView.wantsLayer = true
-        containerView.layer?.cornerRadius = 19
+        containerView.layer?.cornerRadius = panelHeight / 2
         containerView.layer?.masksToBounds = true
-        containerView.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
-        containerView.layer?.borderWidth = 1.0
+        containerView.layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
+        containerView.layer?.borderWidth = 0.8
 
-        // 綁定點擊寵物切換心情面板
-        containerView.clickActionHandler = { [weak self] in
-            self?.toggleDisplayMode()
+        // Interactions
+        containerView.leftClickHandler = { [weak self] in
+            self?.toggleDisplayView()
+        }
+        containerView.contextMenuProvider = { [weak self] in
+            return self?.buildContextMenu() ?? NSMenu()
         }
 
-        buildSubviews(panelWidth: panelWidth, panelHeight: panelHeight)
+        buildSubviews(panelHeight: panelHeight)
 
         floatingPanel.contentView = containerView
         floatingPanel.makeKeyAndOrderFront(nil)
     }
 
-    private func buildSubviews(panelWidth: CGFloat, panelHeight: CGFloat) {
-        // 1. 寵物狀態指示燈
-        companionVitalityDot = NSView(frame: NSRect(x: 14, y: (panelHeight - 8) / 2, width: 8, height: 8))
-        companionVitalityDot.wantsLayer = true
-        companionVitalityDot.layer?.cornerRadius = 4
-        companionVitalityDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
-        containerView.addSubview(companionVitalityDot)
+    private func buildSubviews(panelHeight: CGFloat) {
+        // 1. Vitality Dot (Breathing LED indicator)
+        vitalityIndicatorDot = NSView(frame: NSRect(x: 10, y: (panelHeight - 7) / 2, width: 7, height: 7))
+        vitalityIndicatorDot.wantsLayer = true
+        vitalityIndicatorDot.layer?.cornerRadius = 3.5
+        vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
+        containerView.addSubview(vitalityIndicatorDot)
 
-        // 2. 寵物稱號與狀態 (例如 [活力飽滿] 或 [正在進食 +42k])
-        companionMoodLabel = createTextLabel(xPosition: 28, yPosition: 10, width: 125, height: 18)
-        companionMoodLabel.font = NSFont.systemFont(ofSize: 12, weight: .bold)
-        companionMoodLabel.stringValue = "[Codex 寵物] 甦醒中"
-        companionMoodLabel.textColor = NSColor.systemGreen
-        containerView.addSubview(companionMoodLabel)
-
-        // 分隔線 1
-        let separatorOne = createVerticalSeparator(xPosition: 156, panelHeight: panelHeight)
-        containerView.addSubview(separatorOne)
-
-        // 3. 第一項指標 (5小時額度 或 今日請求數)
-        firstMetricLabel = createTextLabel(xPosition: 168, yPosition: 10, width: 95, height: 18)
-        firstMetricLabel.stringValue = "5h: 100%"
-        containerView.addSubview(firstMetricLabel)
-
-        // 分隔線 2
-        let separatorTwo = createVerticalSeparator(xPosition: 265, panelHeight: panelHeight)
-        containerView.addSubview(separatorTwo)
-
-        // 4. 第二項指標 (週用量額度 或 燃燒率)
-        secondMetricLabel = createTextLabel(xPosition: 277, yPosition: 10, width: 95, height: 18)
-        secondMetricLabel.stringValue = "7d: 100%"
-        containerView.addSubview(secondMetricLabel)
-
-        // 分隔線 3
-        let separatorThree = createVerticalSeparator(xPosition: 374, panelHeight: panelHeight)
-        containerView.addSubview(separatorThree)
-
-        // 5. 第三項指標 (本日累積用量 或 重設倒數)
-        thirdMetricLabel = createTextLabel(xPosition: 386, yPosition: 10, width: 140, height: 18)
-        thirdMetricLabel.stringValue = "本日: 0 tokens"
-        containerView.addSubview(thirdMetricLabel)
-
-        // 6. 關閉按鈕
-        closeButton = NSButton(frame: NSRect(x: panelWidth - 26, y: (panelHeight - 16) / 2, width: 16, height: 16))
-        closeButton.bezelStyle = .circular
-        closeButton.title = "×"
-        closeButton.font = NSFont.systemFont(ofSize: 12, weight: .bold)
-        closeButton.isBordered = false
-        closeButton.target = self
-        closeButton.action = #selector(terminateApplication)
-        containerView.addSubview(closeButton)
+        // 2. Main Metric Label (Modern typography)
+        primaryMetricLabel = NSTextField(frame: NSRect(x: 23, y: (panelHeight - 16) / 2 - 1, width: 110, height: 16))
+        primaryMetricLabel.isEditable = false
+        primaryMetricLabel.isSelectable = false
+        primaryMetricLabel.isBezeled = false
+        primaryMetricLabel.drawsBackground = false
+        primaryMetricLabel.textColor = NSColor.white
+        primaryMetricLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        primaryMetricLabel.stringValue = "Loading..."
+        containerView.addSubview(primaryMetricLabel)
     }
 
-    private func createVerticalSeparator(xPosition: CGFloat, panelHeight: CGFloat) -> NSView {
-        let separator = NSView(frame: NSRect(x: xPosition, y: 8, width: 1, height: panelHeight - 16))
-        separator.wantsLayer = true
-        separator.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.12).cgColor
-        return separator
-    }
-
-    private func createTextLabel(xPosition: CGFloat, yPosition: CGFloat, width: CGFloat, height: CGFloat) -> NSTextField {
-        let label = NSTextField(frame: NSRect(x: xPosition, y: yPosition, width: width, height: height))
-        label.isEditable = false
-        label.isSelectable = false
-        label.isBezeled = false
-        label.drawsBackground = false
-        label.textColor = NSColor.labelColor
-        label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        return label
-    }
-
-    private func toggleDisplayMode() {
+    private func toggleDisplayView() {
         displayModeIndex = (displayModeIndex + 1) % 2
         if let statusData = cachedStatusData {
             updateUserInterface(with: statusData)
         }
     }
 
-    private func startPeriodicTimer() {
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            self?.loadLatestData()
+    private func determineProUser(snapshot: QuotaSnapshotDTO) -> Bool {
+        if let forced = forceProMode {
+            return forced
+        }
+        let plan = snapshot.planType?.lowercased() ?? ""
+        if plan.contains("pro") {
+            return true
+        }
+        // If 5-hour window is null or 0% while weekly has activity
+        if snapshot.fiveHour == nil {
+            return true
+        }
+        return false
+    }
+
+    private func buildContextMenu() -> NSMenu {
+        let menu = NSMenu(title: "Codex HUD")
+
+        let planName = cachedStatusData?.snapshot.planType ?? "Pro"
+        let headerTitle = "Codex Token Monitor (\(planName))"
+        let headerItem = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
+        headerItem.isEnabled = false
+        menu.addItem(headerItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        if let snapshot = cachedStatusData?.snapshot {
+            let weeklyRem = Int(snapshot.weekly?.remainingPercent ?? 100)
+            let weeklyCountdown = snapshot.weekly?.resetCountdown ?? "Ready"
+            let weeklyItem = NSMenuItem(title: "Weekly Quota: \(weeklyRem)% left (Reset: \(weeklyCountdown))", action: nil, keyEquivalent: "")
+            weeklyItem.isEnabled = false
+            menu.addItem(weeklyItem)
+
+            if let fiveHour = snapshot.fiveHour {
+                let fiveRem = Int(fiveHour.remainingPercent)
+                let fiveCountdown = fiveHour.resetCountdown
+                let fiveItem = NSMenuItem(title: "5-Hour Quota: \(fiveRem)% left (Reset: \(fiveCountdown))", action: nil, keyEquivalent: "")
+                fiveItem.isEnabled = false
+                menu.addItem(fiveItem)
+            } else {
+                let unlimItem = NSMenuItem(title: "5-Hour Quota: Unlimited (Pro Tier)", action: nil, keyEquivalent: "")
+                unlimItem.isEnabled = false
+                menu.addItem(unlimItem)
+            }
+
+            if let credits = snapshot.resetCredits, credits > 0 {
+                let creditsItem = NSMenuItem(title: "Reset Credits: \(credits) available", action: nil, keyEquivalent: "")
+                creditsItem.isEnabled = false
+                menu.addItem(creditsItem)
+            }
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
+        if let summary = cachedStatusData?.todaySummary {
+            let totalFormatted = formatTokenCount(tokens: summary.totalTokens)
+            let costText = summary.formattedCostUsd ?? "$0.00"
+            let summaryItem = NSMenuItem(title: "Today: \(totalFormatted) tokens (\(costText) USD)", action: nil, keyEquivalent: "")
+            summaryItem.isEnabled = false
+            menu.addItem(summaryItem)
+
+            let requestsItem = NSMenuItem(title: "Requests: \(summary.requests) calls", action: nil, keyEquivalent: "")
+            requestsItem.isEnabled = false
+            menu.addItem(requestsItem)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
+        let webItem = NSMenuItem(title: "Open Web Dashboard", action: #selector(openWebDashboard), keyEquivalent: "d")
+        webItem.target = self
+        menu.addItem(webItem)
+
+        let refreshItem = NSMenuItem(title: "Force Refresh", action: #selector(forceRefreshData), keyEquivalent: "r")
+        refreshItem.target = self
+        menu.addItem(refreshItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let isPro = cachedStatusData?.snapshot != nil ? determineProUser(snapshot: cachedStatusData!.snapshot) : true
+        let toggleModeTitle = isPro ? "Switch to Standard View (5h + Weekly)" : "Switch to Pro View (Weekly Only)"
+        let toggleModeItem = NSMenuItem(title: toggleModeTitle, action: #selector(toggleProModeOverride), keyEquivalent: "")
+        toggleModeItem.target = self
+        menu.addItem(toggleModeItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(title: "Quit Codex HUD", action: #selector(terminateApplication), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        return menu
+    }
+
+    @objc private func openWebDashboard() {
+        if let url = URL(string: "http://127.0.0.1:10200") {
+            NSWorkspace.shared.open(url)
         }
     }
 
-    @objc private func loadLatestData() {
+    @objc private func forceRefreshData() {
+        loadLatestData(forceRefresh: true)
+    }
+
+    @objc private func toggleProModeOverride() {
+        if let current = forceProMode {
+            forceProMode = !current
+        } else {
+            let isPro = cachedStatusData?.snapshot != nil ? determineProUser(snapshot: cachedStatusData!.snapshot) : true
+            forceProMode = !isPro
+        }
+        if let status = cachedStatusData {
+            updateUserInterface(with: status)
+        }
+    }
+
+    private func startPeriodicTimer() {
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.loadLatestData(forceRefresh: false)
+        }
+    }
+
+    private func loadLatestData(forceRefresh: Bool = false) {
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self = self else { return }
 
             var fetchedStatus: FullStatusDTO?
 
-            // 1. 優先向本機 HTTP /api/status 請求最新聚合資料
-            if let serverUrl = URL(string: "http://127.0.0.1:10200/api/status") {
+            let urlString = "http://127.0.0.1:10200/api/status" + (forceRefresh ? "?force=true" : "")
+            if let serverUrl = URL(string: urlString) {
                 var request = URLRequest(url: serverUrl)
                 request.timeoutInterval = 0.8
                 let semaphore = DispatchSemaphore(value: 0)
@@ -244,7 +316,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 _ = semaphore.wait(timeout: .now() + 0.8)
             }
 
-            // 2. 若 HTTP 伺服器未運行，以本機快照檔案為備援
             if fetchedStatus == nil {
                 let cacheFilePath = "\(self.homeDirectoryPath)/.codex/codex_quota_snapshot.json"
                 if let rawData = try? Data(contentsOf: URL(fileURLWithPath: cacheFilePath)),
@@ -270,7 +341,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func queryTodaySummaryFromDatabase() -> TodaySummaryDTO {
         let databasePath = "\(homeDirectoryPath)/.codex/token_usage_history.sqlite"
         guard FileManager.default.fileExists(atPath: databasePath) else {
-            return TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0)
+            return TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0, formattedCostUsd: "$0.00")
         }
 
         let process = Process()
@@ -278,7 +349,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let startOfDayTimestamp = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000)
         process.arguments = [
             databasePath,
-            "SELECT COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) FROM token_records WHERE timestamp >= \(startOfDayTimestamp);"
+            "SELECT COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cost_usd), 0.0) FROM token_records WHERE timestamp >= \(startOfDayTimestamp);"
         ]
 
         let outputPipe = Pipe()
@@ -289,23 +360,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         if let outputString = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
             let components = outputString.components(separatedBy: "|")
-            if components.count >= 4 {
+            if components.count >= 5 {
                 let totalRequests = Int(components[0]) ?? 0
                 let totalTokens = Int(components[1]) ?? 0
                 let inputTokens = Int(components[2]) ?? 0
                 let outputTokens = Int(components[3]) ?? 0
-                return TodaySummaryDTO(requests: totalRequests, totalTokens: totalTokens, inputTokens: inputTokens, outputTokens: outputTokens, hourlyBurnRate: 0)
+                let costDouble = Double(components[4]) ?? 0.0
+                return TodaySummaryDTO(
+                    requests: totalRequests,
+                    totalTokens: totalTokens,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    hourlyBurnRate: 0,
+                    formattedCostUsd: String(format: "$%.2f", costDouble)
+                )
             }
         }
 
-        return TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0)
+        return TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0, formattedCostUsd: "$0.00")
     }
 
     private func updateUserInterface(with statusData: FullStatusDTO) {
         let snapshot = statusData.snapshot
         let summary = statusData.todaySummary
+        let isProUser = determineProUser(snapshot: snapshot)
 
-        // 偵測 Token 增量跳動 (進食動態反應)
+        // Token Feeding animation check
         if previousTotalTokens > 0 && summary.totalTokens > previousTotalTokens {
             latestIncrementTokens = summary.totalTokens - previousTotalTokens
             feedingAnimationCountdown = 3
@@ -314,48 +394,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         previousTotalTokens = summary.totalTokens
 
-        // 1. 計算寵物活力狀態與情緒
-        let fiveHourRemaining = Int(snapshot.fiveHour?.remainingPercent ?? 100)
         let weeklyRemaining = Int(snapshot.weekly?.remainingPercent ?? 100)
-        let minimumQuotaPercent = min(fiveHourRemaining, weeklyRemaining)
+        let fiveHourRemaining = Int(snapshot.fiveHour?.remainingPercent ?? 100)
 
-        // 若正處於進食反應中，優先顯示進食動態
+        // Color status logic
+        let effectiveRemaining = isProUser ? weeklyRemaining : min(weeklyRemaining, fiveHourRemaining)
         if feedingAnimationCountdown > 0 {
-            companionMoodLabel.stringValue = "正在進食 +\(formatTokenCount(tokens: latestIncrementTokens))"
-            companionMoodLabel.textColor = NSColor.systemTeal
-            companionVitalityDot.layer?.backgroundColor = NSColor.systemTeal.cgColor
+            vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemTeal.cgColor
+        } else if effectiveRemaining >= 50 {
+            vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
+        } else if effectiveRemaining >= 20 {
+            vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemYellow.cgColor
         } else {
-            if minimumQuotaPercent >= 70 {
-                companionMoodLabel.stringValue = "[活力飽滿]"
-                companionMoodLabel.textColor = NSColor.systemGreen
-                companionVitalityDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
-            } else if minimumQuotaPercent >= 30 {
-                companionMoodLabel.stringValue = "[穩定運作]"
-                companionMoodLabel.textColor = NSColor.systemCyan
-                companionVitalityDot.layer?.backgroundColor = NSColor.systemCyan.cgColor
-            } else if minimumQuotaPercent >= 15 {
-                companionMoodLabel.stringValue = "[感到飢餓]"
-                companionMoodLabel.textColor = NSColor.systemYellow
-                companionVitalityDot.layer?.backgroundColor = NSColor.systemYellow.cgColor
+            vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemRed.cgColor
+        }
+
+        // Text & Layout formatting
+        var displayString = ""
+        var targetWidth: CGFloat = 138
+
+        if feedingAnimationCountdown > 0 {
+            displayString = "+\(formatTokenCount(tokens: latestIncrementTokens))"
+            primaryMetricLabel.textColor = NSColor.systemTeal
+        } else {
+            primaryMetricLabel.textColor = NSColor.white
+
+            if displayModeIndex == 1 {
+                // Secondary View: Today's Tokens
+                displayString = "\(formatTokenCount(tokens: summary.totalTokens))"
+                targetWidth = 142
             } else {
-                companionMoodLabel.stringValue = "[極度疲憊]"
-                companionMoodLabel.textColor = NSColor.systemRed
-                companionVitalityDot.layer?.backgroundColor = NSColor.systemRed.cgColor
+                // Primary Quota View
+                if isProUser {
+                    // Pro user: Only display weekly quota (No useless 5h 100%)
+                    displayString = "7d: \(weeklyRemaining)%"
+                    targetWidth = 126
+                } else {
+                    // Non-Pro user: Display both 5h and weekly quota
+                    displayString = "5h: \(fiveHourRemaining)% · 7d: \(weeklyRemaining)%"
+                    targetWidth = 196
+                }
             }
         }
 
-        // 2. 依據當前顯示模式切換指標展示
-        if displayModeIndex == 0 {
-            // 模式 0: 配額模式 (Quota View)
-            firstMetricLabel.stringValue = "5h: \(fiveHourRemaining)%"
-            secondMetricLabel.stringValue = "7d: \(weeklyRemaining)%"
-            thirdMetricLabel.stringValue = "本日: \(formatTokenCount(tokens: summary.totalTokens))"
-        } else {
-            // 模式 1: 戰報模式 (Daily Battle Stats View)
-            firstMetricLabel.stringValue = "請求: \(summary.requests)次"
-            secondMetricLabel.stringValue = "燃燒: \(formatTokenCount(tokens: summary.hourlyBurnRate))/h"
-            let countdownString = snapshot.fiveHour?.resetCountdown ?? "充足"
-            thirdMetricLabel.stringValue = "重設: \(countdownString)"
+        primaryMetricLabel.stringValue = displayString
+
+        // Smooth width adjustment if layout mode changes
+        let currentFrame = floatingPanel.frame
+        if abs(currentFrame.width - targetWidth) > 1 {
+            let newX = currentFrame.origin.x + (currentFrame.width - targetWidth) / 2
+            let newRect = NSRect(x: newX, y: currentFrame.origin.y, width: targetWidth, height: 28)
+            floatingPanel.setFrame(newRect, display: true, animate: false)
+            containerView.frame = NSRect(x: 0, y: 0, width: targetWidth, height: 28)
+            primaryMetricLabel.frame = NSRect(x: 23, y: (28 - 16) / 2 - 1, width: targetWidth - 28, height: 16)
         }
     }
 
@@ -375,7 +466,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - 主進入點
+// MARK: - Main Entry Point
 
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)

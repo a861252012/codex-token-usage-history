@@ -284,11 +284,11 @@ async function main(): Promise<void> {
       return;
     }
 
-    console.log(renderQuotaStatus(snapshot));
+    console.log(renderQuotaStatus(quotaSnapshot));
     console.log("");
-    console.log(renderUsageSummary(summary, "本日 Token 消耗統計 (從 00:00 起算)"));
+    console.log(renderUsageSummary(todaySummary, "本日 Token 消耗統計 (從 00:00 起算)"));
     console.log("");
-    console.log(renderRecentRecords(records, 8));
+    console.log(renderRecentRecords(recentRecords, 8));
     console.log(`\n提示: 執行 'codex-usage hud' 可跳出置頂懸浮列邊用邊看，'codex-usage report' 可查看多週期結算，'codex-usage serve' 可開啟 Web 儀表板。`);
     database.close();
   }
