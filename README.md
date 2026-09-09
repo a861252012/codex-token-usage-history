@@ -218,10 +218,19 @@ RPROMPT="$(codex_quota_prompt) $RPROMPT"
 
 Pro users will see `[Codex 7d: 37%]`, while standard users will see `[Codex 5h: 100% | 7d: 37%]`.
 
-### 7. Modern Web Dashboard (`codex-usage serve`)
+### 7. Unified Comprehensive Dashboard (`codex-usage dashboard`)
+
+All dashboard interfaces are consolidated into a single intuitive command:
 
 ```bash
-codex-usage serve --port 10200 --open
+# Launch modern real-time Web Dashboard (automatically opens browser)
+codex-usage dashboard
+
+# Or switch to terminal TUI mode:
+codex-usage dashboard --terminal
+
+# Or generate multi-period financial settlement statement:
+codex-usage dashboard --report --period weekly
 ```
 
 Visit `http://127.0.0.1:10200`:
@@ -229,6 +238,7 @@ Visit `http://127.0.0.1:10200`:
 - Adaptive Pro cards (automatically hides redundant 5h 100% meters for Pro tier).
 - 24-hour token burn histogram rendered in pure SVG.
 - Interactive multi-period settlement tables.
+- Subscription plan upgrade/downgrade transition history.
 - RFC 4180-compliant CSV export with subAgent filters.
 
 ### 8. Native Codex App & Claude Desktop Integration (MCP)
@@ -299,20 +309,26 @@ codex-token-usage-history/
 
 1. **極簡圓形環狀進度靈動球 (Always-on-Top Circular Ring Orb HUD)**：
    - 56px × 56px 精緻正圓形毛玻璃 Widget，置頂懸浮於所有視窗之上，擺脫長條扁平外觀。
+   - **右上角快速關閉按鈕 (✕)**：右上角配備精巧微型關閉按鈕，平時微透明低調，游標懸停（Hover）時平滑浮現並轉為警示紅，點擊即可一秒退出懸浮球。
    - **預設科技藍與自訂色彩**：出廠預設為質感**科技電光藍**（Electric Blue `#0A84FF`），並內建 7 款預設主題色（賽博青藍、翡翠綠、賽博紫、日落橘、亮粉紅、極簡白），更可直接喚起 macOS 原生系統調色盤（Color Picker）自訂任意色彩，偏好設定自動持久化於 `~/.codex/hud_config.json`。
    - **4 檔尺寸與字體自由切換**：支援**小 (46px)**、**預設 (56px)**、**大 (68px)**、**超大 (84px)** 四種檔位，圓形幾何、進度線寬與字體大小等比例同步縮放。
    - **環狀進度條**：以 QuartzCore 繪製順時針動態進度弧線，支援智慧低電量（<20%）轉紅警示切換。
    - **Pro 用戶極致精簡**：自動識別 Pro / 100$+ 方案，僅顯示週用量（例如上方標籤 `7d`，中心數字 `37%`），消除無意義的「5h: 100%」與贅述文字。非 Pro 模式則精巧並列 5h 與 7d。
    - **桌面寵物級進食反饋**：Codex 消耗 Token 時觸發彈性縮放跳動並微光顯示 `+XXk`。
-   - **多模式切換與右鍵選單**：左鍵點擊在週配額、今日總 Token、今日美金金額循環切換；右鍵彈出完整配額數據、方案異動紀錄與尺寸/配色控制選單。
-2. **多週期結算體系 (日/週/月/年) 與方案升降級紀錄**：
-   - 執行 `codex-usage report --period daily|weekly|monthly|yearly` 隨時產生完整的 Token 與官方美金結算報表，並同步呈現帳號方案升級/降級歷程。
+   - **多模式切換與右鍵選單**：左鍵點擊在週配額、今日總 Token、今日美金金額循環切換；右鍵彈出完整配額數據、方案異動紀錄與尺寸/配色控制選單，支援一鍵喚起完整儀表板。
+2. **全方位整合儀表板單一指令 (`codex-usage dashboard`)**：
+   - 儀表板指令全數匯總成單一指令：`codex-usage dashboard`（或 `npm run dashboard`）！
+   - 預設直接開啟現代化 Web 即時儀表板並自動彈出瀏覽器。
+   - 支援 `--terminal`（或 `-t`）切換為全螢幕 TUI 動態監控儀表板。
+   - 支援 `--report`（或 `-r`）切換為終端機多週期結算報表儀表板。
+3. **多週期結算體系 (日/週/月/年) 與方案升降級紀錄**：
+   - 隨時產生完整的 Token 與官方美金結算報表，並同步呈現帳號方案升級/降級歷程。
    - 執行 `codex-usage plans` 可單獨檢視方案歷程紀錄。
-3. **OpenAI 配額重置事件與重置券紀錄**：
+4. **OpenAI 配額重置事件與重置券紀錄**：
    - 自動捕捉週期性重置與重置券（Reset Credits）發送/消耗紀錄，支援 `codex-usage resets` 隨時回溯。
-4. **subAgent 消耗分離標記**：
+5. **subAgent 消耗分離標記**：
    - 區分主程式與背景 subAgent 的 Token 佔比與花費。
-5. **Codex APP 直接對話支援 (MCP)**：
+6. **Codex APP 直接對話支援 (MCP)**：
    - 於對話中直接詢問「目前剩餘額度」、「本週消耗結算」、「帳號方案歷程」等。
 
 ---

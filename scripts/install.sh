@@ -52,9 +52,10 @@ cat << PLIST_EOF > "$PLIST_PATH"
   <key>ProgramArguments</key>
   <array>
     <string>$SCRIPT_DIRECTORY/bin/codex-usage</string>
-    <string>serve</string>
+    <string>dashboard</string>
     <string>--port</string>
     <string>10200</string>
+    <string>--no-open</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -82,9 +83,9 @@ echo ""
 echo "=============================================================================="
 echo " [安裝完成] 所有功能已就緒！"
 echo "  1. 終端機狀態查看: codex-usage"
-echo "  2. 即時動態監控:   codex-usage live"
-echo "  3. 查詢歷史紀錄:   codex-usage history --limit 50"
-echo "  4. 啟動 Web 儀表板: codex-usage serve --open"
+echo "  2. 啟動全方位儀表板: codex-usage dashboard"
+echo "  3. 啟動置頂懸浮球: codex-usage hud"
+echo "  4. 查詢歷史流水帳: codex-usage history --limit 50"
 echo "  5. 啟動 MacBook 狀態列小圖示: $SCRIPT_DIR/bin/codex-menubar &"
 echo "  6. Codex APP / CLI 原生對話查詢: 詢問「目前剩餘額度」或「今日 Token 消耗」即可"
 echo "=============================================================================="

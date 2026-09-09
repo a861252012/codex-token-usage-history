@@ -63,6 +63,9 @@ struct WidgetSizePreset {
     let valueFontSize: CGFloat
     let valueY: CGFloat
     let valueHeight: CGFloat
+    let closeButtonSize: CGFloat
+    let closeButtonOffset: CGFloat
+    let closeButtonFontSize: CGFloat
 }
 
 let availableSizePresets: [WidgetSizePreset] = [
@@ -78,7 +81,10 @@ let availableSizePresets: [WidgetSizePreset] = [
         tagHeight: 10.0,
         valueFontSize: 11.0,
         valueY: 9.0,
-        valueHeight: 15.0
+        valueHeight: 15.0,
+        closeButtonSize: 11.5,
+        closeButtonOffset: 3.5,
+        closeButtonFontSize: 7.5
     ),
     WidgetSizePreset(
         key: "default",
@@ -92,7 +98,10 @@ let availableSizePresets: [WidgetSizePreset] = [
         tagHeight: 12.0,
         valueFontSize: 13.5,
         valueY: 12.0,
-        valueHeight: 18.0
+        valueHeight: 18.0,
+        closeButtonSize: 13.5,
+        closeButtonOffset: 4.5,
+        closeButtonFontSize: 8.5
     ),
     WidgetSizePreset(
         key: "large",
@@ -106,7 +115,10 @@ let availableSizePresets: [WidgetSizePreset] = [
         tagHeight: 14.0,
         valueFontSize: 16.5,
         valueY: 14.0,
-        valueHeight: 22.0
+        valueHeight: 22.0,
+        closeButtonSize: 15.0,
+        closeButtonOffset: 5.5,
+        closeButtonFontSize: 9.5
     ),
     WidgetSizePreset(
         key: "extraLarge",
@@ -120,7 +132,10 @@ let availableSizePresets: [WidgetSizePreset] = [
         tagHeight: 16.0,
         valueFontSize: 20.0,
         valueY: 17.0,
-        valueHeight: 26.0
+        valueHeight: 26.0,
+        closeButtonSize: 17.5,
+        closeButtonOffset: 7.0,
+        closeButtonFontSize: 11.0
     )
 ]
 
@@ -181,11 +196,123 @@ struct TokenRecordDTO: Codable {
     let weeklyUsedPct: Double?
 }
 
+// MARK: - Close Badge Button Component (Top-Right Quick Dismiss)
+
+class CloseBadgeButton: NSView {
+    var closeActionHandler: (() -> Void)?
+
+    private let symbolLabel = NSTextField()
+    private var trackingAreaInstance: NSTrackingArea?
+    private var buttonHoverActive: Bool = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureComponent()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureComponent()
+    }
+
+    private func configureComponent() {
+        self.wantsLayer = true
+        layer?.masksToBounds = true
+        updateCornerRadius()
+
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.40).cgColor
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
+        layer?.borderWidth = 0.8
+
+        symbolLabel.isEditable = false
+        symbolLabel.isSelectable = false
+        symbolLabel.isBezeled = false
+        symbolLabel.drawsBackground = false
+        symbolLabel.alignment = .center
+        symbolLabel.textColor = NSColor.white.withAlphaComponent(0.85)
+        symbolLabel.font = NSFont.systemFont(ofSize: 8.5, weight: .bold)
+        symbolLabel.stringValue = "✕"
+        symbolLabel.frame = NSRect(x: 0, y: -0.5, width: bounds.width, height: bounds.height)
+
+        addSubview(symbolLabel)
+        self.alphaValue = 0.35
+    }
+
+    func updateCornerRadius() {
+        layer?.cornerRadius = min(bounds.width, bounds.height) / 2.0
+    }
+
+    func updateLayoutSize(dimension: CGFloat, fontSize: CGFloat) {
+        self.frame.size = CGSize(width: dimension, height: dimension)
+        updateCornerRadius()
+        symbolLabel.frame = NSRect(x: 0, y: -0.5, width: dimension, height: dimension)
+        symbolLabel.font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+    }
+
+    func setContainerHovered(_ hovered: Bool) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            if buttonHoverActive {
+                self.alphaValue = 1.0
+            } else {
+                self.alphaValue = hovered ? 0.95 : 0.35
+            }
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existingArea = trackingAreaInstance {
+            removeTrackingArea(existingArea)
+        }
+        let trackingOptions: NSTrackingArea.Options = [
+            .mouseEnteredAndExited,
+            .activeAlways,
+            .inVisibleRect
+        ]
+        let newArea = NSTrackingArea(rect: bounds, options: trackingOptions, owner: self, userInfo: nil)
+        addTrackingArea(newArea)
+        trackingAreaInstance = newArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        buttonHoverActive = true
+        self.alphaValue = 1.0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.92).cgColor
+            layer?.borderColor = NSColor.white.withAlphaComponent(0.65).cgColor
+            symbolLabel.textColor = NSColor.white
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        buttonHoverActive = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            layer?.backgroundColor = NSColor.black.withAlphaComponent(0.40).cgColor
+            layer?.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
+            symbolLabel.textColor = NSColor.white.withAlphaComponent(0.85)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        // 攔截滑鼠按下事件，避免觸發父層視窗拖曳
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if buttonHoverActive {
+            closeActionHandler?()
+        }
+    }
+}
+
 // MARK: - Circular Ring View Component
 
 class CircularOrbView: NSVisualEffectView {
     var leftClickHandler: (() -> Void)?
     var contextMenuProvider: (() -> NSMenu)?
+    var hoverChangeHandler: ((Bool) -> Void)?
 
     private let backgroundTrackLayer = CAShapeLayer()
     private let dynamicProgressLayer = CAShapeLayer()
@@ -321,11 +448,13 @@ class CircularOrbView: NSVisualEffectView {
     override func mouseEntered(with event: NSEvent) {
         layer?.borderColor = NSColor.white.withAlphaComponent(0.42).cgColor
         layer?.borderWidth = 1.4
+        hoverChangeHandler?(true)
     }
 
     override func mouseExited(with event: NSEvent) {
         layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
         layer?.borderWidth = 1.0
+        hoverChangeHandler?(false)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -373,6 +502,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Text Subviews inside Circular Orb
     private var secondaryTagLabel: NSTextField!
     private var primaryValueLabel: NSTextField!
+    private var closeBadgeButton: CloseBadgeButton!
 
     private var refreshTimer: Timer?
     private let homeDirectoryPath = FileManager.default.homeDirectoryForCurrentUser.path
@@ -466,6 +596,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         orbContainerView.contextMenuProvider = { [weak self] in
             return self?.buildContextMenu() ?? NSMenu()
         }
+        orbContainerView.hoverChangeHandler = { [weak self] hovered in
+            self?.closeBadgeButton?.setContainerHovered(hovered)
+        }
 
         buildTextLabels(sizePreset: sizePreset)
 
@@ -499,6 +632,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize, weight: .bold)
         primaryValueLabel.stringValue = "--%"
         orbContainerView.addSubview(primaryValueLabel)
+
+        // Top-right close badge button (Quick Dismiss)
+        let buttonSize = sizePreset.closeButtonSize
+        let buttonOffset = sizePreset.closeButtonOffset
+        let buttonX = orbDimension - buttonSize - buttonOffset
+        let buttonY = orbDimension - buttonSize - buttonOffset
+        let closeRect = NSRect(x: buttonX, y: buttonY, width: buttonSize, height: buttonSize)
+
+        closeBadgeButton = CloseBadgeButton(frame: closeRect)
+        closeBadgeButton.updateLayoutSize(dimension: buttonSize, fontSize: sizePreset.closeButtonFontSize)
+        closeBadgeButton.closeActionHandler = {
+            NSApplication.shared.terminate(nil)
+        }
+        orbContainerView.addSubview(closeBadgeButton)
     }
 
     private func applyWidgetSizePreset(_ preset: WidgetSizePreset) {
@@ -518,6 +665,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         secondaryTagLabel.frame = NSRect(x: 2, y: preset.tagY, width: preset.dimension - 4, height: preset.tagHeight)
         primaryValueLabel.frame = NSRect(x: 2, y: preset.valueY, width: preset.dimension - 4, height: preset.valueHeight)
+
+        let buttonSize = preset.closeButtonSize
+        let buttonOffset = preset.closeButtonOffset
+        let buttonX = preset.dimension - buttonSize - buttonOffset
+        let buttonY = preset.dimension - buttonSize - buttonOffset
+        closeBadgeButton.frame = NSRect(x: buttonX, y: buttonY, width: buttonSize, height: buttonSize)
+        closeBadgeButton.updateLayoutSize(dimension: buttonSize, fontSize: preset.closeButtonFontSize)
 
         if let status = cachedStatusData {
             updateUserInterface(with: status)
@@ -667,7 +821,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let webItem = NSMenuItem(title: "Open Web Dashboard", action: #selector(openWebDashboard), keyEquivalent: "d")
+        let webItem = NSMenuItem(title: "Open Dashboard (Web)", action: #selector(openWebDashboard), keyEquivalent: "d")
         webItem.target = self
         menu.addItem(webItem)
 
@@ -746,7 +900,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openWebDashboard() {
-        if let url = URL(string: "http://127.0.0.1:10200") {
+        let dashboardUrlString = "http://127.0.0.1:10200"
+        guard let url = URL(string: dashboardUrlString) else { return }
+
+        let checkTask = Process()
+        checkTask.launchPath = "/usr/bin/nc"
+        checkTask.arguments = ["-z", "127.0.0.1", "10200"]
+        let pipe = Pipe()
+        checkTask.standardOutput = pipe
+        checkTask.standardError = pipe
+
+        var serverRunning: Bool = false
+        do {
+            try checkTask.run()
+            checkTask.waitUntilExit()
+            serverRunning = (checkTask.terminationStatus == 0)
+        } catch {
+            serverRunning = false
+        }
+
+        if !serverRunning {
+            let launchTask = Process()
+            launchTask.launchPath = "/bin/bash"
+            launchTask.arguments = ["-c", "codex-usage dashboard &"]
+            try? launchTask.run()
+        } else {
             NSWorkspace.shared.open(url)
         }
     }
