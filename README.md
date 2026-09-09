@@ -29,11 +29,13 @@ OpenAI applies different rate limiting tiers: users spending $100+/mo or subscri
 ### 2. Ultra-Compact Desktop Companion Orb (Always-on-Top Circular Ring Widget)
 A sleek, unobtrusive macOS circular glassmorphism widget (`bin/codex-hud`):
 - **Circular Progress Ring**: 56px precision circular orb with smooth `CAShapeLayer` arc progress indicating remaining allowance.
+- **Electric Blue Default & Full Custom Palette**: Shipped out of the box in iconic **Electric Blue** (`#0A84FF`), with 7 built-in presets (Cyber Cyan, Emerald Green, Neon Purple, Sunset Amber, Radiant Pink, Pure White) and a native macOS system **Color Picker** for choosing any bespoke hue. Preference is automatically persisted to `~/.codex/hud_config.json`.
 - **Pro Tier Perfection**: Clean, distraction-free display focusing purely on the **7-day weekly quota** (e.g. `7d` / `37%`), completely eliminating redundant "5h: 100%" noise. Non-Pro mode displays both 5-hour and 7-day limits compactly.
 - **Desktop Pet Feeding Animation**: Spring scale bounce and teal pulse animation displaying `+XXk` tokens fed in real time.
 - **Rich Context Menu (Right-Click)**:
   - Detailed quota breakdowns and countdowns.
   - Today's cumulative token usage and estimated USD cost.
+  - **Accent Color Selection**: Switch presets, launch the system color picker, or toggle smart red alerts when quota drops below 20%.
   - Instant toggle between Pro Mode (Weekly Only) and Standard Mode (5h + Weekly).
   - One-click launcher for the Web Dashboard.
 - **Left-Click Quick View Cycle**: Cycle between Quota %, Today's Tokens, and Today's USD Cost.
@@ -294,7 +296,8 @@ codex-token-usage-history/
 
 1. **極簡圓形環狀進度靈動球 (Always-on-Top Circular Ring Orb HUD)**：
    - 56px × 56px 精緻正圓形毛玻璃 Widget，置頂懸浮於所有視窗之上，擺脫長條扁平外觀。
-   - **環狀進度條**：以 QuartzCore 繪製順時針動態進度弧線，顏色依額度健康狀態（翡翠綠 / 亮黃 / 警示紅）平滑變換。
+   - **預設科技藍與自訂色彩**：出廠預設為質感**科技電光藍**（Electric Blue `#0A84FF`），並內建 7 款預設主題色（賽博青藍、翡翠綠、賽博紫、日落橘、亮粉紅、極簡白），更可直接喚起 macOS 原生系統調色盤（Color Picker）自訂任意色彩，偏好設定自動持久化於 `~/.codex/hud_config.json`。
+   - **環狀進度條**：以 QuartzCore 繪製順時針動態進度弧線，支援智慧低電量（<20%）轉紅警示切換。
    - **Pro 用戶極致精簡**：自動識別 Pro / 100$+ 方案，僅顯示週用量（例如上方標籤 `7d`，中心數字 `37%`），消除無意義的「5h: 100%」與贅述文字。非 Pro 模式則精巧並列 5h 與 7d。
    - **桌面寵物級進食反饋**：Codex 消耗 Token 時觸發彈性縮放跳動並微光顯示 `+XXk`。
    - **多模式切換與右鍵選單**：左鍵點擊在週配額、今日總 Token、今日美金金額循環切換；右鍵彈出完整配額數據與控制選單。
