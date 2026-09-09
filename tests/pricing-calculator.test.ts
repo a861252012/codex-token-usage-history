@@ -7,6 +7,7 @@ import {
   getActivePricingConfig,
   getEffectiveCatalogOverview,
 } from "../src/core/pricing-calculator.js";
+import { parseLiteLlmPricingJson } from "../src/core/pricing-sync.js";
 
 describe("PricingCalculator", () => {
   beforeEach(() => {
@@ -56,5 +57,17 @@ describe("PricingCalculator", () => {
     const catalog = getEffectiveCatalogOverview();
     expect(catalog.length).toBeGreaterThan(0);
     expect(catalog.some((m) => m.modelPrefix === "gpt-6-astra")).toBe(true);
+  });
+
+  test("拒絕非有限、負數或異常巨大的上游定價", () => {
+    const models = parseLiteLlmPricingJson({
+      valid: { input_cost_per_token: 0.000001, output_cost_per_token: 0.000002 },
+      negative: { input_cost_per_token: -1, output_cost_per_token: 0.000002 },
+      infinite: { input_cost_per_token: Number.POSITIVE_INFINITY, output_cost_per_token: 0.000002 },
+      excessive: { input_cost_per_token: 2, output_cost_per_token: 2 },
+    });
+
+    expect(models).toHaveLength(1);
+    expect(models[0].modelPrefix).toBe("valid");
   });
 });
