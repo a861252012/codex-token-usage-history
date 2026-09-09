@@ -7,7 +7,7 @@ export interface QuotaWindow {
   usedPercent: number;
   /** 剩餘可用百分比 (0 - 100) */
   remainingPercent: number;
-  /** 限制窗口秒數 (例: 18000 代表 5 小時, 604800 代表 7 天) */
+  /** 限制視窗秒數 (例: 18000 代表 5 小時, 604800 代表 7 天) */
   limitWindowSeconds: number;
   /** 重設倒數秒數 */
   resetAfterSeconds: number;
@@ -31,9 +31,9 @@ export interface QuotaSnapshot {
   email: string | null;
   /** 方案類型 (例: prolite, plus, pro, team) */
   planType: string | null;
-  /** 五小時限制窗口 (短時間滾動配額) */
+  /** 五小時限制視窗 (短時間滾動配額) */
   fiveHour: QuotaWindow | null;
-  /** 一週限制窗口 (7天滾動配額) */
+  /** 一週限制視窗 (7天滾動配額) */
   weekly: QuotaWindow | null;
   /** 附加模型配額 (例: GPT-5.3-Codex-Spark) */
   additionalLimits: AdditionalQuotaLimit[];

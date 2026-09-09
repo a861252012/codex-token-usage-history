@@ -34,7 +34,7 @@ export function renderProgressBar(usedPercent: number, length = 20): string {
 
 export function renderWindowLine(title: string, win: QuotaWindow | null): string {
   if (!win) {
-    return `  ${title.padEnd(14)}: ${DIM}未提供此窗口限制${RESET}`;
+    return `  ${title.padEnd(14)}: ${DIM}未配置此視窗限制${RESET}`;
   }
   const bar = renderProgressBar(win.usedPercent, 20);
 

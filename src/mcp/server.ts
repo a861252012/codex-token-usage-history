@@ -65,7 +65,7 @@ export async function runMcpServer(): Promise<void> {
           tools: [
             {
               name: "get_codex_quota",
-              description: "取得 Codex 目前帳號的即時剩餘額度 (包含五小時短窗口與週用量長窗口及重設倒數時間)",
+              description: "取得 Codex 目前帳號的即時剩餘額度 (包含五小時短週期與週用量長週期視窗及重設倒數時間)",
               inputSchema: {
                 type: "object",
                 properties: {

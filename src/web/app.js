@@ -65,7 +65,7 @@ function updateWindowCard(prefix, win) {
   if (!win) {
     if (bar) bar.style.width = "0%";
     if (textUsed) textUsed.textContent = "未配置限制";
-    if (textRem) textRem.textContent = "無窗口";
+    if (textRem) textRem.textContent = "無額外限制";
     if (textReset) textReset.textContent = "—";
     if (textStatus) {
       textStatus.textContent = "未啟用";
@@ -493,7 +493,7 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchHistory();
   setupSse();
 
-  // 每一秒鐘更新客戶端倒數計時
+  // 每一秒鐘更新用戶端倒數計時
   setInterval(tickCountdown, 1000);
 
   document.getElementById("btn-refresh").addEventListener("click", () => {
