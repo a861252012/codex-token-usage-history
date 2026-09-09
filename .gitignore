@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+bin/codex-menubar
+
+# Logs & Temporary files
+*.log
+*.tmp
+.DS_Store
+
+# SQLite databases
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# Environment & credentials
+.env
+auth.json
+*.bak*
