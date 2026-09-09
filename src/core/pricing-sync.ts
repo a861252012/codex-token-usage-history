@@ -105,6 +105,7 @@ export function loadCachedUpstreamPricing(): PricingCacheFile | null {
       return null;
     }
 
+    chmodSync(cachePath, 0o600);
     const fileStat = statSync(cachePath);
     if (cachedUpstreamPricingData && fileStat.mtimeMs === cachedUpstreamPricingMtime) {
       return cachedUpstreamPricingData;

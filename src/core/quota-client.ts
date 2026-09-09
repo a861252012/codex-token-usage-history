@@ -413,6 +413,7 @@ export class QuotaClient {
   private loadPersistedCache(): void {
     try {
       if (existsSync(this.cachePath)) {
+        chmodSync(this.cachePath, 0o600);
         const rawFileContent = readFileSync(this.cachePath, "utf-8");
         const parsedSnapshot = JSON.parse(rawFileContent) as QuotaSnapshot;
         if (parsedSnapshot && typeof parsedSnapshot.updatedAt === "number") {
