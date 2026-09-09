@@ -26,17 +26,18 @@ OpenAI applies different rate limiting tiers: users spending $100+/mo or subscri
 - **Standard Tier**: Simultaneously tracks both the **5-hour burst window** and the **weekly rolling window** with precise countdown timers.
 - **Rate Limit Reset Credits & Periodic Reset Tracking**: Automatically detects when OpenAI delivers reset vouchers or triggers periodic quota resets, persisting the timeline in SQLite.
 
-### 2. Ultra-Compact Modern Desktop HUD (Always-on-Top Pill)
-A sleek, unobtrusive macOS glassmorphism floating pill (`bin/codex-hud`):
-- **Minimal Footprint**: Slim 28px height, ultra-compact capsule that hovers above full-screen IDEs without blocking your editor.
-- **Live Token Feeding Reaction**: Subtle pulse animation with temporary `+XXk` indicators whenever tokens are consumed in real time.
+### 2. Ultra-Compact Desktop Companion Orb (Always-on-Top Circular Ring Widget)
+A sleek, unobtrusive macOS circular glassmorphism widget (`bin/codex-hud`):
+- **Circular Progress Ring**: 56px precision circular orb with smooth `CAShapeLayer` arc progress indicating remaining allowance.
+- **Pro Tier Perfection**: Clean, distraction-free display focusing purely on the **7-day weekly quota** (e.g. `7d` / `37%`), completely eliminating redundant "5h: 100%" noise. Non-Pro mode displays both 5-hour and 7-day limits compactly.
+- **Desktop Pet Feeding Animation**: Spring scale bounce and teal pulse animation displaying `+XXk` tokens fed in real time.
 - **Rich Context Menu (Right-Click)**:
   - Detailed quota breakdowns and countdowns.
   - Today's cumulative token usage and estimated USD cost.
   - Instant toggle between Pro Mode (Weekly Only) and Standard Mode (5h + Weekly).
   - One-click launcher for the Web Dashboard.
-- **Left-Click Quick Toggle**: Switch between quota percentage and today's total token summary.
-- **Freely Draggable**: Position anywhere on your multi-monitor desktop.
+- **Left-Click Quick View Cycle**: Cycle between Quota %, Today's Tokens, and Today's USD Cost.
+- **Freely Draggable**: Position anywhere on your screen as an intelligent desktop companion.
 
 ### 3. Comprehensive Accounting & Multi-Period Settlement
 - **Daily, Weekly, Monthly, and Yearly Settlement**: Aggregate token volume, requests, top models, and official USD cost calculations across any historical period.
@@ -62,36 +63,48 @@ A sleek, unobtrusive macOS glassmorphism floating pill (`bin/codex-hud`):
 |  - SessionWatcher: Real-time file watcher & event broadcaster                         |
 +---------------------------------------------------------------------------------------+
                                            |
-       +--------------------+--------------+--------------+--------------------+
-       |                    |                             |                    |
-       v                    v                             v                    v
-[Compact Pill HUD]   [macOS Menu Bar]             [Codex CLI Suite]      [Model Context Protocol]
-- Native Swift Mach-O- Native Cocoa Item          - codex-usage status   - Native MCP Server
-- Always-on-Top      - [7d: 37%]                  - codex-usage live     - For Codex Desktop App
-- Token pulse feed   - Detailed drop-down         - codex-usage report   - Direct chat tools
-- Right-click menu   - Low RAM usage              - codex-usage resets   - Quota & history
-                                           |
-                                           v
-                                [Modern Web Dashboard]
-                                - http://127.0.0.1:10200
-                                - Glassmorphism UI (EN / 繁中)
-                                - Server-Sent Events (SSE) live push
-                                - 24h pure SVG chart, CSV export
+                                       +--------------------+--------------+--------------+--------------------+
+                                       |                    |                             |                    |
+                                       v                    v                             v                    v
+                                [Circular Orb HUD]   [macOS Menu Bar]             [Codex CLI Suite]      [Model Context Protocol]
+                                - Native Swift Mach-O- Native Cocoa Item          - codex-usage status   - Native MCP Server
+                                - Always-on-Top      - [7d: 37%]                  - codex-usage live     - For Codex Desktop App
+                                - Circular ring arc  - Detailed drop-down         - codex-usage report   - Direct chat tools
+                                - Feeding bounce     - Low RAM usage              - codex-usage resets   - Quota & history
+                                - Right-click menu
+                                                                                   |
+                                                                                   v
+                                                                        [Modern Web Dashboard]
+                                                                        - Glassmorphism dark UI
+                                                                        - EN / 繁中 dual language
+                                                                        - Live SSE updates
+                                                                        - 24-hour SVG charts
+                                                                        - CSV export & breakdowns
 ```
 
 ---
 
-## Quick Installation
+## Getting Started
 
-### Automated One-Line Setup
+### Prerequisites
 
-Run the installation script to build the TypeScript core, compile the Swift native binaries, configure global CLI symlinks, and register the MCP server in `~/.codex/config.toml`:
+- **macOS** 12.0+ (Apple Silicon or Intel)
+- **Node.js** 22.0.0+ (with native `node:sqlite`) or **Bun** 1.1.0+
+- **OpenAI Codex CLI** or desktop setup (generating `~/.codex/sessions/**/*.jsonl`)
+
+### One-Line Automated Installation
 
 ```bash
 git clone https://github.com/a861252012/codex-token-usage-history.git
 cd codex-token-usage-history
-./scripts/install.sh
+bash scripts/install.sh
 ```
+
+The installer will:
+1. Compile the native TypeScript engine for both Bun and Node.js.
+2. Compile native macOS Swift Mach-O binaries for Apple Silicon / Intel (`bin/codex-hud`, `bin/codex-menubar`).
+3. Automatically configure Model Context Protocol (MCP) in your `~/.codex/config.toml`.
+4. Perform an initial lightning-fast scan of historical session files.
 
 Once installed, `codex-usage`, `codex-hud`, and `codex-menubar` are immediately accessible from any terminal.
 
@@ -99,9 +112,9 @@ Once installed, `codex-usage`, `codex-hud`, and `codex-menubar` are immediately 
 
 ## Terminal & GUI Usage Guide
 
-### 1. Ultra-Compact Desktop HUD (`codex-usage hud`)
+### 1. Ultra-Compact Desktop Companion Orb (`codex-usage hud`)
 
-Launch the always-on-top desktop pill:
+Launch the always-on-top circular ring orb widget:
 
 ```bash
 codex-usage hud
@@ -109,14 +122,13 @@ codex-usage hud
 ./bin/codex-hud &
 ```
 
-- **Default Pro Display**: Shows a breathing LED indicator and weekly remaining allowance (e.g. `7d: 37%`).
-- **Left-Click**: Toggles display to today's cumulative tokens (e.g. `186.7M`).
+- **Default Pro Display**: Displays a 56px circular glassmorphism orb with a circular progress arc and weekly remaining allowance (e.g. `7d` / `37%`).
+- **Left-Click View Cycling**: Cycles through remaining percentage, today's total tokens (e.g. `186.7k`), and today's USD cost (e.g. `$0.42`).
 - **Right-Click (Context Menu)**:
   - Inspect detailed remaining percentages and countdowns.
   - View today's total request count and USD cost.
   - Switch display mode between Pro Mode (Weekly only) and Standard Mode (5h + Weekly).
   - Open the Web Dashboard in your default browser.
-  - Force immediate quota refresh from OpenAI servers.
 
 ### 2. Instant CLI Overview (`codex-usage status`)
 
@@ -240,7 +252,7 @@ codex-token-usage-history/
 ├── .github/workflows/ci.yml   # Multi-engine GitHub Actions CI workflow
 ├── bin/
 │   ├── codex-usage            # Main POSIX executable entry point
-│   ├── codex-hud              # Modern ultra-compact macOS floating pill HUD
+│   ├── codex-hud              # Modern circular ring orb widget HUD
 │   └── codex-menubar          # Native macOS Menu Bar companion
 ├── src/
 │   ├── core/
@@ -257,7 +269,7 @@ codex-token-usage-history/
 │   │   └── live-monitor.ts    # Dynamic TUI monitor
 │   ├── server/app.ts          # HTTP & SSE server implementation
 │   ├── mcp/server.ts          # Standard Model Context Protocol server
-│   ├── floating-hud/main.swift# Ultra-compact macOS pill with right-click menu
+│   ├── floating-hud/main.swift# Circular ring orb widget with right-click menu
 │   ├── menubar/main.swift     # Native Cocoa menu bar application
 │   └── web/
 │       ├── index.html         # Modern glassmorphism dashboard (EN / 繁中)
@@ -265,7 +277,7 @@ codex-token-usage-history/
 │       └── style.css          # Deep midnight sleek dark mode styling
 ├── scripts/
 │   ├── install.sh             # Zero-config automated setup script
-│   ├── build-hud.sh           # Swift compiler script for the HUD pill
+│   ├── build-hud.sh           # Swift compiler script for the circular HUD orb
 │   ├── build-menubar.sh       # Swift compiler script for the menu bar app
 │   └── setup-codex-hook.sh    # MCP & CLI symlink configuration script
 ├── CONTRIBUTING.md            # Contribution guidelines & coding conventions
@@ -280,11 +292,12 @@ codex-token-usage-history/
 
 ### 專案特色
 
-1. **極簡微型桌面守護膠囊 (Always-on-Top Compact Pill HUD)**：
-   - 僅 28px 高度的現代黑玻璃膠囊，懸浮於所有視窗之上。
-   - **Pro 用戶模式**：自動識別 Pro / 100$+ 方案，僅顯示週用量（例如 `7d: 37%`），消除無意義的「5h: 100%」與贅述文字。
-   - **右鍵選單**：支援右鍵點擊彈出原生選單，檢視詳細倒數、今日累計金額、切換顯示模式或一鍵開啟 Web 儀表板。
-   - **進食跳動反應**：當 Codex 消耗 Token 時，膠囊跳動顯示 `+XXk`。
+1. **極簡圓形環狀進度靈動球 (Always-on-Top Circular Ring Orb HUD)**：
+   - 56px × 56px 精緻正圓形毛玻璃 Widget，置頂懸浮於所有視窗之上，擺脫長條扁平外觀。
+   - **環狀進度條**：以 QuartzCore 繪製順時針動態進度弧線，顏色依額度健康狀態（翡翠綠 / 亮黃 / 警示紅）平滑變換。
+   - **Pro 用戶極致精簡**：自動識別 Pro / 100$+ 方案，僅顯示週用量（例如上方標籤 `7d`，中心數字 `37%`），消除無意義的「5h: 100%」與贅述文字。非 Pro 模式則精巧並列 5h 與 7d。
+   - **桌面寵物級進食反饋**：Codex 消耗 Token 時觸發彈性縮放跳動並微光顯示 `+XXk`。
+   - **多模式切換與右鍵選單**：左鍵點擊在週配額、今日總 Token、今日美金金額循環切換；右鍵彈出完整配額數據與控制選單。
 2. **多週期結算體系 (日/週/月/年)**：
    - 執行 `codex-usage report --period daily|weekly|monthly|yearly` 隨時產生完整的 Token 與官方美金結算報表。
 3. **OpenAI 配額重置事件與重置券紀錄**：

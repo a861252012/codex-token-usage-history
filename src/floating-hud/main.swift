@@ -1,5 +1,6 @@
 import Cocoa
 import Foundation
+import QuartzCore
 
 // MARK: - Data Transfer Objects (DTO)
 
@@ -41,11 +42,122 @@ struct TokenRecordDTO: Codable {
     let weeklyUsedPct: Double?
 }
 
-// MARK: - Interactive Effect View with Context Menu
+// MARK: - Circular Ring View Component
 
-class InteractiveEffectView: NSVisualEffectView {
+class CircularOrbView: NSVisualEffectView {
     var leftClickHandler: (() -> Void)?
     var contextMenuProvider: (() -> NSMenu)?
+
+    private let backgroundTrackLayer = CAShapeLayer()
+    private let dynamicProgressLayer = CAShapeLayer()
+    private var trackingAreaInstance: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureVisualStyling()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureVisualStyling()
+    }
+
+    private func configureVisualStyling() {
+        self.material = .hudWindow
+        self.blendingMode = .behindWindow
+        self.state = .active
+        self.wantsLayer = true
+
+        let dimension = min(frame.width, frame.height)
+        let radius = dimension / 2
+
+        layer?.cornerRadius = radius
+        layer?.masksToBounds = true
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        layer?.borderWidth = 1.0
+
+        setupProgressLayers(dimension: dimension)
+    }
+
+    private func setupProgressLayers(dimension: CGFloat) {
+        let centerPoint = CGPoint(x: dimension / 2, y: dimension / 2)
+        let arcRadius: CGFloat = (dimension / 2) - 4.5
+        let startAngle: CGFloat = -CGFloat.pi / 2
+        let endAngle: CGFloat = 1.5 * CGFloat.pi
+
+        let ringPath = CGMutablePath()
+        ringPath.addArc(
+            center: centerPoint,
+            radius: arcRadius,
+            startAngle: startAngle,
+            endAngle: endAngle,
+            clockwise: false
+        )
+
+        // 1. Background Track Layer
+        backgroundTrackLayer.path = ringPath
+        backgroundTrackLayer.strokeColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        backgroundTrackLayer.fillColor = NSColor.clear.cgColor
+        backgroundTrackLayer.lineWidth = 3.2
+        backgroundTrackLayer.lineCap = .round
+        layer?.addSublayer(backgroundTrackLayer)
+
+        // 2. Dynamic Progress Layer
+        dynamicProgressLayer.path = ringPath
+        dynamicProgressLayer.strokeColor = NSColor.systemGreen.cgColor
+        dynamicProgressLayer.fillColor = NSColor.clear.cgColor
+        dynamicProgressLayer.lineWidth = 3.2
+        dynamicProgressLayer.lineCap = .round
+        dynamicProgressLayer.strokeStart = 0.0
+        dynamicProgressLayer.strokeEnd = 0.0
+        layer?.addSublayer(dynamicProgressLayer)
+    }
+
+    func updateRingProgress(percentage: Double, tintColor: NSColor) {
+        let clampedPercentage = max(0.0, min(100.0, percentage))
+        let targetStrokeEnd = CGFloat(clampedPercentage / 100.0)
+
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.45)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
+        dynamicProgressLayer.strokeEnd = targetStrokeEnd
+        dynamicProgressLayer.strokeColor = tintColor.cgColor
+        CATransaction.commit()
+    }
+
+    func triggerPulseAnimation() {
+        let bounceAnimation = CAKeyframeAnimation(keyPath: "transform.scale")
+        bounceAnimation.values = [1.0, 1.10, 0.96, 1.04, 1.0]
+        bounceAnimation.keyTimes = [0.0, 0.25, 0.5, 0.75, 1.0]
+        bounceAnimation.duration = 0.42
+        bounceAnimation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer?.add(bounceAnimation, forKey: "orbFeedingBounce")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existingArea = trackingAreaInstance {
+            removeTrackingArea(existingArea)
+        }
+        let trackingOptions: NSTrackingArea.Options = [
+            .mouseEnteredAndExited,
+            .activeAlways,
+            .inVisibleRect
+        ]
+        let newArea = NSTrackingArea(rect: bounds, options: trackingOptions, owner: self, userInfo: nil)
+        addTrackingArea(newArea)
+        trackingAreaInstance = newArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.42).cgColor
+        layer?.borderWidth = 1.4
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        layer?.borderWidth = 1.0
+    }
 
     override func mouseUp(with event: NSEvent) {
         if event.clickCount == 1 {
@@ -56,8 +168,8 @@ class InteractiveEffectView: NSVisualEffectView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        if let menu = contextMenuProvider?() {
-            NSMenu.popUpContextMenu(menu, with: event, for: self)
+        if let contextMenu = contextMenuProvider?() {
+            NSMenu.popUpContextMenu(contextMenu, with: event, for: self)
         } else {
             super.rightMouseDown(with: event)
         }
@@ -87,21 +199,24 @@ class ModernFloatingHudPanel: NSPanel {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var floatingPanel: ModernFloatingHudPanel!
-    private var containerView: InteractiveEffectView!
+    private var orbContainerView: CircularOrbView!
 
-    // UI Elements
-    private var vitalityIndicatorDot: NSView!
-    private var primaryMetricLabel: NSTextField!
+    // Text Subviews inside Circular Orb
+    private var secondaryTagLabel: NSTextField!
+    private var primaryValueLabel: NSTextField!
 
     private var refreshTimer: Timer?
     private let homeDirectoryPath = FileManager.default.homeDirectoryForCurrentUser.path
     private var previousTotalTokens: Int = 0
-    private var feedingAnimationCountdown: Int = 0
+    private var feedingCountdownRounds: Int = 0
     private var latestIncrementTokens: Int = 0
 
-    // User preferences & toggle state
-    private var displayModeIndex: Int = 0 // 0: Quota, 1: Today Usage
-    private var forceProMode: Bool? = nil // nil = auto detect, true = Pro, false = Standard
+    // Display state
+    // 0: Quota view (7d for Pro, 5h+7d for Standard)
+    // 1: Today tokens view
+    // 2: Today cost view
+    private var displayModeIndex: Int = 0
+    private var forceProModeOverride: Bool? = nil
 
     private var cachedStatusData: FullStatusDTO?
 
@@ -113,75 +228,70 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupFloatingWindow() {
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let initialWidth: CGFloat = 142
-        let panelHeight: CGFloat = 28
-        let initialX = screenFrame.origin.x + (screenFrame.width - initialWidth) / 2
-        let initialY = screenFrame.origin.y + screenFrame.height - panelHeight - 12
+        let orbDimension: CGFloat = 56.0
+        let initialX = screenFrame.origin.x + (screenFrame.width - orbDimension) / 2
+        let initialY = screenFrame.origin.y + screenFrame.height - orbDimension - 14
 
-        let panelRect = NSRect(x: initialX, y: initialY, width: initialWidth, height: panelHeight)
+        let panelRect = NSRect(x: initialX, y: initialY, width: orbDimension, height: orbDimension)
         floatingPanel = ModernFloatingHudPanel(contentRect: panelRect)
 
-        // Glassmorphism Container
-        containerView = InteractiveEffectView(frame: NSRect(x: 0, y: 0, width: initialWidth, height: panelHeight))
-        containerView.material = .hudWindow
-        containerView.blendingMode = .behindWindow
-        containerView.state = .active
-        containerView.wantsLayer = true
-        containerView.layer?.cornerRadius = panelHeight / 2
-        containerView.layer?.masksToBounds = true
-        containerView.layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
-        containerView.layer?.borderWidth = 0.8
+        orbContainerView = CircularOrbView(frame: NSRect(x: 0, y: 0, width: orbDimension, height: orbDimension))
 
-        // Interactions
-        containerView.leftClickHandler = { [weak self] in
-            self?.toggleDisplayView()
+        // Left-click to switch views, Right-click to show contextual menu
+        orbContainerView.leftClickHandler = { [weak self] in
+            self?.cycleNextDisplayMode()
         }
-        containerView.contextMenuProvider = { [weak self] in
+        orbContainerView.contextMenuProvider = { [weak self] in
             return self?.buildContextMenu() ?? NSMenu()
         }
 
-        buildSubviews(panelHeight: panelHeight)
+        buildTextLabels(orbDimension: orbDimension)
 
-        floatingPanel.contentView = containerView
+        floatingPanel.contentView = orbContainerView
         floatingPanel.makeKeyAndOrderFront(nil)
     }
 
-    private func buildSubviews(panelHeight: CGFloat) {
-        // 1. Vitality Dot (Breathing LED indicator)
-        vitalityIndicatorDot = NSView(frame: NSRect(x: 10, y: (panelHeight - 7) / 2, width: 7, height: 7))
-        vitalityIndicatorDot.wantsLayer = true
-        vitalityIndicatorDot.layer?.cornerRadius = 3.5
-        vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
-        containerView.addSubview(vitalityIndicatorDot)
+    private func buildTextLabels(orbDimension: CGFloat) {
+        // Upper tiny category tag
+        secondaryTagLabel = NSTextField(frame: NSRect(x: 4, y: 31, width: orbDimension - 8, height: 12))
+        secondaryTagLabel.isEditable = false
+        secondaryTagLabel.isSelectable = false
+        secondaryTagLabel.isBezeled = false
+        secondaryTagLabel.drawsBackground = false
+        secondaryTagLabel.alignment = .center
+        secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
+        secondaryTagLabel.font = NSFont.systemFont(ofSize: 8.5, weight: .bold)
+        secondaryTagLabel.stringValue = "7d"
+        orbContainerView.addSubview(secondaryTagLabel)
 
-        // 2. Main Metric Label (Modern typography)
-        primaryMetricLabel = NSTextField(frame: NSRect(x: 23, y: (panelHeight - 16) / 2 - 1, width: 110, height: 16))
-        primaryMetricLabel.isEditable = false
-        primaryMetricLabel.isSelectable = false
-        primaryMetricLabel.isBezeled = false
-        primaryMetricLabel.drawsBackground = false
-        primaryMetricLabel.textColor = NSColor.white
-        primaryMetricLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-        primaryMetricLabel.stringValue = "Loading..."
-        containerView.addSubview(primaryMetricLabel)
+        // Center prominent metric text
+        primaryValueLabel = NSTextField(frame: NSRect(x: 4, y: 12, width: orbDimension - 8, height: 18))
+        primaryValueLabel.isEditable = false
+        primaryValueLabel.isSelectable = false
+        primaryValueLabel.isBezeled = false
+        primaryValueLabel.drawsBackground = false
+        primaryValueLabel.alignment = .center
+        primaryValueLabel.textColor = NSColor.white
+        primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13.0, weight: .bold)
+        primaryValueLabel.stringValue = "--%"
+        orbContainerView.addSubview(primaryValueLabel)
     }
 
-    private func toggleDisplayView() {
-        displayModeIndex = (displayModeIndex + 1) % 2
+    private func cycleNextDisplayMode() {
+        displayModeIndex = (displayModeIndex + 1) % 3
         if let statusData = cachedStatusData {
             updateUserInterface(with: statusData)
         }
     }
 
     private func determineProUser(snapshot: QuotaSnapshotDTO) -> Bool {
-        if let forced = forceProMode {
+        if let forced = forceProModeOverride {
             return forced
         }
         let plan = snapshot.planType?.lowercased() ?? ""
         if plan.contains("pro") {
             return true
         }
-        // If 5-hour window is null or 0% while weekly has activity
         if snapshot.fiveHour == nil {
             return true
         }
@@ -189,10 +299,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildContextMenu() -> NSMenu {
-        let menu = NSMenu(title: "Codex HUD")
+        let menu = NSMenu(title: "Codex Orb")
 
         let planName = cachedStatusData?.snapshot.planType ?? "Pro"
-        let headerTitle = "Codex Token Monitor (\(planName))"
+        let headerTitle = "Codex Usage Orb (\(planName))"
         let headerItem = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
         headerItem.isEnabled = false
         menu.addItem(headerItem)
@@ -251,15 +361,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let isPro = cachedStatusData?.snapshot != nil ? determineProUser(snapshot: cachedStatusData!.snapshot) : true
-        let toggleModeTitle = isPro ? "Switch to Standard View (5h + Weekly)" : "Switch to Pro View (Weekly Only)"
+        let proActive = cachedStatusData?.snapshot != nil ? determineProUser(snapshot: cachedStatusData!.snapshot) : true
+        let toggleModeTitle = proActive ? "Switch to Standard View (5h + Weekly)" : "Switch to Pro View (Weekly Only)"
         let toggleModeItem = NSMenuItem(title: toggleModeTitle, action: #selector(toggleProModeOverride), keyEquivalent: "")
         toggleModeItem.target = self
         menu.addItem(toggleModeItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "Quit Codex HUD", action: #selector(terminateApplication), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit Codex Orb", action: #selector(terminateApplication), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -277,11 +387,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleProModeOverride() {
-        if let current = forceProMode {
-            forceProMode = !current
+        if let current = forceProModeOverride {
+            forceProModeOverride = !current
         } else {
-            let isPro = cachedStatusData?.snapshot != nil ? determineProUser(snapshot: cachedStatusData!.snapshot) : true
-            forceProMode = !isPro
+            let proActive = cachedStatusData?.snapshot != nil ? determineProUser(snapshot: cachedStatusData!.snapshot) : true
+            forceProModeOverride = !proActive
         }
         if let status = cachedStatusData {
             updateUserInterface(with: status)
@@ -383,70 +493,80 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateUserInterface(with statusData: FullStatusDTO) {
         let snapshot = statusData.snapshot
         let summary = statusData.todaySummary
-        let isProUser = determineProUser(snapshot: snapshot)
+        let proActive = determineProUser(snapshot: snapshot)
 
-        // Token Feeding animation check
+        // Token feeding detection
         if previousTotalTokens > 0 && summary.totalTokens > previousTotalTokens {
             latestIncrementTokens = summary.totalTokens - previousTotalTokens
-            feedingAnimationCountdown = 3
-        } else if feedingAnimationCountdown > 0 {
-            feedingAnimationCountdown -= 1
+            feedingCountdownRounds = 3
+            orbContainerView.triggerPulseAnimation()
+        } else if feedingCountdownRounds > 0 {
+            feedingCountdownRounds -= 1
         }
         previousTotalTokens = summary.totalTokens
 
         let weeklyRemaining = Int(snapshot.weekly?.remainingPercent ?? 100)
         let fiveHourRemaining = Int(snapshot.fiveHour?.remainingPercent ?? 100)
 
-        // Color status logic
-        let effectiveRemaining = isProUser ? weeklyRemaining : min(weeklyRemaining, fiveHourRemaining)
-        if feedingAnimationCountdown > 0 {
-            vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemTeal.cgColor
-        } else if effectiveRemaining >= 50 {
-            vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
-        } else if effectiveRemaining >= 20 {
-            vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemYellow.cgColor
+        let targetPercentage: Double = proActive ? Double(weeklyRemaining) : Double(min(weeklyRemaining, fiveHourRemaining))
+
+        // Ring Tint Color Calculation
+        var ringTint: NSColor = NSColor.systemGreen
+        if feedingCountdownRounds > 0 {
+            ringTint = NSColor.systemTeal
+        } else if targetPercentage >= 50 {
+            ringTint = NSColor.systemGreen
+        } else if targetPercentage >= 20 {
+            ringTint = NSColor.systemYellow
         } else {
-            vitalityIndicatorDot.layer?.backgroundColor = NSColor.systemRed.cgColor
+            ringTint = NSColor.systemRed
         }
 
-        // Text & Layout formatting
-        var displayString = ""
-        var targetWidth: CGFloat = 138
+        orbContainerView.updateRingProgress(percentage: targetPercentage, tintColor: ringTint)
 
-        if feedingAnimationCountdown > 0 {
-            displayString = "+\(formatTokenCount(tokens: latestIncrementTokens))"
-            primaryMetricLabel.textColor = NSColor.systemTeal
+        // Text display according to state
+        if feedingCountdownRounds > 0 {
+            secondaryTagLabel.stringValue = "FEED"
+            secondaryTagLabel.textColor = NSColor.systemTeal
+            primaryValueLabel.stringValue = "+\(formatTokenCount(tokens: latestIncrementTokens))"
+            primaryValueLabel.textColor = NSColor.systemTeal
+            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
+            return
+        }
+
+        primaryValueLabel.textColor = NSColor.white
+
+        if displayModeIndex == 1 {
+            // View 1: Today total tokens
+            secondaryTagLabel.stringValue = "TODAY"
+            secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
+            secondaryTagLabel.font = NSFont.systemFont(ofSize: 7.5, weight: .bold)
+            primaryValueLabel.stringValue = formatTokenCount(tokens: summary.totalTokens)
+            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12.0, weight: .bold)
+        } else if displayModeIndex == 2 {
+            // View 2: Today estimated cost
+            secondaryTagLabel.stringValue = "COST"
+            secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
+            secondaryTagLabel.font = NSFont.systemFont(ofSize: 7.5, weight: .bold)
+            primaryValueLabel.stringValue = summary.formattedCostUsd ?? "$0.00"
+            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .bold)
         } else {
-            primaryMetricLabel.textColor = NSColor.white
-
-            if displayModeIndex == 1 {
-                // Secondary View: Today's Tokens
-                displayString = "\(formatTokenCount(tokens: summary.totalTokens))"
-                targetWidth = 142
+            // View 0: Primary quota view
+            if proActive {
+                // Pro tier: Focus strictly on 7-day weekly quota (clean, elegant, zero 5h noise)
+                secondaryTagLabel.stringValue = "7d"
+                secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
+                secondaryTagLabel.font = NSFont.systemFont(ofSize: 8.5, weight: .bold)
+                primaryValueLabel.stringValue = "\(weeklyRemaining)%"
+                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13.5, weight: .bold)
             } else {
-                // Primary Quota View
-                if isProUser {
-                    // Pro user: Only display weekly quota (No useless 5h 100%)
-                    displayString = "7d: \(weeklyRemaining)%"
-                    targetWidth = 126
-                } else {
-                    // Non-Pro user: Display both 5h and weekly quota
-                    displayString = "5h: \(fiveHourRemaining)% · 7d: \(weeklyRemaining)%"
-                    targetWidth = 196
-                }
+                // Standard tier: Present both 5-hour and 7-day limits compactly
+                secondaryTagLabel.stringValue = "5h:\(fiveHourRemaining)%"
+                secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.8)
+                secondaryTagLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .bold)
+                primaryValueLabel.stringValue = "7d:\(weeklyRemaining)%"
+                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .bold)
             }
-        }
-
-        primaryMetricLabel.stringValue = displayString
-
-        // Smooth width adjustment if layout mode changes
-        let currentFrame = floatingPanel.frame
-        if abs(currentFrame.width - targetWidth) > 1 {
-            let newX = currentFrame.origin.x + (currentFrame.width - targetWidth) / 2
-            let newRect = NSRect(x: newX, y: currentFrame.origin.y, width: targetWidth, height: 28)
-            floatingPanel.setFrame(newRect, display: true, animate: false)
-            containerView.frame = NSRect(x: 0, y: 0, width: targetWidth, height: 28)
-            primaryMetricLabel.frame = NSRect(x: 23, y: (28 - 16) / 2 - 1, width: targetWidth - 28, height: 16)
         }
     }
 
@@ -473,3 +593,4 @@ application.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
 application.delegate = delegate
 application.run()
+
