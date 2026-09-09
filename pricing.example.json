@@ -1,0 +1,68 @@
+{
+  "pricingVersion": "2026-09-09",
+  "models": [
+    {
+      "modelPrefix": "gpt-6-astra",
+      "inputCostPerMillion": 2.50,
+      "cachedInputCostPerMillion": 1.25,
+      "outputCostPerMillion": 10.00,
+      "reasoningOutputCostPerMillion": 10.00
+    },
+    {
+      "modelPrefix": "gpt-5.3-codex-spark",
+      "inputCostPerMillion": 1.25,
+      "cachedInputCostPerMillion": 0.30,
+      "outputCostPerMillion": 5.00,
+      "reasoningOutputCostPerMillion": 5.00
+    },
+    {
+      "modelPrefix": "gpt-5",
+      "inputCostPerMillion": 2.00,
+      "cachedInputCostPerMillion": 0.50,
+      "outputCostPerMillion": 8.00,
+      "reasoningOutputCostPerMillion": 8.00
+    },
+    {
+      "modelPrefix": "o3-mini",
+      "inputCostPerMillion": 1.10,
+      "cachedInputCostPerMillion": 0.55,
+      "outputCostPerMillion": 4.40,
+      "reasoningOutputCostPerMillion": 4.40
+    },
+    {
+      "modelPrefix": "o1",
+      "inputCostPerMillion": 15.00,
+      "cachedInputCostPerMillion": 7.50,
+      "outputCostPerMillion": 60.00,
+      "reasoningOutputCostPerMillion": 60.00
+    },
+    {
+      "modelPrefix": "gpt-4o-mini",
+      "inputCostPerMillion": 0.15,
+      "cachedInputCostPerMillion": 0.075,
+      "outputCostPerMillion": 0.60,
+      "reasoningOutputCostPerMillion": 0.60
+    },
+    {
+      "modelPrefix": "gpt-4o",
+      "inputCostPerMillion": 2.50,
+      "cachedInputCostPerMillion": 1.25,
+      "outputCostPerMillion": 10.00,
+      "reasoningOutputCostPerMillion": 10.00
+    },
+    {
+      "modelPrefix": "codex-auto-review",
+      "inputCostPerMillion": 1.50,
+      "cachedInputCostPerMillion": 0.50,
+      "outputCostPerMillion": 6.00,
+      "reasoningOutputCostPerMillion": 6.00
+    }
+  ],
+  "fallback": {
+    "modelPrefix": "default",
+    "inputCostPerMillion": 2.00,
+    "cachedInputCostPerMillion": 0.50,
+    "outputCostPerMillion": 8.00,
+    "reasoningOutputCostPerMillion": 8.00
+  }
+}

@@ -241,7 +241,26 @@ Visit `http://127.0.0.1:10200`:
 - Subscription plan upgrade/downgrade transition history.
 - RFC 4180-compliant CSV export with subAgent filters.
 
-### 8. Native Codex App & Claude Desktop Integration (MCP)
+### 8. Dynamic API Pricing & Repricing (`codex-usage pricing`)
+
+Accurately tracks OpenAI equivalent API costs using a robust four-tier pricing chain:
+
+```bash
+# View active pricing catalog, current version, and decision sources
+codex-usage pricing
+
+# Pull the latest global community pricing catalog (3,200+ models from LiteLLM)
+codex-usage pricing update
+
+# Batch-recalculate all historical records in SQLite with the latest pricing table
+codex-usage reprice
+```
+
+- **Four-Tier Hierarchy**: User Overrides (`~/.codex/pricing.json`) -> Upstream Community Cache (`~/.codex/pricing_cache.json`) -> Built-in Baseline -> Safe Fallback.
+- **Zero-Blocking Sync**: Updates run silently in the background without slowing down CLI or UI interactions.
+- **Exact & Longest Prefix Matching**: Eliminates prefix collision errors between models like `gpt-4` vs `gpt-4o` vs `gpt-4o-mini`.
+
+### 9. Native Codex App & Claude Desktop Integration (MCP)
 
 The installer automatically writes to `~/.codex/config.toml`:
 

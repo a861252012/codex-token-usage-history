@@ -1,15 +1,47 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { join, extname } from "node:path";
+import { join, extname, resolve, relative, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
 import { SessionIndexer } from "../core/session-indexer.js";
 import { SessionWatcher } from "../core/session-watcher.js";
+import {
+  getActivePricingConfig,
+  getEffectiveCatalogOverview,
+} from "../core/pricing-calculator.js";
+import { triggerBackgroundPricingSync } from "../core/pricing-sync.js";
 import type { QuotaSnapshot, TokenRecord } from "../core/types.js";
 
-const currentModuleFilePath = fileURLToPath(import.meta.url);
-const currentModuleDirectoryPath = join(currentModuleFilePath, "..");
+let cachedWebStaticDirectoryPath: string | null = null;
+
+function resolveWebStaticDirectoryPath(): string {
+  if (cachedWebStaticDirectoryPath !== null) {
+    return cachedWebStaticDirectoryPath;
+  }
+
+  const currentModuleFilePath = fileURLToPath(import.meta.url);
+  const moduleDirectoryPath = join(currentModuleFilePath, "..");
+  const candidateDirectoryPaths = [
+    join(moduleDirectoryPath, "../web"),
+    join(moduleDirectoryPath, "../../src/web"),
+    join(moduleDirectoryPath, "../../web"),
+  ];
+
+  for (const candidateDirectoryPath of candidateDirectoryPaths) {
+    if (existsSync(join(candidateDirectoryPath, "index.html"))) {
+      cachedWebStaticDirectoryPath = resolve(candidateDirectoryPath);
+      return cachedWebStaticDirectoryPath;
+    }
+  }
+
+  cachedWebStaticDirectoryPath = resolve(candidateDirectoryPaths[0]);
+  return cachedWebStaticDirectoryPath;
+}
+
+function isLoopbackHostAddress(hostAddress: string): boolean {
+  return hostAddress === "127.0.0.1" || hostAddress === "localhost";
+}
 
 export interface DashboardServerOptions {
   port?: number;
@@ -25,6 +57,7 @@ export class DashboardServer {
   private sessionIndexer: SessionIndexer;
   private sessionWatcher: SessionWatcher;
   private serverSentEventClients: Set<ServerResponse> = new Set();
+  private staticFileCache = new Map<string, { buffer: Buffer; contentType: string }>();
 
   constructor(database: HistoryDatabase, options: DashboardServerOptions = {}) {
     this.portNumber = options.port ?? 10200;
@@ -47,6 +80,7 @@ export class DashboardServer {
   public async start(): Promise<string> {
     await this.databaseInstance.init();
     await this.sessionWatcher.start();
+    triggerBackgroundPricingSync();
 
     return new Promise((resolve, reject) => {
       this.serverInstance = createServer((incomingRequest, serverResponse) => {
@@ -98,8 +132,9 @@ export class DashboardServer {
     const parsedUrl = new URL(incomingRequest.url || "/", `http://${this.hostAddress}:${this.portNumber}`);
     const pathname = parsedUrl.pathname;
 
-    // 設定跨來源資源共用 (CORS) 標頭
-    serverResponse.setHeader("Access-Control-Allow-Origin", "*");
+    if (isLoopbackHostAddress(this.hostAddress)) {
+      serverResponse.setHeader("Access-Control-Allow-Origin", "*");
+    }
     serverResponse.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     serverResponse.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
@@ -129,12 +164,18 @@ export class DashboardServer {
       const { records: recentRecords } = this.databaseInstance.queryRecords({ limit: 5 });
       const recentPlanChanges = this.databaseInstance.getPlanChangeEvents(5);
 
+      const pricingConfig = getActivePricingConfig();
+
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       serverResponse.end(JSON.stringify({
         snapshot: quotaSnapshot,
         todaySummary,
         recentRecords,
         recentPlanChanges,
+        pricing: {
+          version: pricingConfig.pricingVersion,
+          source: pricingConfig.pricingSource,
+        },
       }));
       return;
     }
@@ -144,7 +185,7 @@ export class DashboardServer {
       const limit = parseInt(parsedUrl.searchParams.get("limit") || "50", 10);
       const offset = parseInt(parsedUrl.searchParams.get("offset") || "0", 10);
       const model = parsedUrl.searchParams.get("model") || undefined;
-      const role = parsedUrl.searchParams.get("role") || undefined;
+      const role = parsedUrl.searchParams.get("role") || parsedUrl.searchParams.get("agent_role") || undefined;
       const sinceTimestampMs = parsedUrl.searchParams.get("since")
         ? parseInt(parsedUrl.searchParams.get("since")!, 10)
         : undefined;
@@ -167,8 +208,15 @@ export class DashboardServer {
         ? parseInt(parsedUrl.searchParams.get("since")!, 10)
         : undefined;
       const usageSummary = this.databaseInstance.getSummary(sinceTimestampMs);
+      const pricingConfig = getActivePricingConfig();
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      serverResponse.end(JSON.stringify(usageSummary));
+      serverResponse.end(JSON.stringify({
+        ...usageSummary,
+        pricing: {
+          version: pricingConfig.pricingVersion,
+          source: pricingConfig.pricingSource,
+        },
+      }));
       return;
     }
 
@@ -216,6 +264,18 @@ export class DashboardServer {
       return;
     }
 
+    // 8.5. API: 取得當前模型定價與各層級決策資訊
+    if (pathname === "/api/pricing") {
+      const config = getActivePricingConfig();
+      const overview = getEffectiveCatalogOverview();
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify({
+        ...config,
+        models: overview,
+      }));
+      return;
+    }
+
     // 8. API: Server-Sent Events 即時串流
     if (pathname === "/api/stream") {
       serverResponse.writeHead(200, {
@@ -231,21 +291,38 @@ export class DashboardServer {
         serverResponse.write(`event: quota\ndata: ${JSON.stringify(snapshot)}\n\n`);
       });
 
+      serverResponse.on("error", () => {
+        this.serverSentEventClients.delete(serverResponse);
+      });
+
       incomingRequest.on("close", () => {
         this.serverSentEventClients.delete(serverResponse);
       });
       return;
     }
 
-    // 9. 靜態檔案服務 (Web 儀表板)
-    let relativeFilePath = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
-    const staticDirectory = join(currentModuleDirectoryPath, "../web");
-    const absoluteFilePath = join(staticDirectory, relativeFilePath);
+    // 9. 靜態檔案服務 (Web 儀表板，具備記憶體快取與安全路徑校驗)
+    const relativeFilePath = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
+    const staticDirectory = resolveWebStaticDirectoryPath();
+    const absoluteFilePath = resolve(staticDirectory, relativeFilePath);
+    const relativePath = relative(staticDirectory, absoluteFilePath);
 
-    // 簡易路徑安全檢查 (避免 Directory Traversal)
-    if (!absoluteFilePath.startsWith(staticDirectory) || !existsSync(absoluteFilePath)) {
+    if (
+      !relativePath
+      || relativePath.startsWith("..")
+      || relativePath.startsWith(`..${sep}`)
+      || isAbsolute(relativePath)
+      || !existsSync(absoluteFilePath)
+    ) {
       serverResponse.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       serverResponse.end("找不到指定的靜態檔案");
+      return;
+    }
+
+    const cachedFile = this.staticFileCache.get(absoluteFilePath);
+    if (cachedFile) {
+      serverResponse.writeHead(200, { "Content-Type": cachedFile.contentType });
+      serverResponse.end(cachedFile.buffer);
       return;
     }
 
@@ -261,6 +338,8 @@ export class DashboardServer {
 
     const contentType = mimeTypeMap[fileExtension] || "application/octet-stream";
     const fileBuffer = readFileSync(absoluteFilePath);
+    this.staticFileCache.set(absoluteFilePath, { buffer: fileBuffer, contentType });
+
     serverResponse.writeHead(200, { "Content-Type": contentType });
     serverResponse.end(fileBuffer);
   }

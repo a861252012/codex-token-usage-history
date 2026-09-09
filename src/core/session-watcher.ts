@@ -20,6 +20,7 @@ export class SessionWatcher extends EventEmitter {
   private debounceTimers = new Map<string, NodeJS.Timeout>();
   private pollInterval: NodeJS.Timeout | null = null;
   private active = false;
+  private isPolling = false;
 
   constructor(indexer: SessionIndexer, quotaClient: QuotaClient, codexHomeDirectory?: string) {
     super();
@@ -45,6 +46,9 @@ export class SessionWatcher extends EventEmitter {
 
     // 定期輪詢今天目錄 (防止 fs.watch 漏掉事件，同時自動維護過期監聽器)
     this.pollInterval = setInterval(async () => {
+      if (this.isPolling) return;
+      this.isPolling = true;
+
       try {
         this.setupDateDirectoryWatchers();
         const scanResult = this.indexer.indexRecent(1);
@@ -57,6 +61,8 @@ export class SessionWatcher extends EventEmitter {
         }
       } catch (caughtError: any) {
         this.emit("error", caughtError);
+      } finally {
+        this.isPolling = false;
       }
     }, pollIntervalMilliseconds);
   }
@@ -130,6 +136,13 @@ export class SessionWatcher extends EventEmitter {
         }, 250);
 
         this.debounceTimers.set(fullPath, debounceTimer);
+      });
+
+      directoryWatcher.on("error", () => {
+        try {
+          directoryWatcher.close();
+        } catch {}
+        this.watchedDirectories.delete(directoryPath);
       });
 
       this.watchedDirectories.set(directoryPath, directoryWatcher);

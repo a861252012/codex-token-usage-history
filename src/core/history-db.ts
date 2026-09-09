@@ -115,6 +115,17 @@ export class HistoryDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_plan_change_events_timestamp ON plan_change_events(timestamp);
     `);
+
+    // 5. 檔案掃描游標紀錄表 (用於增量掃描跳過未異動檔案)
+    this.databaseInstance.exec(`
+      CREATE TABLE IF NOT EXISTS file_scan_cursor (
+        file_path TEXT PRIMARY KEY,
+        mtime REAL NOT NULL,
+        size INTEGER NOT NULL,
+        last_scanned_at INTEGER NOT NULL,
+        records_count INTEGER NOT NULL DEFAULT 0
+      );
+    `);
   }
 
   private ensureDatabase(): SqliteDb {
@@ -137,7 +148,10 @@ export class HistoryDatabase {
       record.reasoningOutputTokens
     );
 
-    const calculatedCostUsd = record.costUsd ?? costResult.totalCost;
+    const calculatedCostUsd =
+      record.costUsd == null || !Number.isFinite(record.costUsd)
+        ? costResult.totalCost
+        : record.costUsd;
     const resolvedAgentRole = record.agentRole || "main";
 
     try {
@@ -203,7 +217,10 @@ export class HistoryDatabase {
           singleRecord.reasoningOutputTokens
         );
 
-        const calculatedCostUsd = singleRecord.costUsd ?? costResult.totalCost;
+        const calculatedCostUsd =
+          singleRecord.costUsd == null || !Number.isFinite(singleRecord.costUsd)
+            ? costResult.totalCost
+            : singleRecord.costUsd;
         const resolvedAgentRole = singleRecord.agentRole || "main";
 
         const executionResult = statement.run(
@@ -233,6 +250,40 @@ export class HistoryDatabase {
     });
 
     return insertedRecordCount;
+  }
+
+  /**
+   * 取得檔案掃描游標紀錄
+   */
+  public getCursor(filePath: string): { mtime: number; size: number; recordsCount: number } | null {
+    const database = this.ensureDatabase();
+    const row = database.prepare(
+      "SELECT mtime, size, records_count FROM file_scan_cursor WHERE file_path = ?"
+    ).get(filePath);
+
+    if (!row) return null;
+    return {
+      mtime: Number(row.mtime),
+      size: Number(row.size),
+      recordsCount: Number(row.records_count),
+    };
+  }
+
+  /**
+   * 更新檔案掃描游標 (使用 UPSERT 保證原子性)
+   */
+  public updateCursor(filePath: string, mtime: number, size: number, recordsCount: number): void {
+    const database = this.ensureDatabase();
+    const statement = database.prepare(`
+      INSERT INTO file_scan_cursor (file_path, mtime, size, last_scanned_at, records_count)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(file_path) DO UPDATE SET
+        mtime = excluded.mtime,
+        size = excluded.size,
+        last_scanned_at = excluded.last_scanned_at,
+        records_count = excluded.records_count
+    `);
+    statement.run(filePath, mtime, size, Date.now(), recordsCount);
   }
 
   /**
@@ -431,7 +482,7 @@ export class HistoryDatabase {
     const whereClause = sinceMs !== undefined ? "WHERE timestamp >= ?" : "";
     const queryParameters = sinceMs !== undefined ? [sinceMs] : [];
 
-    // 總體統計
+    // 總體統計與 subagent 分離統計 (透過條件聚合單次查詢，杜絕多餘全表掃描)
     const totalRow = database.prepare(`
       SELECT
         COUNT(*) as requests,
@@ -440,19 +491,12 @@ export class HistoryDatabase {
         COALESCE(SUM(cached_input_tokens), 0) as cached_input_tokens,
         COALESCE(SUM(output_tokens), 0) as output_tokens,
         COALESCE(SUM(reasoning_output_tokens), 0) as reasoning_output_tokens,
+        COALESCE(SUM(CASE WHEN agent_role != 'main' THEN total_tokens ELSE 0 END), 0) as subagent_tokens,
         COALESCE(SUM(cost_usd), 0) as total_cost_usd,
         MIN(timestamp) as min_timestamp,
         MAX(timestamp) as max_timestamp
       FROM token_records
       ${whereClause}
-    `).get(...queryParameters);
-
-    // subAgent 子代理人消耗分離統計
-    const subAgentRow = database.prepare(`
-      SELECT
-        COALESCE(SUM(total_tokens), 0) as subagent_tokens
-      FROM token_records
-      ${whereClause ? `${whereClause} AND` : "WHERE"} agent_role != 'main'
     `).get(...queryParameters);
 
     const modelRows = database.prepare(`
@@ -500,7 +544,7 @@ export class HistoryDatabase {
       : `$${totalCostUsd.toFixed(2)}`;
 
     const totalTokenCount = Number(totalRow?.total_tokens ?? 0);
-    const subAgentTokenCount = Number(subAgentRow?.subagent_tokens ?? 0);
+    const subAgentTokenCount = Number(totalRow?.subagent_tokens ?? 0);
     const mainAgentTokenCount = Math.max(0, totalTokenCount - subAgentTokenCount);
 
     return {
@@ -554,19 +598,25 @@ export class HistoryDatabase {
   ): SettlementRecord[] {
     const database = this.ensureDatabase();
 
-    let strftimePattern = "%Y-%m-%d";
+    // 以當週週一日期 (YYYY-MM-DD) 作為週期鍵；%w 為 0=週日，避免 %Y-W%W 的週 00 與非 ISO 問題
+    const mondayWeekStartSql =
+      "date(julianday(datetime, 'localtime') - ((strftime('%w', datetime, 'localtime') + 6) % 7))";
+
+    let periodKeySql = "strftime('%Y-%m-%d', datetime, 'localtime')";
     if (periodType === "weekly") {
-      strftimePattern = "%Y-W%W";
+      periodKeySql = mondayWeekStartSql;
     } else if (periodType === "monthly") {
-      strftimePattern = "%Y-%m";
+      periodKeySql = "strftime('%Y-%m', datetime, 'localtime')";
     } else if (periodType === "yearly") {
-      strftimePattern = "%Y";
+      periodKeySql = "strftime('%Y', datetime, 'localtime')";
     }
+
+    const startDateSql = periodType === "weekly" ? mondayWeekStartSql : "MIN(datetime)";
 
     const querySql = `
       SELECT
-        strftime('${strftimePattern}', datetime, 'localtime') as period_key,
-        MIN(datetime) as start_date,
+        ${periodKeySql} as period_key,
+        ${startDateSql} as start_date,
         MAX(datetime) as end_date,
         COUNT(*) as requests,
         COALESCE(SUM(total_tokens), 0) as total_tokens,
@@ -584,6 +634,29 @@ export class HistoryDatabase {
 
     const rows = database.prepare(querySql).all(limitCount);
 
+    // 單次查詢批次取得各週期使用量第一名模型，杜絕 N+1 查詢問題
+    const topModelRows = database.prepare(`
+      WITH RankedModels AS (
+        SELECT
+          ${periodKeySql} as period_key,
+          model,
+          ROW_NUMBER() OVER (
+            PARTITION BY ${periodKeySql}
+            ORDER BY SUM(total_tokens) DESC
+          ) as rank_num
+        FROM token_records
+        GROUP BY period_key, model
+      )
+      SELECT period_key, model
+      FROM RankedModels
+      WHERE rank_num = 1
+    `).all();
+
+    const topModelMap = new Map<string, string>();
+    for (const item of topModelRows) {
+      topModelMap.set(item.period_key, item.model);
+    }
+
     return rows.map((row: any) => {
       const estimatedCostUsd = Number(row.estimated_cost_usd ?? 0);
       const formattedCostUsd = estimatedCostUsd < 0.01 && estimatedCostUsd > 0
@@ -593,16 +666,6 @@ export class HistoryDatabase {
       const totalTokens = Number(row.total_tokens);
       const subAgentTokens = Number(row.subagent_tokens);
       const mainAgentTokens = Math.max(0, totalTokens - subAgentTokens);
-
-      // 查詢該週期使用量第一名模型
-      const topModelRow = database.prepare(`
-        SELECT model
-        FROM token_records
-        WHERE strftime('${strftimePattern}', datetime, 'localtime') = ?
-        GROUP BY model
-        ORDER BY SUM(total_tokens) DESC
-        LIMIT 1
-      `).get(row.period_key);
 
       return {
         periodKey: row.period_key,
@@ -618,7 +681,7 @@ export class HistoryDatabase {
         subAgentTokens,
         estimatedCostUsd,
         formattedCostUsd,
-        topModel: topModelRow?.model || "gpt-6-astra",
+        topModel: topModelMap.get(row.period_key) || "gpt-6-astra",
       };
     });
   }
@@ -663,6 +726,39 @@ export class HistoryDatabase {
       weeklyUsedPct: row.weekly_used_pct,
       sourceFile: row.source_file,
     };
+  }
+
+  /**
+   * 依據目前生效的定價設定檔，批次重新計算並更新資料表中所有紀錄的 cost_usd
+   */
+  public recalculateAllCosts(): number {
+    const database = this.ensureDatabase();
+    const rows = database.prepare(`
+      SELECT id, model, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens
+      FROM token_records
+    `).all();
+
+    let updatedCount = 0;
+    database.runTransaction(() => {
+      const updateStatement = database.prepare(`
+        UPDATE token_records SET cost_usd = ? WHERE id = ?
+      `);
+
+      for (const singleRow of rows) {
+        const costResult = calculateTokenCost(
+          singleRow.model,
+          Number(singleRow.input_tokens),
+          Number(singleRow.cached_input_tokens),
+          Number(singleRow.output_tokens),
+          Number(singleRow.reasoning_output_tokens)
+        );
+
+        updateStatement.run(costResult.totalCost, singleRow.id);
+        updatedCount += 1;
+      }
+    });
+
+    return updatedCount;
   }
 
   public close(): void {

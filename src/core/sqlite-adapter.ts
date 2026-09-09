@@ -21,10 +21,13 @@ export async function createSqliteDb(filePath: string): Promise<SqliteDb> {
   const bunRuntimeEnvironment = typeof (globalThis as any).Bun !== "undefined";
 
   if (bunRuntimeEnvironment) {
+    // @ts-ignore
     const { Database } = await import("bun:sqlite");
     const database = new Database(filePath);
     database.run("PRAGMA journal_mode = WAL;");
     database.run("PRAGMA synchronous = NORMAL;");
+    database.run("PRAGMA temp_store = MEMORY;");
+    database.run("PRAGMA cache_size = -32000;");
 
     const runTransaction = <T>(actionCallback: () => T): T => {
       const transactionRunner = database.transaction(actionCallback);
@@ -62,6 +65,8 @@ export async function createSqliteDb(filePath: string): Promise<SqliteDb> {
     const database = new DatabaseSync(filePath);
     database.exec("PRAGMA journal_mode = WAL;");
     database.exec("PRAGMA synchronous = NORMAL;");
+    database.exec("PRAGMA temp_store = MEMORY;");
+    database.exec("PRAGMA cache_size = -32000;");
 
     const runTransaction = <T>(actionCallback: () => T): T => {
       database.exec("BEGIN TRANSACTION;");

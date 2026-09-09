@@ -1,6 +1,10 @@
 import readline from "node:readline";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
+import {
+  getActivePricingConfig,
+  getEffectiveCatalogOverview,
+} from "../core/pricing-calculator.js";
 
 /**
  * 輕量級標準 MCP (Model Context Protocol) 伺服器
@@ -21,7 +25,7 @@ export async function runMcpServer(): Promise<void> {
     process.stdout.write(JSON.stringify(responsePayload) + "\n");
   };
 
-  readlineInterface.on("line", async (inputLine) => {
+  readlineInterface.on("line", async (inputLine: string) => {
     if (!inputLine.trim()) return;
 
     let jsonRpcRequest: any;
@@ -139,6 +143,14 @@ export async function runMcpServer(): Promise<void> {
                     description: "回傳紀錄筆數上限 (預設 20)",
                   },
                 },
+              },
+            },
+            {
+              name: "get_codex_pricing_info",
+              description: "取得目前生效的 OpenAI 各模型 API 費率與決策來源資訊 (使用者自訂、開源社群快取或內建基準)",
+              inputSchema: {
+                type: "object",
+                properties: {},
               },
             },
           ],
@@ -307,6 +319,37 @@ export async function runMcpServer(): Promise<void> {
             jsonrpc: "2.0",
             id,
             error: { code: -32603, message: caughtError.message || "取得方案調整歷程失敗" },
+          });
+        }
+        return;
+      }
+
+      if (toolName === "get_codex_pricing_info") {
+        try {
+          const config = getActivePricingConfig();
+          const models = getEffectiveCatalogOverview();
+          sendResponse({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    version: config.pricingVersion,
+                    source: config.pricingSource,
+                    summary: config.summary,
+                    models,
+                  }, null, 2),
+                },
+              ],
+            },
+          });
+        } catch (caughtError: any) {
+          sendResponse({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32603, message: caughtError.message || "取得定價資訊失敗" },
           });
         }
         return;

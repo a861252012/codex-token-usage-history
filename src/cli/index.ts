@@ -1,12 +1,23 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { exec } from "node:child_process";
+import { existsSync } from "node:fs";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
 import { SessionIndexer } from "../core/session-indexer.js";
 import { runLiveMonitor } from "./live-monitor.js";
 import { DashboardServer } from "../server/app.js";
 import { runMcpServer } from "../mcp/server.js";
+import {
+  getActivePricingConfig,
+  getEffectiveCatalogOverview,
+  getUserPricingFilePath,
+} from "../core/pricing-calculator.js";
+import {
+  syncPricingFromUpstream,
+  triggerBackgroundPricingSync,
+  getPricingCacheFilePath,
+} from "../core/pricing-sync.js";
 import {
   renderQuotaStatus,
   renderUsageSummary,
@@ -17,9 +28,89 @@ import {
   renderPromptString,
 } from "./formatters.js";
 
+const MAXIMUM_RECORD_LIMIT = 10000;
+
+function parseIntegerOrDefault(rawValue: string | undefined, defaultValue: number): number {
+  const parsedValue = parseInt(rawValue ?? String(defaultValue), 10);
+  if (Number.isNaN(parsedValue)) {
+    return defaultValue;
+  }
+  return parsedValue;
+}
+
+function parseCappedLimit(rawValue: string | undefined, defaultValue: number): number {
+  const parsedValue = parseIntegerOrDefault(rawValue, defaultValue);
+  if (parsedValue < 0) {
+    return defaultValue;
+  }
+  if (parsedValue > MAXIMUM_RECORD_LIMIT) {
+    return MAXIMUM_RECORD_LIMIT;
+  }
+  return parsedValue;
+}
+
+function escapeCsvField(fieldValue: string | number | null | undefined): string {
+  if (fieldValue === null || fieldValue === undefined) return "";
+  const stringContent = String(fieldValue);
+  if (stringContent.includes(",") || stringContent.includes("\"") || stringContent.includes("\n") || stringContent.includes("\r")) {
+    return `"${stringContent.replace(/"/g, "\"\"")}"`;
+  }
+  return stringContent;
+}
+
+function shouldPrintHelp(argumentList: string[], commandName: string): boolean {
+  if (commandName === "help") {
+    return true;
+  }
+  if (argumentList[0] === "--help" || argumentList[0] === "-h") {
+    return true;
+  }
+  if (commandName === "status") {
+    for (const argument of argumentList) {
+      if (argument === "--help" || argument === "-h") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function printHelpText(): void {
+  console.log("Codex Token 用量歷史");
+  console.log("");
+  console.log("用法: codex-usage [命令] [選項]");
+  console.log("");
+  console.log("可用命令:");
+  console.log("  status      顯示即時配額與本日消耗概覽（預設）");
+  console.log("  live        終端機即時動態監控");
+  console.log("  hud         啟動原生置頂懸浮列");
+  console.log("  dashboard   啟動 Web 即時儀表板");
+  console.log("  report      多週期結算報表");
+  console.log("  resets      配額重置與重置券歷史");
+  console.log("  plans       帳號方案變更歷程");
+  console.log("  history     消耗流水帳歷史紀錄");
+  console.log("  index       掃描並索引 Session 檔案");
+  console.log("  pricing     顯示或同步模型定價");
+  console.log("  reprice     依最新定價重算歷史金額");
+  console.log("  prompt      輸出供 Shell Prompt 使用的狀態字串");
+  console.log("  mcp         啟動 MCP 伺服器");
+  console.log("");
+  console.log("使用 codex-usage --help 或 -h 顯示此說明。");
+}
+
 async function main(): Promise<void> {
   const argumentList = process.argv.slice(2);
   const commandName = argumentList[0] && !argumentList[0].startsWith("-") ? argumentList[0] : "status";
+
+  if (shouldPrintHelp(argumentList, commandName)) {
+    printHelpText();
+    return;
+  }
+
+  // 背景靜默檢查遠端開源定價庫 (非阻塞，不影響前景效能)
+  if (commandName !== "mcp" && commandName !== "pricing") {
+    triggerBackgroundPricingSync();
+  }
 
   // 1. 即時終端機動態監控 (TUI)
   if (commandName === "live" || commandName === "watch") {
@@ -30,6 +121,11 @@ async function main(): Promise<void> {
   // 2. 原生置頂懸浮膠囊列 (Always-on-Top Floating HUD)
   if (commandName === "hud" || commandName === "bar" || commandName === "pet") {
     const hudExecutablePath = new URL("../../bin/codex-hud", import.meta.url).pathname;
+    if (!existsSync(hudExecutablePath)) {
+      console.error("[錯誤] 找不到置頂懸浮列執行檔 bin/codex-hud，請先執行 scripts/build-hud.sh 進行編譯。");
+      process.exitCode = 1;
+      return;
+    }
     exec(`"${hudExecutablePath}" &`, (executionError) => {
       if (executionError) {
         console.error(`[錯誤] 無法啟動置頂懸浮列: ${executionError.message}`);
@@ -59,7 +155,7 @@ async function main(): Promise<void> {
     });
 
     const periodType = (values.period || "daily") as "daily" | "weekly" | "monthly" | "yearly";
-    const limitCount = parseInt(values.limit || "14", 10);
+    const limitCount = parseCappedLimit(values.limit, 14);
 
     const database = new HistoryDatabase();
     await database.init();
@@ -97,7 +193,7 @@ async function main(): Promise<void> {
       allowPositionals: true,
     });
 
-    const limitCount = parseInt(values.limit || "20", 10);
+    const limitCount = parseIntegerOrDefault(values.limit, 20);
     const database = new HistoryDatabase();
     await database.init();
 
@@ -125,7 +221,7 @@ async function main(): Promise<void> {
       allowPositionals: true,
     });
 
-    const limitCount = parseInt(values.limit || "20", 10);
+    const limitCount = parseIntegerOrDefault(values.limit, 20);
     const database = new HistoryDatabase();
     await database.init();
 
@@ -139,6 +235,82 @@ async function main(): Promise<void> {
 
     console.log(renderPlanChangeEventsTable(planChanges));
     database.close();
+    return;
+  }
+
+  // 7. 依據最新定價設定重新計算歷史消耗紀錄金額 (Reprice)
+  if (commandName === "reprice" || commandName === "recalculate-costs") {
+    const database = new HistoryDatabase();
+    await database.init();
+    const config = getActivePricingConfig();
+    const sourceDescription = config.pricingSource === "user-config"
+      ? "自訂設定檔 (~/.codex/pricing.json)"
+      : config.pricingSource === "upstream-cache"
+        ? "開源社群快取 (~/.codex/pricing_cache.json)"
+        : "內建預設費率";
+    console.log(`[計價] 當前定價版本: ${config.pricingVersion} (${sourceDescription})`);
+    console.log(`[計價] 開始重新計算歷史消耗紀錄金額...`);
+    const count = database.recalculateAllCosts();
+    console.log(`[完成] 已成功重新計價 ${count} 筆歷史紀錄。`);
+    database.close();
+    return;
+  }
+
+  // 8. 官方與開源定價庫管理 (Pricing Update / Show)
+  if (commandName === "pricing" || commandName === "price") {
+    const subAction = argumentList[1]?.toLowerCase();
+
+    if (subAction === "update" || subAction === "sync" || subAction === "pull") {
+      console.log("[同步] 正在連線至 LiteLLM 全球開源模型定價資料庫...");
+      const result = await syncPricingFromUpstream(true);
+      if (result.success) {
+        console.log(`[成功] ${result.message}`);
+        console.log(`[快取檔案] ${getPricingCacheFilePath()}`);
+        console.log(`[提示] 執行 'codex-usage reprice' 可依最新費率批次更新歷史資料庫。`);
+      } else {
+        console.error(`[失敗] ${result.message}`);
+      }
+      return;
+    }
+
+    // 預設行為: 顯示當前生效定價資訊與核心模型費率
+    const { pricingVersion, pricingSource, summary } = getActivePricingConfig();
+    const overviewList = getEffectiveCatalogOverview();
+
+    console.log("==================================================================================");
+    console.log(`  OpenAI 模型等值 API 定價決策總覽 (版本: ${pricingVersion})`);
+    console.log("==================================================================================");
+    console.log(`  主要來源模式: ${pricingSource}`);
+    console.log(`  - 使用者自訂設定: ${getUserPricingFilePath()} (${summary.userConfigCount > 0 ? `已登錄 ${summary.userConfigCount} 項` : "未啟用"})`);
+    console.log(`  - 開源社群快取檔: ${getPricingCacheFilePath()} (${summary.upstreamCacheCount > 0 ? `已快取 ${summary.upstreamCacheCount} 個模型` : "未快取"})`);
+    console.log(`  - 內建基準模型量: ${summary.builtinCount} 個`);
+    console.log("----------------------------------------------------------------------------------");
+    console.log("  核心模型當前生效費率 (每 1,000,000 Tokens 美元換算):");
+    console.log("  模型前綴                輸入(USD)    快取輸入    輸出(USD)    推論輸出    決策來源");
+    console.log("  --------------------------------------------------------------------------------");
+
+    for (const item of overviewList) {
+      const namePadded = item.modelPrefix.padEnd(22, " ");
+      const inPadded = (`$${item.inputPer1M.toFixed(4)}`).padEnd(12, " ");
+      const cachePadded = (`$${item.cachedInputPer1M.toFixed(4)}`).padEnd(12, " ");
+      const outPadded = (`$${item.outputPer1M.toFixed(4)}`).padEnd(12, " ");
+      const reasonPadded = (`$${item.reasoningOutputPer1M.toFixed(4)}`).padEnd(12, " ");
+      const sourceDesc = item.source === "user-config"
+        ? "自訂設定"
+        : item.source === "upstream-cache"
+          ? "社群快取"
+          : item.source === "builtin"
+            ? "內建標準"
+            : "通用備援";
+
+      console.log(`  ${namePadded} ${inPadded} ${cachePadded} ${outPadded} ${reasonPadded} ${sourceDesc}`);
+    }
+
+    console.log("----------------------------------------------------------------------------------");
+    console.log("  操作提示:");
+    console.log("  - 強制同步開源庫: codex-usage pricing update");
+    console.log("  - 重新計算歷史值: codex-usage reprice");
+    console.log("==================================================================================");
     return;
   }
 
@@ -199,7 +371,7 @@ async function main(): Promise<void> {
     }
 
     // 模式 C (預設): 現代化即時 Web 儀表板 (支援 SSE、即時額度、圖表與歷程)
-    const port = parseInt(values.port || "10200", 10);
+    const port = parseIntegerOrDefault(values.port, 10200);
     const host = values.host || "127.0.0.1";
     const database = new HistoryDatabase();
     const server = new DashboardServer(database, { port, host });
@@ -249,7 +421,7 @@ async function main(): Promise<void> {
     console.log(`[掃描] 開始索引 ${values.all ? "所有歷史" : `最近 ${values.days} 天`} Session 檔案...`);
     const scanResult = values.all
       ? indexer.indexAll()
-      : indexer.indexRecent(parseInt(values.days || "7", 10));
+      : indexer.indexRecent(parseIntegerOrDefault(values.days, 7));
     console.log(`[完成] 掃描 ${scanResult.filesScanned} 個檔案，新增索引 ${scanResult.recordsInserted} 筆紀錄 (耗時 ${scanResult.durationMs}ms)`);
     database.close();
     return;
@@ -277,7 +449,7 @@ async function main(): Promise<void> {
     const indexer = new SessionIndexer(database);
     indexer.indexRecent(1);
 
-    const limit = parseInt(values.limit || "25", 10);
+    const limit = parseCappedLimit(values.limit, 25);
     let sinceTimestampMs: number | undefined;
 
     if (values.since) {
@@ -310,17 +482,17 @@ async function main(): Promise<void> {
       console.log(headers.join(","));
       for (const record of records) {
         console.log([
-          `"${record.datetime}"`,
-          `"${record.model}"`,
-          `"${record.agentRole || "main"}"`,
-          record.totalTokens,
-          record.inputTokens,
-          record.cachedInputTokens,
-          record.outputTokens,
-          record.reasoningOutputTokens,
-          record.costUsd?.toFixed(4) ?? "0.0000",
-          record.weeklyUsedPercent ?? record.weeklyUsedPct ?? "",
-          `"${record.sessionId}"`,
+          escapeCsvField(record.datetime),
+          escapeCsvField(record.model),
+          escapeCsvField(record.agentRole || "main"),
+          escapeCsvField(record.totalTokens),
+          escapeCsvField(record.inputTokens),
+          escapeCsvField(record.cachedInputTokens),
+          escapeCsvField(record.outputTokens),
+          escapeCsvField(record.reasoningOutputTokens),
+          escapeCsvField(record.costUsd?.toFixed(4) ?? "0.0000"),
+          escapeCsvField(record.weeklyUsedPercent ?? record.weeklyUsedPct ?? ""),
+          escapeCsvField(record.sessionId),
         ].join(","));
       }
       database.close();

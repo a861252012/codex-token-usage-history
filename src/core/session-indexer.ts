@@ -115,9 +115,11 @@ export class SessionIndexer {
         if (payloadData.thread_settings?.model) {
           currentModel = payloadData.thread_settings.model;
         }
-        // 識別 subAgent 訊息 thread
-        if (payloadData.thread_id && (payloadData.thread_id.includes("subagent") || payloadData.thread_id.includes("sub-agent"))) {
-          currentAgentRole = "subagent";
+        if (payloadData.thread_id) {
+          const threadIdText = String(payloadData.thread_id);
+          if (threadIdText.includes("subagent") || threadIdText.includes("sub-agent")) {
+            currentAgentRole = "subagent";
+          }
         }
 
         // 提取 rate_limits 配額快照 (嚴格檢查主配額，避免 Spark 0% 覆寫真實週用量)
@@ -168,13 +170,14 @@ export class SessionIndexer {
         }
 
         // 計算官方 API 等值美金金額
-        const costUsd = calculateTokenCost({
-          model: currentModel,
+        const costResult = calculateTokenCost(
+          currentModel,
           inputTokens,
           cachedInputTokens,
           outputTokens,
-          reasoningOutputTokens,
-        });
+          reasoningOutputTokens
+        );
+        const costUsd = costResult.totalCost;
 
         records.push({
           timestamp: timestampMilliseconds,
@@ -217,7 +220,12 @@ export class SessionIndexer {
       const insertedCount = this.database.insertBatch(records);
       this.database.updateCursor(filePath, fileMtime, fileSize, records.length);
 
-      const newRecords = insertedCount > 0 ? records.slice(-insertedCount) : [];
+      let newRecords: TokenRecord[] = [];
+      if (insertedCount === records.length) {
+        newRecords = records;
+      } else if (insertedCount > 0) {
+        newRecords = records.slice(-insertedCount);
+      }
       return { insertedCount, newRecords };
     } catch {
       return { insertedCount: 0, newRecords: [] };

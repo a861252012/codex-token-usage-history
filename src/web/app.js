@@ -155,6 +155,55 @@ function formatNumber(numericValue) {
   return (numericValue || 0).toLocaleString("en-US");
 }
 
+function escapeHtml(rawValue) {
+  if (rawValue === null || rawValue === undefined) return "";
+  return String(rawValue)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatUsdDisplay(value) {
+  if (value === null || value === undefined || value === "") {
+    return "$0.00";
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "$0.00";
+    if (value > 0 && value < 0.01) return `$${value.toFixed(4)}`;
+    return `$${value.toFixed(2)}`;
+  }
+  const stringValue = String(value).trim();
+  if (stringValue.startsWith("$")) return stringValue;
+  return `$${stringValue}`;
+}
+
+function formatPercentDisplay(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return `${Number(value).toFixed(1)}%`;
+}
+
+function isProPlanType(planType) {
+  const normalizedPlan = String(planType || "").trim().toLowerCase();
+  if (!normalizedPlan) return false;
+  if (normalizedPlan === "pro" || normalizedPlan === "prolite") return true;
+  if (!normalizedPlan.startsWith("pro")) return false;
+  const remainder = normalizedPlan.slice(3);
+  if (remainder === "lite") return true;
+  return remainder.length > 0 && !/^[a-z]/.test(remainder);
+}
+
+function looksLikeErrorPlanType(planType) {
+  const planText = String(planType || "").trim();
+  if (!planText) return false;
+  if (/\s/.test(planText)) return true;
+  if (/[：:]/.test(planText)) return true;
+  if (/error|fail|unable|cannot|invalid|offline|timeout|unauthor/i.test(planText)) return true;
+  if (/無法|連線|錯誤|失敗|未登入/.test(planText)) return true;
+  return false;
+}
+
 function getColorForPercent(percentageValue) {
   if (percentageValue >= 90) return "var(--color-red)";
   if (percentageValue >= 70) return "var(--color-yellow)";
@@ -231,15 +280,27 @@ function updateWindowCard(windowPrefix, quotaWindow) {
     textRemaining.textContent = currentLanguage === "zh-TW" ? `剩餘 ${remainingPercent}%` : `${remainingPercent}% left`;
   }
 
-  if (quotaWindow.resetAfterSeconds !== undefined && quotaWindow.resetAfterSeconds > 0) {
-    const targetMilliseconds = Date.now() + quotaWindow.resetAfterSeconds * 1000;
+  let targetMilliseconds = 0;
+  if (typeof quotaWindow.resetAtMs === "number" && quotaWindow.resetAtMs > 0) {
+    targetMilliseconds = quotaWindow.resetAtMs;
+  } else if (typeof quotaWindow.resetAfterSeconds === "number" && quotaWindow.resetAfterSeconds > 0) {
+    const existingTimestamp = windowPrefix === "five-hour" ? fiveHourResetTimestamp : weeklyResetTimestamp;
+    if (existingTimestamp > Date.now()) {
+      targetMilliseconds = existingTimestamp;
+    } else {
+      targetMilliseconds = Date.now() + quotaWindow.resetAfterSeconds * 1000;
+    }
+  }
+
+  if (targetMilliseconds > 0) {
     if (windowPrefix === "five-hour") {
       fiveHourResetTimestamp = targetMilliseconds;
     } else if (windowPrefix === "weekly") {
       weeklyResetTimestamp = targetMilliseconds;
     }
     if (textReset) {
-      textReset.textContent = formatCountdown(quotaWindow.resetAfterSeconds);
+      const remainingSeconds = Math.max(0, Math.floor((targetMilliseconds - Date.now()) / 1000));
+      textReset.textContent = formatCountdown(remainingSeconds);
     }
   } else if (textReset) {
     textReset.textContent = quotaWindow.resetCountdown || "—";
@@ -262,7 +323,9 @@ function updateWindowCard(windowPrefix, quotaWindow) {
 function renderQuotaSnapshot(quotaSnapshot) {
   if (!quotaSnapshot) return;
 
-  const isProTier = (quotaSnapshot.planType || "").toLowerCase().includes("pro") || quotaSnapshot.fiveHour == null;
+  const isProTier = quotaSnapshot.source !== "fallback" && (
+    quotaSnapshot.proTier === true || isProPlanType(quotaSnapshot.planType)
+  );
 
   const standardFiveHour = document.getElementById("standard-five-hour-content");
   const proFiveHour = document.getElementById("pro-five-hour-content");
@@ -279,7 +342,14 @@ function renderQuotaSnapshot(quotaSnapshot) {
 
   const accountBadge = document.getElementById("account-badge");
   if (accountBadge) {
-    accountBadge.textContent = `${quotaSnapshot.email || "Local User"} (${quotaSnapshot.planType || "prolite"})`;
+    const emailLabel = quotaSnapshot.email || "Local User";
+    let planLabel = quotaSnapshot.planType || "prolite";
+    if (quotaSnapshot.source === "fallback") {
+      planLabel = "offline";
+    } else if (looksLikeErrorPlanType(quotaSnapshot.planType)) {
+      planLabel = "—";
+    }
+    accountBadge.textContent = `${emailLabel} (${planLabel})`;
   }
 
   const voucherBadge = document.getElementById("voucher-badge");
@@ -302,7 +372,7 @@ function renderQuotaSnapshot(quotaSnapshot) {
         const secondaryText = additionalLimit.secondaryWindow ? `${additionalLimit.secondaryWindow.usedPercent}% (${additionalLimit.secondaryWindow.remainingPercent}% left)` : "N/A";
         return `
           <div class="card" style="padding: 14px; margin-bottom: 0;">
-            <div style="font-weight: 600; margin-bottom: 6px; color: #fff;">${additionalLimit.limitName}</div>
+            <div style="font-weight: 600; margin-bottom: 6px; color: #fff;">${escapeHtml(additionalLimit.limitName)}</div>
             <div style="font-size: 12px; color: var(--text-secondary);">
               5h: <strong>${primaryText}</strong> | 7d: <strong>${secondaryText}</strong>
             </div>
@@ -335,7 +405,15 @@ async function fetchSummary() {
     const summary = await response.json();
 
     document.getElementById("text-today-tokens").textContent = formatNumber(summary.totalTokens);
-    document.getElementById("text-today-cost").textContent = `$${summary.formattedCostUsd || "0.00"} USD`;
+    document.getElementById("text-today-cost").textContent = `~${formatUsdDisplay(summary.formattedCostUsd)} USD`;
+
+    const pricingMetaElem = document.getElementById("pricing-meta");
+    if (pricingMetaElem && summary.pricing) {
+      const sourceLabel = summary.pricing.source === "user-config" ? "自訂定價" : "內建定價";
+      pricingMetaElem.textContent = `(${summary.pricing.version})`;
+      pricingMetaElem.title = `定價版本: ${summary.pricing.version} (${sourceLabel} ~/.codex/pricing.json)`;
+    }
+
     document.getElementById("text-today-input").textContent = `${formatNumber(summary.inputTokens)} / ${formatNumber(summary.cachedInputTokens)}`;
     document.getElementById("text-today-output").textContent = `${formatNumber(summary.outputTokens)} / ${formatNumber(summary.reasoningOutputTokens)}`;
 
@@ -361,7 +439,7 @@ async function fetchSummary() {
           return `
             <div class="model-bar-row">
               <div class="model-bar-info">
-                <span><strong>${modelStats.model}</strong> (${formatNumber(modelStats.requests)} calls)</span>
+                <span><strong>${escapeHtml(modelStats.model)}</strong> (${formatNumber(modelStats.requests)} calls)</span>
                 <span>${formatNumber(modelStats.totalTokens)} tokens ($${(modelStats.costUsd || 0).toFixed(2)})</span>
               </div>
               <div class="model-bar-track">
@@ -517,17 +595,18 @@ async function fetchSettlementReport(period = "daily") {
     const tbody = document.getElementById("settlement-table-body");
     if (!tbody) return;
 
-    if (!data.records || data.records.length === 0) {
+    const settlementRecords = data.settlements || data.records || [];
+    if (!settlementRecords.length) {
       tbody.innerHTML = `<tr><td colspan="8" class="text-center">No settlement records found</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = data.records.map((record) => {
+    tbody.innerHTML = settlementRecords.map((record) => {
       return `
         <tr>
-          <td><strong>${record.periodKey}</strong></td>
+          <td><strong>${escapeHtml(record.periodKey)}</strong></td>
           <td><strong>${formatNumber(record.totalTokens)}</strong></td>
-          <td style="color: var(--color-cyan); font-weight: 600;">$${record.formattedCostUsd}</td>
+          <td style="color: var(--color-cyan); font-weight: 600;">${formatUsdDisplay(record.formattedCostUsd)}</td>
           <td>${formatNumber(record.inputTokens)} / <span style="color: var(--text-secondary);">${formatNumber(record.cachedInputTokens)}</span></td>
           <td>${formatNumber(record.outputTokens)} / <span style="color: var(--text-secondary);">${formatNumber(record.reasoningOutputTokens)}</span></td>
           <td>${formatNumber(record.mainAgentTokens)}</td>
@@ -547,20 +626,23 @@ async function fetchResetEvents() {
     if (!response.ok) return;
     const data = await response.json();
 
+    const events = Array.isArray(data) ? data : (data.events || []);
+    const count = Array.isArray(data) ? data.length : (data.count ?? events.length);
+
     const countTag = document.getElementById("resets-count-tag");
     if (countTag) {
-      countTag.textContent = `${data.count || 0} events`;
+      countTag.textContent = `${count} events`;
     }
 
     const tbody = document.getElementById("resets-table-body");
     if (!tbody) return;
 
-    if (!data.events || data.events.length === 0) {
+    if (!events.length) {
       tbody.innerHTML = `<tr><td colspan="6" class="text-center">No reset events recorded yet</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = data.events.map((event) => {
+    tbody.innerHTML = events.map((event) => {
       const timeString = event.datetime ? event.datetime.replace("T", " ").slice(0, 19) : "—";
       const deltaText = event.creditDelta > 0 ? `+${event.creditDelta}` : `${event.creditDelta}`;
       const deltaClass = event.creditDelta > 0 ? "style=\"color: var(--color-green); font-weight: bold;\"" : "";
@@ -568,11 +650,11 @@ async function fetchResetEvents() {
       return `
         <tr>
           <td>${timeString}</td>
-          <td><span class="badge">${event.eventType}</span></td>
-          <td>5h: ${event.previousFiveHourUsedPercent.toFixed(1)}% | 7d: ${event.previousWeeklyUsedPercent.toFixed(1)}%</td>
-          <td>5h: ${event.newFiveHourUsedPercent.toFixed(1)}% | 7d: ${event.newWeeklyUsedPercent.toFixed(1)}%</td>
+          <td><span class="badge">${escapeHtml(event.eventType)}</span></td>
+          <td>5h: ${formatPercentDisplay(event.previousFiveHourUsedPercent)} | 7d: ${formatPercentDisplay(event.previousWeeklyUsedPercent)}</td>
+          <td>5h: ${formatPercentDisplay(event.newFiveHourUsedPercent)} | 7d: ${formatPercentDisplay(event.newWeeklyUsedPercent)}</td>
           <td ${deltaClass}>${deltaText} (Bal: ${event.availableCredits})</td>
-          <td>${event.description}</td>
+          <td>${escapeHtml(event.description)}</td>
         </tr>
       `;
     }).join("");
@@ -619,9 +701,9 @@ async function fetchPlanChangeEvents() {
         <tr>
           <td>${timeString}</td>
           <td><span class="badge" style="${badgeStyle}">${typeLabel}</span></td>
-          <td><strong>${(event.previousPlan || "—").toUpperCase()}</strong></td>
-          <td><strong>${(event.newPlan || "—").toUpperCase()}</strong></td>
-          <td>${event.description || "—"}</td>
+          <td><strong>${escapeHtml((event.previousPlan || "—").toUpperCase())}</strong></td>
+          <td><strong>${escapeHtml((event.newPlan || "—").toUpperCase())}</strong></td>
+          <td>${escapeHtml(event.description || "—")}</td>
         </tr>
       `;
     }).join("");
@@ -673,7 +755,7 @@ async function fetchHistory() {
         <tr>
           <td>${timeString}</td>
           <td>${roleBadge}</td>
-          <td><span class="badge">${record.model}</span></td>
+          <td><span class="badge">${escapeHtml(record.model)}</span></td>
           <td><strong>${formatNumber(record.totalTokens)}</strong></td>
           <td style="color: var(--color-cyan); font-weight: 500;">${costText}</td>
           <td>${formatNumber(record.inputTokens)}</td>
@@ -681,7 +763,7 @@ async function fetchHistory() {
           <td>${formatNumber(record.outputTokens)}</td>
           <td style="color: var(--text-secondary);">${formatNumber(record.reasoningOutputTokens)}</td>
           <td>${weeklyQuota}</td>
-          <td style="font-family: monospace; font-size: 11px;">${shortId}</td>
+          <td style="font-family: monospace; font-size: 11px;">${escapeHtml(shortId)}</td>
         </tr>
       `;
     }).join("");

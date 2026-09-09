@@ -1,7 +1,19 @@
 /**
  * OpenAI 各模型官方 API 定價計算器 (Token 等值金額換算模組)
+ *
+ * 階層化定價決策鏈 (Hierarchical Pricing Fallback Chain):
+ *   1. 最高優先: 使用者自訂覆蓋 ~/.codex/pricing.json ("user-config")
+ *   2. 第二優先: 本機快取之開源社群定價庫 ~/.codex/pricing_cache.json ("upstream-cache")
+ *   3. 保底防線: 程式內嵌官方基準與 Codex 預覽模型定價 ("builtin")
+ *   4. 通用降級: 未知模型預設定價 ("fallback")
+ *
  * 單位: 每 1,000,000 Tokens 之美元費率 (USD per 1M tokens)
  */
+
+import { readFileSync, existsSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { loadCachedUpstreamPricing } from "./pricing-sync.js";
 
 export interface ModelPricingTier {
   modelPrefix: string;
@@ -18,10 +30,25 @@ export interface CalculatedCostResult {
   reasoningOutputCost: number;
   totalCost: number;
   formattedCostUsd: string;
+  tier: ModelPricingTier;
 }
 
-// 官方標準與微調模型定價表 (每百萬 Tokens 美元定價)
-export const MODEL_PRICING_TABLE: ModelPricingTier[] = [
+export interface PricingResolution {
+  tier: ModelPricingTier;
+  source: "user-config" | "upstream-cache" | "builtin" | "fallback";
+}
+
+export interface PricingConfigSummary {
+  pricingVersion: string;
+  primarySource: "user-config" | "upstream-cache" | "builtin";
+  totalModelsAvailable: number;
+  userConfigCount: number;
+  upstreamCacheCount: number;
+  builtinCount: number;
+}
+
+// 程式內嵌基準定價 (包含 Codex 特有或尚未登錄公開資料庫之模型)
+const BUILTIN_MODEL_PRICING: ModelPricingTier[] = [
   {
     modelPrefix: "gpt-6-astra",
     inputCostPerMillion: 2.50,
@@ -35,6 +62,27 @@ export const MODEL_PRICING_TABLE: ModelPricingTier[] = [
     cachedInputCostPerMillion: 0.30,
     outputCostPerMillion: 5.00,
     reasoningOutputCostPerMillion: 5.00,
+  },
+  {
+    modelPrefix: "gpt-5.6-sol",
+    inputCostPerMillion: 2.00,
+    cachedInputCostPerMillion: 0.50,
+    outputCostPerMillion: 8.00,
+    reasoningOutputCostPerMillion: 8.00,
+  },
+  {
+    modelPrefix: "gpt-5.6-terra",
+    inputCostPerMillion: 2.00,
+    cachedInputCostPerMillion: 0.50,
+    outputCostPerMillion: 8.00,
+    reasoningOutputCostPerMillion: 8.00,
+  },
+  {
+    modelPrefix: "gpt-5.6-luna",
+    inputCostPerMillion: 2.00,
+    cachedInputCostPerMillion: 0.50,
+    outputCostPerMillion: 8.00,
+    reasoningOutputCostPerMillion: 8.00,
   },
   {
     modelPrefix: "gpt-5",
@@ -80,7 +128,6 @@ export const MODEL_PRICING_TABLE: ModelPricingTier[] = [
   },
 ];
 
-// 預設備援費率 (標準中高階模型水準)
 export const DEFAULT_FALLBACK_PRICING: ModelPricingTier = {
   modelPrefix: "default",
   inputCostPerMillion: 2.00,
@@ -89,17 +136,190 @@ export const DEFAULT_FALLBACK_PRICING: ModelPricingTier = {
   reasoningOutputCostPerMillion: 8.00,
 };
 
+const BUILTIN_VERSION = "2026-09-09";
+
 /**
- * 依據模型名稱匹配最適定價規則
+ * 取得使用者自訂定價設定檔路徑 (~/.codex/pricing.json)
  */
-export function findPricingTierForModel(modelName: string): ModelPricingTier {
+export function getUserPricingFilePath(): string {
+  const baseDirectory = process.env.CODEX_HOME || join(homedir(), ".codex");
+  return join(baseDirectory, "pricing.json");
+}
+
+let cachedUserConfigData: { version: string; models: ModelPricingTier[]; fallback?: ModelPricingTier } | null = null;
+let cachedUserConfigMtime = 0;
+let lastUserConfigCheckTime = 0;
+
+/**
+ * 讀取使用者自訂定價表 (~/.codex/pricing.json)，具備記憶體快取與 mtime 檢查
+ */
+export function loadUserPricingConfig(): { version: string; models: ModelPricingTier[]; fallback?: ModelPricingTier } | null {
+  const filePath = getUserPricingFilePath();
+  const currentTimeMs = Date.now();
+
+  // 2 秒內直接回傳記憶體快取，避免密集重複 statSync
+  if (cachedUserConfigData !== null && currentTimeMs - lastUserConfigCheckTime < 2000) {
+    return cachedUserConfigData;
+  }
+  lastUserConfigCheckTime = currentTimeMs;
+
+  try {
+    if (!existsSync(filePath)) {
+      cachedUserConfigData = null;
+      cachedUserConfigMtime = 0;
+      return null;
+    }
+
+    const fileStat = statSync(filePath);
+    if (cachedUserConfigData && fileStat.mtimeMs === cachedUserConfigMtime) {
+      return cachedUserConfigData;
+    }
+
+    const rawContent = readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(rawContent);
+
+    if (!Array.isArray(parsed.models) || parsed.models.length === 0) {
+      cachedUserConfigData = null;
+      cachedUserConfigMtime = fileStat.mtimeMs;
+      return null;
+    }
+
+    const validatedModels: ModelPricingTier[] = [];
+    for (const item of parsed.models) {
+      if (
+        typeof item.modelPrefix === "string" &&
+        typeof item.inputCostPerMillion === "number" &&
+        typeof item.outputCostPerMillion === "number"
+      ) {
+        validatedModels.push({
+          modelPrefix: item.modelPrefix.toLowerCase(),
+          inputCostPerMillion: item.inputCostPerMillion,
+          cachedInputCostPerMillion: item.cachedInputCostPerMillion ?? item.inputCostPerMillion * 0.5,
+          outputCostPerMillion: item.outputCostPerMillion,
+          reasoningOutputCostPerMillion: item.reasoningOutputCostPerMillion ?? item.outputCostPerMillion,
+        });
+      }
+    }
+
+    if (validatedModels.length === 0) {
+      cachedUserConfigData = null;
+      cachedUserConfigMtime = fileStat.mtimeMs;
+      return null;
+    }
+
+    cachedUserConfigData = {
+      version: parsed.pricingVersion || "user-custom",
+      models: validatedModels,
+      fallback: parsed.fallback,
+    };
+    cachedUserConfigMtime = fileStat.mtimeMs;
+    clearPricingResolutionCache();
+    return cachedUserConfigData;
+  } catch {
+    cachedUserConfigData = null;
+    cachedUserConfigMtime = 0;
+    return null;
+  }
+}
+
+/**
+ * 輔助函數: 從指定清單中尋找最適模型階層 (精確比對優先，次採最長前綴比對)
+ */
+function findBestTierInList(modelName: string, tierList: ModelPricingTier[]): ModelPricingTier | null {
   const normalizedName = modelName.toLowerCase();
-  for (const tier of MODEL_PRICING_TABLE) {
-    if (normalizedName.startsWith(tier.modelPrefix.toLowerCase())) {
-      return tier;
+
+  // 1. 完全一致匹配 (Exact Match)
+  for (const singleTier of tierList) {
+    if (singleTier.modelPrefix.toLowerCase() === normalizedName) {
+      return singleTier;
     }
   }
-  return DEFAULT_FALLBACK_PRICING;
+
+  // 2. 最長前綴匹配 (Longest Prefix Match)
+  let bestCandidate: ModelPricingTier | null = null;
+  let maxPrefixLength = 0;
+
+  for (const singleTier of tierList) {
+    const candidatePrefix = singleTier.modelPrefix.toLowerCase();
+    if (normalizedName.startsWith(candidatePrefix) && candidatePrefix.length > maxPrefixLength) {
+      bestCandidate = singleTier;
+      maxPrefixLength = candidatePrefix.length;
+    }
+  }
+
+  return bestCandidate;
+}
+
+const modelResolutionCache = new Map<string, PricingResolution>();
+let resolvedUserConfig: ReturnType<typeof loadUserPricingConfig> = null;
+let resolvedUpstreamCache: ReturnType<typeof loadCachedUpstreamPricing> = null;
+
+/**
+ * 清理模型定價決策記憶體快取 (當設定檔或遠端快取更新時呼叫)
+ */
+export function clearPricingResolutionCache(): void {
+  modelResolutionCache.clear();
+}
+
+/**
+ * 依據模型名稱匹配最適定價階層 (嚴格落實四層優先級降級鏈，具備 O(1) 決策快取)
+ */
+export function resolvePricingTierForModel(modelName: string): PricingResolution {
+  const normalizedModelName = (modelName || "default").toLowerCase();
+
+  const userConfig = loadUserPricingConfig();
+  const upstreamCache = loadCachedUpstreamPricing();
+  if (userConfig !== resolvedUserConfig || upstreamCache !== resolvedUpstreamCache) {
+    clearPricingResolutionCache();
+    resolvedUserConfig = userConfig;
+    resolvedUpstreamCache = upstreamCache;
+  }
+
+  const cachedResolution = modelResolutionCache.get(normalizedModelName);
+  if (cachedResolution) {
+    return cachedResolution;
+  }
+
+  // 1. 最高優先: 檢查使用者自訂設定檔 (~/.codex/pricing.json)
+  if (userConfig) {
+    const matchedUserTier = findBestTierInList(normalizedModelName, userConfig.models);
+    if (matchedUserTier) {
+      const resolution: PricingResolution = { tier: matchedUserTier, source: "user-config" };
+      modelResolutionCache.set(normalizedModelName, resolution);
+      return resolution;
+    }
+  }
+
+  // 2. 第二優先: 檢查本機快取的開源社群定價庫 (~/.codex/pricing_cache.json)
+  if (upstreamCache) {
+    const matchedUpstreamTier = findBestTierInList(normalizedModelName, upstreamCache.models);
+    if (matchedUpstreamTier) {
+      const resolution: PricingResolution = { tier: matchedUpstreamTier, source: "upstream-cache" };
+      modelResolutionCache.set(normalizedModelName, resolution);
+      return resolution;
+    }
+  }
+
+  // 3. 第三優先: 檢查內建預設定價 (官方標竿與 Codex 專屬模型)
+  const matchedBuiltinTier = findBestTierInList(normalizedModelName, BUILTIN_MODEL_PRICING);
+  if (matchedBuiltinTier) {
+    const resolution: PricingResolution = { tier: matchedBuiltinTier, source: "builtin" };
+    modelResolutionCache.set(normalizedModelName, resolution);
+    return resolution;
+  }
+
+  // 4. 通用降級
+  const fallbackTier = userConfig?.fallback || DEFAULT_FALLBACK_PRICING;
+  const resolution: PricingResolution = { tier: fallbackTier, source: "fallback" };
+  modelResolutionCache.set(normalizedModelName, resolution);
+  return resolution;
+}
+
+/**
+ * 簡化版搜尋函數 (向下相容)
+ */
+export function findPricingTierForModel(modelName: string): ModelPricingTier {
+  return resolvePricingTierForModel(modelName).tier;
 }
 
 /**
@@ -112,11 +332,9 @@ export function calculateTokenCost(
   outputTokens: number,
   reasoningOutputTokens: number
 ): CalculatedCostResult {
-  const tier = findPricingTierForModel(modelName);
+  const { tier } = resolvePricingTierForModel(modelName);
 
-  // 非快取的直接輸入 Tokens
   const directInputTokens = Math.max(0, inputTokens - cachedInputTokens);
-
   const inputCost = (directInputTokens / 1_000_000) * tier.inputCostPerMillion;
   const cachedInputCost = (cachedInputTokens / 1_000_000) * tier.cachedInputCostPerMillion;
   const standardOutputTokens = Math.max(0, outputTokens - reasoningOutputTokens);
@@ -139,5 +357,86 @@ export function calculateTokenCost(
     reasoningOutputCost,
     totalCost,
     formattedCostUsd,
+    tier,
   };
 }
+
+/**
+ * 取得當前全域定價環境概要資訊
+ */
+export function getActivePricingConfig(): {
+  pricingVersion: string;
+  pricingSource: "user-config" | "upstream-cache" | "builtin";
+  summary: PricingConfigSummary;
+} {
+  const userConfig = loadUserPricingConfig();
+  const upstreamCache = loadCachedUpstreamPricing();
+
+  let pricingVersion = BUILTIN_VERSION;
+  let primarySource: "user-config" | "upstream-cache" | "builtin" = "builtin";
+
+  if (userConfig) {
+    primarySource = "user-config";
+    pricingVersion = userConfig.version;
+  } else if (upstreamCache) {
+    primarySource = "upstream-cache";
+    pricingVersion = upstreamCache.updatedDate;
+  }
+
+  const userConfigCount = userConfig?.models.length ?? 0;
+  const upstreamCacheCount = upstreamCache?.models.length ?? 0;
+  const builtinCount = BUILTIN_MODEL_PRICING.length;
+
+  return {
+    pricingVersion,
+    pricingSource: primarySource,
+    summary: {
+      pricingVersion,
+      primarySource,
+      totalModelsAvailable: userConfigCount + upstreamCacheCount + builtinCount,
+      userConfigCount,
+      upstreamCacheCount,
+      builtinCount,
+    },
+  };
+}
+
+/**
+ * 彙總當前所有生效的代表性模型費率表 (供 CLI 與 API 檢視)
+ */
+export function getEffectiveCatalogOverview(): Array<{
+  modelPrefix: string;
+  inputPer1M: number;
+  cachedInputPer1M: number;
+  outputPer1M: number;
+  reasoningOutputPer1M: number;
+  source: "user-config" | "upstream-cache" | "builtin" | "fallback";
+}> {
+  // 挑選常用的主流核心模型與 Codex 模型
+  const sampleModels = [
+    "gpt-6-astra",
+    "gpt-5.3-codex-spark",
+    "gpt-5.6-sol",
+    "gpt-5",
+    "o3-mini",
+    "o1",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "codex-auto-review",
+  ];
+
+  return sampleModels.map((modelName) => {
+    const { tier, source } = resolvePricingTierForModel(modelName);
+    return {
+      modelPrefix: tier.modelPrefix,
+      inputPer1M: tier.inputCostPerMillion,
+      cachedInputPer1M: tier.cachedInputCostPerMillion,
+      outputPer1M: tier.outputCostPerMillion,
+      reasoningOutputPer1M: tier.reasoningOutputCostPerMillion,
+      source,
+    };
+  });
+}
+
+// 向下相容匯出
+export const MODEL_PRICING_TABLE = BUILTIN_MODEL_PRICING;
