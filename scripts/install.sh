@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$SCRIPT_DIR"
+SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SCRIPT_DIRECTORY"
 
 echo "=============================================================================="
 echo " [安裝] 開始安裝與整合 Codex Token 額度與消耗歷史監控系統"
@@ -23,24 +23,24 @@ echo "[完成] TypeScript 模組編譯完成。"
 # 2. 編譯 MacBook 原生狀態列程式
 echo ""
 echo "[步驟 2/5] 編譯 MacBook 原生狀態列程式 (CodexBar)..."
-bash "$SCRIPT_DIR/scripts/build-menubar.sh"
+bash "$SCRIPT_DIRECTORY/scripts/build-menubar.sh"
 
 # 3. 配置 MCP 伺服器與指令捷徑
 echo ""
 echo "[步驟 3/5] 設定 Codex APP 與 CLI 整合..."
-bash "$SCRIPT_DIR/scripts/setup-codex-hook.sh"
+bash "$SCRIPT_DIRECTORY/scripts/setup-codex-hook.sh"
 
 # 4. 執行初次增量索引
 echo ""
 echo "[步驟 4/5] 建立初次 Token 消耗資料庫索引..."
-"$SCRIPT_DIR/bin/codex-usage" index --days 7
+"$SCRIPT_DIRECTORY/bin/codex-usage" index --days 7
 
 # 5. 建立 LaunchAgent 服務設定檔範本
 echo ""
 echo "[步驟 5/5] 產生 macOS 背景服務 (LaunchAgent) 設定檔..."
-PLIST_DIR="$HOME/Library/LaunchAgents"
-mkdir -p "$PLIST_DIR"
-PLIST_PATH="$PLIST_DIR/com.codex.token-usage-monitor.plist"
+PLIST_DIRECTORY="$HOME/Library/LaunchAgents"
+mkdir -p "$PLIST_DIRECTORY"
+PLIST_PATH="$PLIST_DIRECTORY/com.codex.token-usage-monitor.plist"
 
 cat << PLIST_EOF > "$PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -51,7 +51,7 @@ cat << PLIST_EOF > "$PLIST_PATH"
   <string>com.codex.token-usage-monitor</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$SCRIPT_DIR/bin/codex-usage</string>
+    <string>$SCRIPT_DIRECTORY/bin/codex-usage</string>
     <string>serve</string>
     <string>--port</string>
     <string>10200</string>

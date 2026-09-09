@@ -16,24 +16,24 @@ export class SessionWatcher extends EventEmitter {
   private codexHome: string;
   private indexer: SessionIndexer;
   private quotaClient: QuotaClient;
-  private watchedDirs = new Map<string, FSWatcher>();
+  private watchedDirectories = new Map<string, FSWatcher>();
   private debounceTimers = new Map<string, NodeJS.Timeout>();
   private pollInterval: NodeJS.Timeout | null = null;
-  private running = false;
+  private active = false;
 
-  constructor(indexer: SessionIndexer, quotaClient: QuotaClient, codexHomeDir?: string) {
+  constructor(indexer: SessionIndexer, quotaClient: QuotaClient, codexHomeDirectory?: string) {
     super();
     this.indexer = indexer;
     this.quotaClient = quotaClient;
-    this.codexHome = codexHomeDir || process.env.CODEX_HOME || join(homedir(), ".codex");
+    this.codexHome = codexHomeDirectory || process.env.CODEX_HOME || join(homedir(), ".codex");
   }
 
   /**
    * 啟動即時檔案監聽與定時配額輪詢
    */
-  public start(pollIntervalMs = 45_000): void {
-    if (this.running) return;
-    this.running = true;
+  public start(pollIntervalMilliseconds = 45_000): void {
+    if (this.active) return;
+    this.active = true;
 
     // 先執行一次近期增量掃描
     try {
@@ -41,78 +41,78 @@ export class SessionWatcher extends EventEmitter {
     } catch {}
 
     // 建立目錄監聽器
-    this.setupDateDirWatchers();
+    this.setupDateDirectoryWatchers();
 
     // 定期輪詢今天目錄 (防止 fs.watch 漏掉事件，同時自動維護過期監聽器)
     this.pollInterval = setInterval(async () => {
       try {
-        this.setupDateDirWatchers();
-        const res = this.indexer.indexRecent(1);
-        if (res.recordsInserted > 0) {
-          const quota = await this.quotaClient.getQuotaSnapshot(true);
-          this.emit("quotaUpdated", quota);
+        this.setupDateDirectoryWatchers();
+        const scanResult = this.indexer.indexRecent(1);
+        if (scanResult.recordsInserted > 0) {
+          const quotaSnapshot = await this.quotaClient.getQuotaSnapshot(true);
+          this.emit("quotaUpdated", quotaSnapshot);
         } else {
-          const quota = await this.quotaClient.getQuotaSnapshot(false);
-          this.emit("quotaUpdated", quota);
+          const quotaSnapshot = await this.quotaClient.getQuotaSnapshot(false);
+          this.emit("quotaUpdated", quotaSnapshot);
         }
-      } catch (err: any) {
-        this.emit("error", err);
+      } catch (caughtError: any) {
+        this.emit("error", caughtError);
       }
-    }, pollIntervalMs);
+    }, pollIntervalMilliseconds);
   }
 
-  private setupDateDirWatchers(): void {
+  private setupDateDirectoryWatchers(): void {
     const today = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
+    const padNumber = (numericValue: number) => String(numericValue).padStart(2, "0");
     const year = today.getFullYear();
-    const month = pad(today.getMonth() + 1);
-    const day = pad(today.getDate());
+    const month = padNumber(today.getMonth() + 1);
+    const day = padNumber(today.getDate());
 
-    const activeDirs = new Set<string>();
+    const activeDirectories = new Set<string>();
 
     // 今天目錄
-    const sessionTodayDir = join(this.codexHome, "sessions", String(year), month, day);
-    activeDirs.add(sessionTodayDir);
+    const sessionTodayDirectory = join(this.codexHome, "sessions", String(year), month, day);
+    activeDirectories.add(sessionTodayDirectory);
 
     // 昨天目錄
     const yesterday = new Date(Date.now() - 86400000);
-    const yMonth = pad(yesterday.getMonth() + 1);
-    const yDay = pad(yesterday.getDate());
-    const sessionYestDir = join(this.codexHome, "sessions", String(yesterday.getFullYear()), yMonth, yDay);
-    activeDirs.add(sessionYestDir);
+    const yesterdayMonth = padNumber(yesterday.getMonth() + 1);
+    const yesterdayDay = padNumber(yesterday.getDate());
+    const sessionYesterdayDirectory = join(this.codexHome, "sessions", String(yesterday.getFullYear()), yesterdayMonth, yesterdayDay);
+    activeDirectories.add(sessionYesterdayDirectory);
 
     // 關閉並清理已失效的舊目錄監聽器 (避免記憶體與檔案描述元洩漏)
-    for (const [dir, w] of this.watchedDirs.entries()) {
-      if (!activeDirs.has(dir)) {
+    for (const [directoryPath, directoryWatcher] of this.watchedDirectories.entries()) {
+      if (!activeDirectories.has(directoryPath)) {
         try {
-          w.close();
+          directoryWatcher.close();
         } catch {}
-        this.watchedDirs.delete(dir);
+        this.watchedDirectories.delete(directoryPath);
       }
     }
 
     // 加入尚未監聽的活躍目錄
-    for (const dir of activeDirs) {
-      if (!this.watchedDirs.has(dir)) {
-        this.watchDir(dir);
+    for (const directoryPath of activeDirectories) {
+      if (!this.watchedDirectories.has(directoryPath)) {
+        this.watchDirectory(directoryPath);
       }
     }
   }
 
-  private watchDir(dirPath: string): void {
-    if (!existsSync(dirPath)) return;
-    if (this.watchedDirs.has(dirPath)) return; // 嚴格防止重複監聽
+  private watchDirectory(directoryPath: string): void {
+    if (!existsSync(directoryPath)) return;
+    if (this.watchedDirectories.has(directoryPath)) return; // 嚴格防止重複監聽
 
     try {
-      const w = watch(dirPath, (eventType, filename) => {
+      const directoryWatcher = watch(directoryPath, (eventType, filename) => {
         if (!filename || !filename.endsWith(".jsonl")) return;
-        const fullPath = join(dirPath, filename);
+        const fullPath = join(directoryPath, filename);
 
         // 防抖動 250ms 避免檔案正在寫入中重複讀取
         const existingTimer = this.debounceTimers.get(fullPath);
         if (existingTimer) clearTimeout(existingTimer);
 
-        const timer = setTimeout(async () => {
+        const debounceTimer = setTimeout(async () => {
           this.debounceTimers.delete(fullPath);
           try {
             // 單次讀取與解析，消除雙重全檔 I/O
@@ -124,31 +124,31 @@ export class SessionWatcher extends EventEmitter {
               const snapshot = await this.quotaClient.getQuotaSnapshot(true);
               this.emit("quotaUpdated", snapshot);
             }
-          } catch (err: any) {
-            this.emit("error", err);
+          } catch (caughtError: any) {
+            this.emit("error", caughtError);
           }
         }, 250);
 
-        this.debounceTimers.set(fullPath, timer);
+        this.debounceTimers.set(fullPath, debounceTimer);
       });
 
-      this.watchedDirs.set(dirPath, w);
+      this.watchedDirectories.set(directoryPath, directoryWatcher);
     } catch {
       // 若該目錄無法監聽則透過定期輪詢補償
     }
   }
 
   public stop(): void {
-    this.running = false;
-    for (const w of this.watchedDirs.values()) {
+    this.active = false;
+    for (const directoryWatcher of this.watchedDirectories.values()) {
       try {
-        w.close();
+        directoryWatcher.close();
       } catch {}
     }
-    this.watchedDirs.clear();
+    this.watchedDirectories.clear();
 
-    for (const timer of this.debounceTimers.values()) {
-      clearTimeout(timer);
+    for (const debounceTimer of this.debounceTimers.values()) {
+      clearTimeout(debounceTimer);
     }
     this.debounceTimers.clear();
 

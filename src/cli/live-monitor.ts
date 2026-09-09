@@ -7,26 +7,26 @@ import { renderQuotaStatus, renderUsageSummary, renderRecentRecords } from "./fo
 import type { QuotaSnapshot } from "../core/types.js";
 
 export async function runLiveMonitor(): Promise<void> {
-  const db = new HistoryDatabase();
-  await db.init();
+  const database = new HistoryDatabase();
+  await database.init();
 
-  const quotaClient = new QuotaClient();
-  const indexer = new SessionIndexer(db);
-  const watcher = new SessionWatcher(indexer, quotaClient);
+  const quotaClient = new QuotaClient(undefined, database);
+  const sessionIndexer = new SessionIndexer(database);
+  const sessionWatcher = new SessionWatcher(sessionIndexer, quotaClient);
 
   let currentSnapshot: QuotaSnapshot = await quotaClient.getQuotaSnapshot();
-  let isExiting = false;
+  let exitingActive = false;
 
-  watcher.on("quotaUpdated", (snap: QuotaSnapshot) => {
-    currentSnapshot = snap;
-    render();
+  sessionWatcher.on("quotaUpdated", (quotaSnapshot: QuotaSnapshot) => {
+    currentSnapshot = quotaSnapshot;
+    renderMonitorDashboard();
   });
 
-  watcher.on("newRecords", () => {
-    render();
+  sessionWatcher.on("newRecords", () => {
+    renderMonitorDashboard();
   });
 
-  watcher.start(30_000);
+  sessionWatcher.start(30_000);
 
   // 初次清屏並隱藏游標
   process.stdout.write("\x1b[2J\x1b[H\x1b[?25l");
@@ -35,8 +35,8 @@ export async function runLiveMonitor(): Promise<void> {
     process.stdout.write("\x1b[?25h\n");
   }
 
-  function render(): void {
-    if (isExiting) return;
+  function renderMonitorDashboard(): void {
+    if (exitingActive) return;
 
     // 平滑原地覆寫，消除全螢幕閃爍 (No-Flicker Repositioning)
     process.stdout.write("\x1b[H");
@@ -51,11 +51,11 @@ export async function runLiveMonitor(): Promise<void> {
 
     const todayMidnight = new Date();
     todayMidnight.setHours(0, 0, 0, 0);
-    const todaySummary = db.getSummary(todayMidnight.getTime());
+    const todaySummary = database.getSummary(todayMidnight.getTime());
     const summarySection = renderUsageSummary(todaySummary, "本日 Token 消耗統計 (從 00:00 起算)");
 
-    const { records } = db.queryRecords({ limit: 8 });
-    const recordsSection = renderRecentRecords(records, 8);
+    const { records: recentRecords } = database.queryRecords({ limit: 8 });
+    const recordsSection = renderRecentRecords(recentRecords, 8);
 
     const fullOutput = [
       header,
@@ -64,46 +64,46 @@ export async function runLiveMonitor(): Promise<void> {
       summarySection,
       "",
       recordsSection,
-      "\n 即時監控中... (當 Codex APP 或 CLI 產生新對話時將自動刷新)\x1b[J",
+      "\n 即時監控中... (當 Codex APP 或 CLI 產生新對話時將自動更新)\x1b[J",
     ].join("\n");
 
     process.stdout.write(fullOutput);
   }
 
-  render();
+  renderMonitorDashboard();
 
   // 每 1 秒平滑重繪動態倒數秒數
   const tickInterval = setInterval(() => {
-    render();
+    renderMonitorDashboard();
   }, 1000);
 
   if (process.stdin.isTTY) {
     readline.emitKeypressEvents(process.stdin);
     process.stdin.setRawMode(true);
 
-    process.stdin.on("keypress", async (str, key) => {
-      if (key.ctrl && key.name === "c") {
-        cleanup();
+    process.stdin.on("keypress", async (keyString, pressedKey) => {
+      if (pressedKey.ctrl && pressedKey.name === "c") {
+        performCleanup();
         return;
       }
-      if (key.name === "q") {
-        cleanup();
+      if (pressedKey.name === "q") {
+        performCleanup();
         return;
       }
-      if (key.name === "r") {
+      if (pressedKey.name === "r") {
         currentSnapshot = await quotaClient.getQuotaSnapshot(true);
-        indexer.indexRecent(1);
-        render();
+        sessionIndexer.indexRecent(1);
+        renderMonitorDashboard();
       }
     });
   }
 
-  function cleanup(): void {
-    if (isExiting) return;
-    isExiting = true;
+  function performCleanup(): void {
+    if (exitingActive) return;
+    exitingActive = true;
     clearInterval(tickInterval);
-    watcher.stop();
-    db.close();
+    sessionWatcher.stop();
+    database.close();
     restoreScreen();
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
@@ -111,6 +111,6 @@ export async function runLiveMonitor(): Promise<void> {
     process.exit(0);
   }
 
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
+  process.on("SIGINT", performCleanup);
+  process.on("SIGTERM", performCleanup);
 }

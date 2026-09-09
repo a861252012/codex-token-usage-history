@@ -1,5 +1,6 @@
 /**
  * Codex 配額與 Token 消耗紀錄的型別定義
+ * 嚴格遵循語意化命名，杜絕模糊縮寫
  */
 
 export interface QuotaWindow {
@@ -57,6 +58,13 @@ export interface TokenRecord {
   outputTokens: number;
   reasoningOutputTokens: number;
   totalTokens: number;
+  /** 代理人角色 (main 代表主對話，subagent 代表衍生子代理人) */
+  agentRole?: string;
+  /** 等值官方 API 美元金額 (USD) */
+  costUsd?: number;
+  fiveHourUsedPercent?: number | null;
+  weeklyUsedPercent?: number | null;
+  // 向下相容別名
   fiveHourUsedPct?: number | null;
   weeklyUsedPct?: number | null;
   sourceFile?: string;
@@ -70,6 +78,7 @@ export interface ModelUsageStats {
   outputTokens: number;
   reasoningOutputTokens: number;
   totalTokens: number;
+  costUsd: number;
 }
 
 export interface UsageSummary {
@@ -79,6 +88,10 @@ export interface UsageSummary {
   cachedInputTokens: number;
   outputTokens: number;
   reasoningOutputTokens: number;
+  mainAgentTokens: number;
+  subAgentTokens: number;
+  estimatedCostUsd: number;
+  formattedCostUsd: string;
   byModel: ModelUsageStats[];
   hourlyBurnRate: number;
   timeRange: {
@@ -93,4 +106,42 @@ export interface FilterOptions {
   sinceMs?: number;
   model?: string;
   sessionId?: string;
+  agentRole?: string;
+}
+
+/**
+ * OpenAI 配額重置事件與重置券變動歷史紀錄
+ */
+export interface QuotaResetEvent {
+  id?: number;
+  timestamp: number;
+  datetime: string;
+  eventType: "periodic_reset" | "credit_change" | "manual_reset";
+  previousFiveHourUsedPercent: number | null;
+  newFiveHourUsedPercent: number | null;
+  previousWeeklyUsedPercent: number | null;
+  newWeeklyUsedPercent: number | null;
+  availableCredits: number;
+  creditDelta: number;
+  description: string;
+}
+
+/**
+ * 多週期結算項目 (每日、每週、每月、每年)
+ */
+export interface SettlementRecord {
+  periodKey: string;
+  startDate: string;
+  endDate: string;
+  requests: number;
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  mainAgentTokens: number;
+  subAgentTokens: number;
+  estimatedCostUsd: number;
+  formattedCostUsd: string;
+  topModel: string;
 }

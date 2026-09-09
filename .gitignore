@@ -4,6 +4,7 @@ node_modules/
 # Build artifacts
 dist/
 bin/codex-menubar
+bin/codex-hud
 
 # Logs & Temporary files
 *.log

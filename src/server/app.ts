@@ -1,119 +1,138 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
 import { SessionIndexer } from "../core/session-indexer.js";
 import { SessionWatcher } from "../core/session-watcher.js";
-import type { TokenRecord, QuotaSnapshot } from "../core/types.js";
+import type { QuotaSnapshot, TokenRecord } from "../core/types.js";
 
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
+const currentModuleFilePath = fileURLToPath(import.meta.url);
+const currentModuleDirectoryPath = join(currentModuleFilePath, "..");
 
-export interface ServerOptions {
+export interface DashboardServerOptions {
   port?: number;
   host?: string;
 }
 
 export class DashboardServer {
-  private port: number;
-  private host: string;
-  private db: HistoryDatabase;
+  private serverInstance: Server | null = null;
+  private portNumber: number;
+  private hostAddress: string;
+  private databaseInstance: HistoryDatabase;
   private quotaClient: QuotaClient;
-  private indexer: SessionIndexer;
-  private watcher: SessionWatcher;
-  private sseClients = new Set<ServerResponse>();
-  private server: ReturnType<typeof createServer> | null = null;
+  private sessionIndexer: SessionIndexer;
+  private sessionWatcher: SessionWatcher;
+  private serverSentEventClients: Set<ServerResponse> = new Set();
 
-  constructor(db: HistoryDatabase, options: ServerOptions = {}) {
-    this.port = options.port ?? 10200;
-    this.host = options.host ?? "127.0.0.1";
-    this.db = db;
-    this.quotaClient = new QuotaClient();
-    this.indexer = new SessionIndexer(db);
-    this.watcher = new SessionWatcher(this.indexer, this.quotaClient);
+  constructor(database: HistoryDatabase, options: DashboardServerOptions = {}) {
+    this.portNumber = options.port ?? 10200;
+    this.hostAddress = options.host ?? "127.0.0.1";
+    this.databaseInstance = database;
+    this.quotaClient = new QuotaClient(undefined, this.databaseInstance);
+    this.sessionIndexer = new SessionIndexer(database);
+    this.sessionWatcher = new SessionWatcher(this.sessionIndexer, this.quotaClient);
 
     // 監聽並廣播至所有 SSE 用戶端
-    this.watcher.on("quotaUpdated", (snap: QuotaSnapshot) => {
-      this.broadcastSse("quota", snap);
+    this.sessionWatcher.on("quotaUpdated", (snapshot: QuotaSnapshot) => {
+      this.broadcastServerSentEvent("quota", snapshot);
     });
 
-    this.watcher.on("newRecords", (records: TokenRecord[]) => {
-      this.broadcastSse("records", records);
+    this.sessionWatcher.on("newRecords", (records: TokenRecord[]) => {
+      this.broadcastServerSentEvent("records", records);
     });
   }
 
-  private broadcastSse(event: string, data: any): void {
-    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const res of this.sseClients) {
+  public async start(): Promise<string> {
+    await this.databaseInstance.init();
+    await this.sessionWatcher.start();
+
+    return new Promise((resolve, reject) => {
+      this.serverInstance = createServer((incomingRequest, serverResponse) => {
+        this.handleHttpRequest(incomingRequest, serverResponse).catch((handlingError) => {
+          serverResponse.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+          serverResponse.end(JSON.stringify({ error: handlingError.message }));
+        });
+      });
+
+      this.serverInstance.on("error", (networkError) => {
+        reject(networkError);
+      });
+
+      this.serverInstance.listen(this.portNumber, this.hostAddress, () => {
+        resolve(`http://${this.hostAddress}:${this.portNumber}`);
+      });
+    });
+  }
+
+  public stop(): void {
+    this.sessionWatcher.stop();
+    for (const clientResponse of this.serverSentEventClients) {
       try {
-        res.write(payload);
+        clientResponse.end();
       } catch {
-        this.sseClients.delete(res);
+        // 忽略關閉連線例外
+      }
+    }
+    this.serverSentEventClients.clear();
+
+    if (this.serverInstance) {
+      this.serverInstance.close();
+      this.serverInstance = null;
+    }
+  }
+
+  private broadcastServerSentEvent(eventType: string, eventData: any): void {
+    const payload = `event: ${eventType}\ndata: ${JSON.stringify(eventData)}\n\n`;
+    for (const clientResponse of this.serverSentEventClients) {
+      try {
+        clientResponse.write(payload);
+      } catch {
+        this.serverSentEventClients.delete(clientResponse);
       }
     }
   }
 
-  public async start(): Promise<string> {
-    await this.db.init();
-    this.indexer.indexRecent(3);
-    this.watcher.start(40_000);
-
-    return new Promise((resolve, reject) => {
-      this.server = createServer((req, res) => {
-        this.handleRequest(req, res).catch((err) => {
-          res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-          res.end(JSON.stringify({ error: err.message || "伺服器內部錯誤" }));
-        });
-      });
-
-      this.server.on("error", reject);
-      this.server.listen(this.port, this.host, () => {
-        const url = `http://${this.host}:${this.port}`;
-        resolve(url);
-      });
-    });
-  }
-
-  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const parsedUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  private async handleHttpRequest(incomingRequest: IncomingMessage, serverResponse: ServerResponse): Promise<void> {
+    const parsedUrl = new URL(incomingRequest.url || "/", `http://${this.hostAddress}:${this.portNumber}`);
     const pathname = parsedUrl.pathname;
 
-    // CORS 標頭
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    // 設定跨來源資源共用 (CORS) 標頭
+    serverResponse.setHeader("Access-Control-Allow-Origin", "*");
+    serverResponse.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    serverResponse.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
+    if (incomingRequest.method === "OPTIONS") {
+      serverResponse.writeHead(204);
+      serverResponse.end();
       return;
     }
 
-    // 1. API: 配額狀態
+    // 1. API: 即時配額狀態
     if (pathname === "/api/quota") {
-      const force = parsedUrl.searchParams.get("force") === "true";
-      const snap = await this.quotaClient.getQuotaSnapshot(force);
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify(snap));
+      const forceRefresh = parsedUrl.searchParams.get("force") === "true";
+      const quotaSnapshot = await this.quotaClient.getQuotaSnapshot(forceRefresh);
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify(quotaSnapshot));
       return;
     }
 
-    // 2. API: 一站式狀態端點 (包含配額、今日統計與近期紀錄，供 Menu Bar 與快速查詢)
+    // 2. API: 一站式狀態聚合端點 (包含配額、今日統計與近期紀錄)
     if (pathname === "/api/status") {
-      const force = parsedUrl.searchParams.get("force") === "true";
-      const snap = await this.quotaClient.getQuotaSnapshot(force);
+      const forceRefresh = parsedUrl.searchParams.get("force") === "true";
+      const quotaSnapshot = await this.quotaClient.getQuotaSnapshot(forceRefresh);
 
       const todayMidnight = new Date();
       todayMidnight.setHours(0, 0, 0, 0);
-      const summary = this.db.getSummary(todayMidnight.getTime());
-      const { records } = this.db.queryRecords({ limit: 5 });
+      const todaySummary = this.databaseInstance.getSummary(todayMidnight.getTime());
+      const { records: recentRecords } = this.databaseInstance.queryRecords({ limit: 5 });
 
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({
-        snapshot: snap,
-        todaySummary: summary,
-        recentRecords: records,
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify({
+        snapshot: quotaSnapshot,
+        todaySummary,
+        recentRecords,
       }));
       return;
     }
@@ -123,98 +142,110 @@ export class DashboardServer {
       const limit = parseInt(parsedUrl.searchParams.get("limit") || "50", 10);
       const offset = parseInt(parsedUrl.searchParams.get("offset") || "0", 10);
       const model = parsedUrl.searchParams.get("model") || undefined;
-      const sinceMs = parsedUrl.searchParams.get("since") ? parseInt(parsedUrl.searchParams.get("since")!, 10) : undefined;
+      const role = parsedUrl.searchParams.get("role") || undefined;
+      const sinceTimestampMs = parsedUrl.searchParams.get("since")
+        ? parseInt(parsedUrl.searchParams.get("since")!, 10)
+        : undefined;
 
-      const data = this.db.queryRecords({ limit, offset, model, sinceMs });
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify(data));
+      const historyData = this.databaseInstance.queryRecords({
+        limit,
+        offset,
+        model,
+        agentRole: role,
+        sinceMs: sinceTimestampMs,
+      });
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify(historyData));
       return;
     }
 
     // 4. API: 彙總統計
     if (pathname === "/api/summary") {
-      const sinceMs = parsedUrl.searchParams.get("since") ? parseInt(parsedUrl.searchParams.get("since")!, 10) : undefined;
-      const summary = this.db.getSummary(sinceMs);
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify(summary));
+      const sinceTimestampMs = parsedUrl.searchParams.get("since")
+        ? parseInt(parsedUrl.searchParams.get("since")!, 10)
+        : undefined;
+      const usageSummary = this.databaseInstance.getSummary(sinceTimestampMs);
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify(usageSummary));
       return;
     }
 
-    // 5. API: 每小時統計 (24小時燃燒趨勢)
+    // 5. API: 每小時燃燒趨勢統計 (24小時)
     if (pathname === "/api/stats/hourly") {
       const hours = parseInt(parsedUrl.searchParams.get("hours") || "24", 10);
-      const stats = this.db.getHourlyStats(hours);
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify(stats));
+      const hourlyStats = this.databaseInstance.getHourlyStats(hours);
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify(hourlyStats));
       return;
     }
 
-    // 6. API: 每日統計 (14天趨勢)
-    if (pathname === "/api/stats/daily") {
-      const days = parseInt(parsedUrl.searchParams.get("days") || "14", 10);
-      const stats = this.db.getDailyStats(days);
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify(stats));
+    // 6. API: 多週期結算報表 (每日、每週、每月、每年)
+    if (pathname === "/api/settlement") {
+      const periodType = (parsedUrl.searchParams.get("period") || "daily") as "daily" | "weekly" | "monthly" | "yearly";
+      const limitCount = parseInt(parsedUrl.searchParams.get("limit") || "30", 10);
+      const settlementRecords = this.databaseInstance.getSettlementRecords(periodType, limitCount);
+
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify(settlementRecords));
       return;
     }
 
-    // 7. API: Server-Sent Events 即時串流
+    // 7. API: OpenAI 配額重置歷史與重置券變動
+    if (pathname === "/api/resets") {
+      const limitCount = parseInt(parsedUrl.searchParams.get("limit") || "20", 10);
+      const resetEvents = this.databaseInstance.getResetEvents(limitCount);
+
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify(resetEvents));
+      return;
+    }
+
+    // 8. API: Server-Sent Events 即時串流
     if (pathname === "/api/stream") {
-      res.writeHead(200, {
+      serverResponse.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
+        Connection: "keep-alive",
       });
-      res.write("\n");
-      this.sseClients.add(res);
+      serverResponse.write("\n");
+      this.serverSentEventClients.add(serverResponse);
 
-      // 初次連線立即推播一次配額
-      this.quotaClient.getQuotaSnapshot().then((snap) => {
-        res.write(`event: quota\ndata: ${JSON.stringify(snap)}\n\n`);
+      // 剛連線時主動推送一次最新快照
+      this.quotaClient.getQuotaSnapshot().then((snapshot) => {
+        serverResponse.write(`event: quota\ndata: ${JSON.stringify(snapshot)}\n\n`);
       });
 
-      req.on("close", () => {
-        this.sseClients.delete(res);
+      incomingRequest.on("close", () => {
+        this.serverSentEventClients.delete(serverResponse);
       });
       return;
     }
 
-    // 8. 靜態檔案服務 (Web 儀表板)
-    let filePath = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
-    const staticDir = join(__dirname, "../web");
-    const absolutePath = join(staticDir, filePath);
+    // 9. 靜態檔案服務 (Web 儀表板)
+    let relativeFilePath = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
+    const staticDirectory = join(currentModuleDirectoryPath, "../web");
+    const absoluteFilePath = join(staticDirectory, relativeFilePath);
 
-    if (existsSync(absolutePath)) {
-      const ext = filePath.split(".").pop();
-      const contentTypes: Record<string, string> = {
-        html: "text/html; charset=utf-8",
-        css: "text/css; charset=utf-8",
-        js: "application/javascript; charset=utf-8",
-        json: "application/json; charset=utf-8",
-        svg: "image/svg+xml",
-      };
-      const contentType = (ext && contentTypes[ext]) || "text/plain";
-      const content = readFileSync(absolutePath);
-      res.writeHead(200, { "Content-Type": contentType });
-      res.end(content);
+    // 簡易路徑安全檢查 (避免 Directory Traversal)
+    if (!absoluteFilePath.startsWith(staticDirectory) || !existsSync(absoluteFilePath)) {
+      serverResponse.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      serverResponse.end("找不到指定的靜態檔案");
       return;
     }
 
-    res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ error: "找不到指定的頁面或端點" }));
-  }
+    const fileExtension = extname(absoluteFilePath).toLowerCase();
+    const mimeTypeMap: Record<string, string> = {
+      ".html": "text/html; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+    };
 
-  public stop(): void {
-    this.watcher.stop();
-    for (const res of this.sseClients) {
-      try {
-        res.end();
-      } catch {}
-    }
-    this.sseClients.clear();
-    if (this.server) {
-      this.server.close();
-      this.server = null;
-    }
+    const contentType = mimeTypeMap[fileExtension] || "application/octet-stream";
+    const fileBuffer = readFileSync(absoluteFilePath);
+    serverResponse.writeHead(200, { "Content-Type": contentType });
+    serverResponse.end(fileBuffer);
   }
 }

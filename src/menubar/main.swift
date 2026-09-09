@@ -134,38 +134,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let snap = data.snapshot
+        let quotaSnapshot = data.snapshot
         var titleParts: [String] = []
-        var hasAlert = false
+        var alertActive = false
 
-        if let p5 = snap.fiveHour {
-            let rem = Int(p5.remainingPercent)
-            titleParts.append("5h: \(rem)%")
-            if rem <= 20 {
-                hasAlert = true
+        if let fiveHourWindow = quotaSnapshot.fiveHour {
+            let remainingPercent = Int(fiveHourWindow.remainingPercent)
+            titleParts.append("5h: \(remainingPercent)%")
+            if remainingPercent <= 20 {
+                alertActive = true
             }
         }
-        if let pw = snap.weekly {
-            let rem = Int(pw.remainingPercent)
-            titleParts.append("7d: \(rem)%")
-            if rem <= 15 {
-                hasAlert = true
+        if let weeklyWindow = quotaSnapshot.weekly {
+            let remainingPercent = Int(weeklyWindow.remainingPercent)
+            titleParts.append("7d: \(remainingPercent)%")
+            if remainingPercent <= 15 {
+                alertActive = true
             }
         }
 
-        let alertPrefix = hasAlert ? "[!] " : ""
-        let statusTitle = titleParts.isEmpty ? "[Codex 在線]" : "\(alertPrefix)[\(titleParts.joined(separator: " | "))]"
+        let alertPrefix = alertActive ? "[!] " : ""
+        let statusTitle = titleParts.isEmpty ? "[Codex 線上]" : "\(alertPrefix)[\(titleParts.joined(separator: " | "))]"
         statusItem.button?.title = statusTitle
 
         // 構建下拉選單
         let menu = NSMenu()
 
-        let planTitle = "Codex 配額即時監控 (\(snap.planType ?? "prolite"))"
+        let planTitle = "Codex 配額即時監控 (\(quotaSnapshot.planType ?? "prolite"))"
         let headerItem = NSMenuItem(title: planTitle, action: nil, keyEquivalent: "")
         headerItem.isEnabled = false
         menu.addItem(headerItem)
 
-        if let email = snap.email {
+        if let email = quotaSnapshot.email {
             let emailItem = NSMenuItem(title: "帳號: \(email)", action: nil, keyEquivalent: "")
             emailItem.isEnabled = false
             menu.addItem(emailItem)
@@ -174,8 +174,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // 5小時時間視窗
-        if let p5 = snap.fiveHour {
-            let item = NSMenuItem(title: "五小時額度: 剩餘 \(Int(p5.remainingPercent))% (已用 \(Int(p5.usedPercent))% · 重設: \(p5.resetCountdown))", action: nil, keyEquivalent: "")
+        if let fiveHourWindow = quotaSnapshot.fiveHour {
+            let item = NSMenuItem(title: "五小時額度: 剩餘 \(Int(fiveHourWindow.remainingPercent))% (已用 \(Int(fiveHourWindow.usedPercent))% · 重設: \(fiveHourWindow.resetCountdown))", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         } else {
@@ -185,49 +185,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 週用量時間視窗
-        if let pw = snap.weekly {
-            let item = NSMenuItem(title: "週用量額度: 剩餘 \(Int(pw.remainingPercent))% (已用 \(Int(pw.usedPercent))% · 重設: \(pw.resetCountdown))", action: nil, keyEquivalent: "")
+        if let weeklyWindow = quotaSnapshot.weekly {
+            let item = NSMenuItem(title: "週用量額度: 剩餘 \(Int(weeklyWindow.remainingPercent))% (已用 \(Int(weeklyWindow.usedPercent))% · 重設: \(weeklyWindow.resetCountdown))", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         }
 
-        if snap.resetCredits > 0 {
-            let credItem = NSMenuItem(title: "重設信用額度: \(snap.resetCredits) 次可用", action: nil, keyEquivalent: "")
-            credItem.isEnabled = false
-            menu.addItem(credItem)
+        if quotaSnapshot.resetCredits > 0 {
+            let creditMenuItem = NSMenuItem(title: "重設信用額度: \(quotaSnapshot.resetCredits) 次可用", action: nil, keyEquivalent: "")
+            creditMenuItem.isEnabled = false
+            menu.addItem(creditMenuItem)
         }
 
         menu.addItem(NSMenuItem.separator())
 
         // 本日消耗真實統計 (非假資料)
-        let sum = data.todaySummary
-        if sum.requests > 0 || sum.totalTokens > 0 {
-            let sumItem = NSMenuItem(title: "本日消耗總計: \(formatNumber(sum.totalTokens)) tokens (\(formatNumber(sum.requests)) 次請求)", action: nil, keyEquivalent: "")
-            sumItem.isEnabled = false
-            menu.addItem(sumItem)
+        let todaySummary = data.todaySummary
+        if todaySummary.requests > 0 || todaySummary.totalTokens > 0 {
+            let summaryMenuItem = NSMenuItem(title: "本日消耗總計: \(formatNumber(todaySummary.totalTokens)) tokens (\(formatNumber(todaySummary.requests)) 次請求)", action: nil, keyEquivalent: "")
+            summaryMenuItem.isEnabled = false
+            menu.addItem(summaryMenuItem)
 
-            let inOutItem = NSMenuItem(title: "輸入/輸出: \(formatNumber(sum.inputTokens)) / \(formatNumber(sum.outputTokens))", action: nil, keyEquivalent: "")
-            inOutItem.isEnabled = false
-            menu.addItem(inOutItem)
+            let inputOutputMenuItem = NSMenuItem(title: "輸入/輸出: \(formatNumber(todaySummary.inputTokens)) / \(formatNumber(todaySummary.outputTokens))", action: nil, keyEquivalent: "")
+            inputOutputMenuItem.isEnabled = false
+            menu.addItem(inputOutputMenuItem)
 
-            let burnItem = NSMenuItem(title: "過去1小時燃燒率: \(formatNumber(sum.hourlyBurnRate)) tokens/hr", action: nil, keyEquivalent: "")
-            burnItem.isEnabled = false
-            menu.addItem(burnItem)
+            let burnRateMenuItem = NSMenuItem(title: "過去1小時燃燒率: \(formatNumber(todaySummary.hourlyBurnRate)) tokens/hr", action: nil, keyEquivalent: "")
+            burnRateMenuItem.isEnabled = false
+            menu.addItem(burnRateMenuItem)
 
             menu.addItem(NSMenuItem.separator())
         }
 
         // 近期流水帳紀錄 (最新 3 筆)
         if !data.recentRecords.isEmpty {
-            let recHeader = NSMenuItem(title: "近期 Token 消耗流水帳:", action: nil, keyEquivalent: "")
-            recHeader.isEnabled = false
-            menu.addItem(recHeader)
+            let recordHeaderMenuItem = NSMenuItem(title: "近期 Token 消耗流水帳:", action: nil, keyEquivalent: "")
+            recordHeaderMenuItem.isEnabled = false
+            menu.addItem(recordHeaderMenuItem)
 
-            for r in data.recentRecords.prefix(3) {
-                let shortTime = r.datetime.replacingOccurrences(of: "T", with: " ").prefix(19)
-                let recItem = NSMenuItem(title: "  \(shortTime) - \(r.model): \(formatNumber(r.totalTokens))", action: nil, keyEquivalent: "")
-                recItem.isEnabled = false
-                menu.addItem(recItem)
+            for singleRecord in data.recentRecords.prefix(3) {
+                let shortTime = singleRecord.datetime.replacingOccurrences(of: "T", with: " ").prefix(19)
+                let recordMenuItem = NSMenuItem(title: "  \(shortTime) - \(singleRecord.model): \(formatNumber(singleRecord.totalTokens))", action: nil, keyEquivalent: "")
+                recordMenuItem.isEnabled = false
+                menu.addItem(recordMenuItem)
             }
 
             menu.addItem(NSMenuItem.separator())

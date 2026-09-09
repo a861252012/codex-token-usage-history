@@ -1,0 +1,34 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: Build and Validate
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun Runtime
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify Bundle Build
+        run: |
+          npm run build
+
+      - name: Verify Swift Menubar & HUD Compilation
+        run: |
+          npm run build:menubar
+          npm run build:hud
+
+      - name: Verify CLI Basic Commands
+        run: |
+          bin/codex-usage prompt

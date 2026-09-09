@@ -3,18 +3,20 @@ let currentPage = 1;
 const pageSize = 25;
 let totalHistoryRecords = 0;
 let currentFilterModel = "";
+let currentFilterAgentRole = "";
+let currentSettlementPeriod = "daily";
 
 // 倒數計時目標時間戳記 (毫秒)
 let fiveHourResetTimestamp = 0;
 let weeklyResetTimestamp = 0;
 
-function formatNum(num) {
-  return (num || 0).toLocaleString("en-US");
+function formatNumber(numericValue) {
+  return (numericValue || 0).toLocaleString("en-US");
 }
 
-function getProgressColor(pct) {
-  if (pct >= 90) return "var(--color-red)";
-  if (pct >= 70) return "var(--color-yellow)";
+function getColorForPercent(percentageValue) {
+  if (percentageValue >= 90) return "var(--color-red)";
+  if (percentageValue >= 70) return "var(--color-yellow)";
   return "var(--color-green)";
 }
 
@@ -36,36 +38,36 @@ function formatCountdown(totalSeconds) {
 }
 
 function tickCountdown() {
-  const now = Date.now();
+  const currentTimeMilliseconds = Date.now();
 
   if (fiveHourResetTimestamp > 0) {
-    const remSec = Math.max(0, Math.floor((fiveHourResetTimestamp - now) / 1000));
-    const textEl = document.getElementById("text-five-hour-reset");
-    if (textEl) {
-      textEl.textContent = formatCountdown(remSec);
+    const remainingSeconds = Math.max(0, Math.floor((fiveHourResetTimestamp - currentTimeMilliseconds) / 1000));
+    const textElement = document.getElementById("text-five-hour-reset");
+    if (textElement) {
+      textElement.textContent = formatCountdown(remainingSeconds);
     }
   }
 
   if (weeklyResetTimestamp > 0) {
-    const remSec = Math.max(0, Math.floor((weeklyResetTimestamp - now) / 1000));
-    const textEl = document.getElementById("text-weekly-reset");
-    if (textEl) {
-      textEl.textContent = formatCountdown(remSec);
+    const remainingSeconds = Math.max(0, Math.floor((weeklyResetTimestamp - currentTimeMilliseconds) / 1000));
+    const textElement = document.getElementById("text-weekly-reset");
+    if (textElement) {
+      textElement.textContent = formatCountdown(remainingSeconds);
     }
   }
 }
 
-function updateWindowCard(prefix, win) {
-  const bar = document.getElementById(`bar-${prefix}`);
-  const textUsed = document.getElementById(`text-${prefix}-used`);
-  const textRem = document.getElementById(`text-${prefix}-rem`);
-  const textReset = document.getElementById(`text-${prefix}-reset`);
-  const textStatus = document.getElementById(`text-${prefix}-status`);
+function updateWindowCard(windowPrefix, quotaWindow) {
+  const progressBar = document.getElementById(`bar-${windowPrefix}`);
+  const textUsed = document.getElementById(`text-${windowPrefix}-used`);
+  const textRemaining = document.getElementById(`text-${windowPrefix}-rem`);
+  const textReset = document.getElementById(`text-${windowPrefix}-reset`);
+  const textStatus = document.getElementById(`text-${windowPrefix}-status`);
 
-  if (!win) {
-    if (bar) bar.style.width = "0%";
+  if (!quotaWindow) {
+    if (progressBar) progressBar.style.width = "0%";
     if (textUsed) textUsed.textContent = "未配置限制";
-    if (textRem) textRem.textContent = "無額外限制";
+    if (textRemaining) textRemaining.textContent = "無額外限制";
     if (textReset) textReset.textContent = "—";
     if (textStatus) {
       textStatus.textContent = "未啟用";
@@ -74,35 +76,35 @@ function updateWindowCard(prefix, win) {
     return;
   }
 
-  const used = Math.round(win.usedPercent);
-  const rem = Math.max(0, 100 - used);
+  const usedPercent = Math.round(quotaWindow.usedPercent);
+  const remainingPercent = Math.max(0, 100 - usedPercent);
 
-  if (bar) {
-    bar.style.width = `${used}%`;
-    bar.style.backgroundColor = getProgressColor(used);
+  if (progressBar) {
+    progressBar.style.width = `${usedPercent}%`;
+    progressBar.style.backgroundColor = getColorForPercent(usedPercent);
   }
-  if (textUsed) textUsed.textContent = `已用 ${used}%`;
-  if (textRem) textRem.textContent = `剩餘 ${rem}%`;
+  if (textUsed) textUsed.textContent = `已用 ${usedPercent}%`;
+  if (textRemaining) textRemaining.textContent = `剩餘 ${remainingPercent}%`;
 
-  if (win.resetAfterSeconds !== undefined && win.resetAfterSeconds > 0) {
-    const targetMs = Date.now() + win.resetAfterSeconds * 1000;
-    if (prefix === "five-hour") {
-      fiveHourResetTimestamp = targetMs;
-    } else if (prefix === "weekly") {
-      weeklyResetTimestamp = targetMs;
+  if (quotaWindow.resetAfterSeconds !== undefined && quotaWindow.resetAfterSeconds > 0) {
+    const targetMilliseconds = Date.now() + quotaWindow.resetAfterSeconds * 1000;
+    if (windowPrefix === "five-hour") {
+      fiveHourResetTimestamp = targetMilliseconds;
+    } else if (windowPrefix === "weekly") {
+      weeklyResetTimestamp = targetMilliseconds;
     }
     if (textReset) {
-      textReset.textContent = formatCountdown(win.resetAfterSeconds);
+      textReset.textContent = formatCountdown(quotaWindow.resetAfterSeconds);
     }
   } else if (textReset) {
-    textReset.textContent = win.resetCountdown || "—";
+    textReset.textContent = quotaWindow.resetCountdown || "—";
   }
 
   if (textStatus) {
-    if (used >= 95) {
+    if (usedPercent >= 95) {
       textStatus.textContent = "額度即將耗盡";
       textStatus.className = "meta-value danger";
-    } else if (used >= 80) {
+    } else if (usedPercent >= 80) {
       textStatus.textContent = "額度偏低注意";
       textStatus.className = "meta-value warn";
     } else {
@@ -112,49 +114,54 @@ function updateWindowCard(prefix, win) {
   }
 }
 
-function renderQuotaSnapshot(snap) {
-  if (!snap) return;
+function renderQuotaSnapshot(quotaSnapshot) {
+  if (!quotaSnapshot) return;
 
-  const badge = document.getElementById("account-badge");
-  if (badge) {
-    badge.textContent = `${snap.email || "本機使用者"} (${snap.planType || "prolite"})`;
+  const accountBadge = document.getElementById("account-badge");
+  if (accountBadge) {
+    accountBadge.textContent = `${quotaSnapshot.email || "本機使用者"} (${quotaSnapshot.planType || "prolite"})`;
   }
 
-  updateWindowCard("five-hour", snap.fiveHour);
-  updateWindowCard("weekly", snap.weekly);
+  const voucherBadge = document.getElementById("voucher-badge");
+  if (voucherBadge) {
+    voucherBadge.textContent = `重置券: ${quotaSnapshot.resetCredits || 0} 張`;
+  }
+
+  updateWindowCard("five-hour", quotaSnapshot.fiveHour);
+  updateWindowCard("weekly", quotaSnapshot.weekly);
 
   // 附加配額處理
-  const addSec = document.getElementById("additional-limits-section");
-  const addList = document.getElementById("additional-limits-list");
-  if (addSec && addList) {
-    if (snap.additionalLimits && snap.additionalLimits.length > 0) {
-      addSec.style.display = "block";
-      addList.innerHTML = snap.additionalLimits.map((add) => {
-        const p5 = add.primaryWindow ? `${add.primaryWindow.usedPercent}% (剩餘 ${add.primaryWindow.remainingPercent}%)` : "無";
-        const pw = add.secondaryWindow ? `${add.secondaryWindow.usedPercent}% (剩餘 ${add.secondaryWindow.remainingPercent}%)` : "無";
+  const additionalLimitsSection = document.getElementById("additional-limits-section");
+  const additionalLimitsList = document.getElementById("additional-limits-list");
+  if (additionalLimitsSection && additionalLimitsList) {
+    if (quotaSnapshot.additionalLimits && quotaSnapshot.additionalLimits.length > 0) {
+      additionalLimitsSection.style.display = "block";
+      additionalLimitsList.innerHTML = quotaSnapshot.additionalLimits.map((additionalLimit) => {
+        const primaryText = additionalLimit.primaryWindow ? `${additionalLimit.primaryWindow.usedPercent}% (剩餘 ${additionalLimit.primaryWindow.remainingPercent}%)` : "無";
+        const secondaryText = additionalLimit.secondaryWindow ? `${additionalLimit.secondaryWindow.usedPercent}% (剩餘 ${additionalLimit.secondaryWindow.remainingPercent}%)` : "無";
         return `
           <div class="card" style="padding: 12px; margin-bottom: 0;">
-            <div style="font-weight: 600; margin-bottom: 6px;">${add.limitName}</div>
+            <div style="font-weight: 600; margin-bottom: 6px;">${additionalLimit.limitName}</div>
             <div style="font-size: 12px; color: var(--text-secondary);">
-              5小時: <strong>${p5}</strong> | 週用量: <strong>${pw}</strong>
+              5小時: <strong>${primaryText}</strong> | 週用量: <strong>${secondaryText}</strong>
             </div>
           </div>
         `;
       }).join("");
     } else {
-      addSec.style.display = "none";
+      additionalLimitsSection.style.display = "none";
     }
   }
 }
 
 async function fetchQuota(force = false) {
   try {
-    const res = await fetch(`/api/quota${force ? "?force=true" : ""}`);
-    if (!res.ok) return;
-    const snap = await res.json();
-    renderQuotaSnapshot(snap);
-  } catch (err) {
-    console.error("無法取得配額快照:", err);
+    const response = await fetch(`/api/quota${force ? "?force=true" : ""}`);
+    if (!response.ok) return;
+    const quotaSnapshot = await response.json();
+    renderQuotaSnapshot(quotaSnapshot);
+  } catch (caughtError) {
+    console.error("無法取得配額快照:", caughtError);
   }
 }
 
@@ -162,15 +169,25 @@ async function fetchSummary() {
   try {
     const todayMidnight = new Date();
     todayMidnight.setHours(0, 0, 0, 0);
-    const res = await fetch(`/api/summary?since=${todayMidnight.getTime()}`);
-    if (!res.ok) return;
-    const summary = await res.json();
+    const response = await fetch(`/api/summary?since=${todayMidnight.getTime()}`);
+    if (!response.ok) return;
+    const summary = await response.json();
 
-    document.getElementById("text-today-tokens").textContent = formatNum(summary.totalTokens);
-    document.getElementById("text-today-input").textContent = `${formatNum(summary.inputTokens)} / ${formatNum(summary.cachedInputTokens)}`;
-    document.getElementById("text-today-output").textContent = `${formatNum(summary.outputTokens)} / ${formatNum(summary.reasoningOutputTokens)}`;
-    document.getElementById("text-today-requests").textContent = `${formatNum(summary.requests)} 次`;
-    document.getElementById("text-today-burn-rate").textContent = `${formatNum(summary.hourlyBurnRate)} / hr`;
+    document.getElementById("text-today-tokens").textContent = formatNumber(summary.totalTokens);
+    document.getElementById("text-today-cost").textContent = `$${summary.formattedCostUsd || "0.00"} USD`;
+    document.getElementById("text-today-input").textContent = `${formatNumber(summary.inputTokens)} / ${formatNumber(summary.cachedInputTokens)}`;
+    document.getElementById("text-today-output").textContent = `${formatNumber(summary.outputTokens)} / ${formatNumber(summary.reasoningOutputTokens)}`;
+
+    // 代理人角色分佈計算
+    const mainAgentTokens = summary.mainAgentTokens || 0;
+    const subAgentTokens = summary.subAgentTokens || 0;
+    const totalAgentTokens = mainAgentTokens + subAgentTokens;
+    const mainPercent = totalAgentTokens > 0 ? Math.round((mainAgentTokens / totalAgentTokens) * 100) : 100;
+    const subPercent = 100 - mainPercent;
+    document.getElementById("text-today-agents").textContent = `主 ${mainPercent}% / 子 ${subPercent}% (${formatNumber(subAgentTokens)} tokens)`;
+
+    document.getElementById("text-today-requests").textContent = `${formatNumber(summary.requests)} 次`;
+    document.getElementById("text-today-burn-rate").textContent = `${formatNumber(summary.hourlyBurnRate)} / hr`;
 
     // 渲染模型分佈條
     const container = document.getElementById("model-bars-container");
@@ -178,34 +195,34 @@ async function fetchSummary() {
       if (summary.byModel.length === 0) {
         container.innerHTML = `<div style="color: var(--text-secondary); font-size: 13px;">本日尚無模型消耗紀錄</div>`;
       } else {
-        const maxTokens = Math.max(...summary.byModel.map((m) => m.totalTokens), 1);
-        container.innerHTML = summary.byModel.map((m) => {
-          const pct = Math.round((m.totalTokens / maxTokens) * 100);
+        const maxTokens = Math.max(...summary.byModel.map((modelStats) => modelStats.totalTokens), 1);
+        container.innerHTML = summary.byModel.map((modelStats) => {
+          const barPercent = Math.round((modelStats.totalTokens / maxTokens) * 100);
           return `
             <div class="model-bar-row">
               <div class="model-bar-info">
-                <span><strong>${m.model}</strong> (${formatNum(m.requests)} 請求)</span>
-                <span>${formatNum(m.totalTokens)} tokens</span>
+                <span><strong>${modelStats.model}</strong> (${formatNumber(modelStats.requests)} 請求)</span>
+                <span>${formatNumber(modelStats.totalTokens)} tokens ($${(modelStats.costUsd || 0).toFixed(2)})</span>
               </div>
               <div class="model-bar-track">
-                <div class="model-bar-val" style="width: ${pct}%;"></div>
+                <div class="model-bar-val" style="width: ${barPercent}%;"></div>
               </div>
             </div>
           `;
         }).join("");
       }
     }
-  } catch (err) {
-    console.error("無法取得統計彙總:", err);
+  } catch (caughtError) {
+    console.error("無法取得統計彙總:", caughtError);
   }
 }
 
 // 取得並渲染過去 24 小時 Token 燃燒趨勢圖 (純 SVG)
 async function fetchHourlyStats() {
   try {
-    const res = await fetch("/api/stats/hourly?hours=24");
-    if (!res.ok) return;
-    const data = await res.json();
+    const response = await fetch("/api/stats/hourly?hours=24");
+    if (!response.ok) return;
+    const hourlyData = await response.json();
 
     const chartContainer = document.getElementById("hourly-chart-container");
     if (!chartContainer) return;
@@ -215,14 +232,14 @@ async function fetchHourlyStats() {
     const hourlySlots = [];
     const statsMap = new Map();
 
-    for (const item of data) {
+    for (const item of hourlyData) {
       statsMap.set(item.hour, item);
     }
 
     let total24hTokens = 0;
 
-    for (let i = 23; i >= 0; i -= 1) {
-      const slotDate = new Date(now.getTime() - i * 3600 * 1000);
+    for (let index = 23; index >= 0; index -= 1) {
+      const slotDate = new Date(now.getTime() - index * 3600 * 1000);
       const year = slotDate.getFullYear();
       const month = String(slotDate.getMonth() + 1).padStart(2, "0");
       const day = String(slotDate.getDate()).padStart(2, "0");
@@ -239,13 +256,13 @@ async function fetchHourlyStats() {
         displayHour: `${hour}:00`,
         tokens,
         requests,
-        current: i === 0,
+        current: index === 0,
       });
     }
 
     const totalLabel = document.getElementById("chart-total-tokens");
     if (totalLabel) {
-      totalLabel.textContent = `近 24 小時累計: ${formatNum(total24hTokens)} tokens`;
+      totalLabel.textContent = `近 24 小時累計: ${formatNumber(total24hTokens)} tokens`;
     }
 
     // 繪製 SVG 直方圖
@@ -259,7 +276,7 @@ async function fetchHourlyStats() {
     const chartWidth = width - paddingLeft - paddingRight;
     const chartHeight = height - paddingTop - paddingBottom;
 
-    const maxTokens = Math.max(...hourlySlots.map((s) => s.tokens), 1000);
+    const maxTokens = Math.max(...hourlySlots.map((slot) => slot.tokens), 1000);
     const slotCount = hourlySlots.length;
     const colWidth = chartWidth / slotCount;
     const barWidth = Math.max(8, colWidth - 6);
@@ -267,9 +284,9 @@ async function fetchHourlyStats() {
     let barsSvg = "";
     let labelsSvg = "";
 
-    hourlySlots.forEach((slot, idx) => {
+    hourlySlots.forEach((slot, index) => {
       const barHeight = slot.tokens > 0 ? Math.max(4, Math.round((slot.tokens / maxTokens) * chartHeight)) : 0;
-      const x = paddingLeft + idx * colWidth + (colWidth - barWidth) / 2;
+      const x = paddingLeft + index * colWidth + (colWidth - barWidth) / 2;
       const y = paddingTop + chartHeight - barHeight;
       const barClass = slot.current ? "chart-bar current-hour" : "chart-bar";
 
@@ -280,8 +297,8 @@ async function fetchHourlyStats() {
       `;
 
       // 每 3 個小時標註一次時間刻度
-      if (idx % 3 === 0 || idx === slotCount - 1) {
-        const textX = paddingLeft + idx * colWidth + colWidth / 2;
+      if (index % 3 === 0 || index === slotCount - 1) {
+        const textX = paddingLeft + index * colWidth + colWidth / 2;
         labelsSvg += `
           <text class="chart-axis-text" x="${textX}" y="${height - 8}">${slot.displayHour}</text>
         `;
@@ -307,9 +324,9 @@ async function fetchHourlyStats() {
       bar.addEventListener("mouseenter", () => {
         const time = bar.getAttribute("data-time");
         const tokens = parseInt(bar.getAttribute("data-tokens") || "0", 10);
-        const reqs = parseInt(bar.getAttribute("data-requests") || "0", 10);
+        const requests = parseInt(bar.getAttribute("data-requests") || "0", 10);
 
-        tooltip.innerHTML = `<strong>${time}</strong><br>消耗: ${formatNum(tokens)} tokens (${formatNum(reqs)} 次請求)`;
+        tooltip.innerHTML = `<strong>${time}</strong><br>消耗: ${formatNumber(tokens)} tokens (${formatNumber(requests)} 次請求)`;
         tooltip.style.display = "block";
 
         const containerRect = chartContainer.getBoundingClientRect();
@@ -325,8 +342,96 @@ async function fetchHourlyStats() {
         tooltip.style.display = "none";
       });
     });
-  } catch (err) {
-    console.error("無法取得每小時統計圖表:", err);
+  } catch (caughtError) {
+    console.error("無法取得每小時統計圖表:", caughtError);
+  }
+}
+
+// 取得多週期結算報表
+async function fetchSettlementReport(period = "daily") {
+  try {
+    currentSettlementPeriod = period;
+    const response = await fetch(`/api/settlement?period=${encodeURIComponent(period)}&limit=14`);
+    if (!response.ok) return;
+    const data = await response.json();
+
+    const periodLabels = {
+      daily: "每日結算模式 (最近 14 天)",
+      weekly: "每週結算模式 (最近 14 週)",
+      monthly: "每月結算模式 (最近 12 個月)",
+      yearly: "每年結算模式 (所有年份)",
+    };
+
+    const infoTag = document.getElementById("settlement-info-tag");
+    if (infoTag) {
+      infoTag.textContent = periodLabels[period] || `${period} 結算`;
+    }
+
+    const tbody = document.getElementById("settlement-table-body");
+    if (!tbody) return;
+
+    if (!data.records || data.records.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center">查無結算紀錄</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = data.records.map((record) => {
+      return `
+        <tr>
+          <td><strong>${record.periodKey}</strong></td>
+          <td><strong>${formatNumber(record.totalTokens)}</strong></td>
+          <td style="color: var(--color-cyan); font-weight: 600;">$${record.formattedCostUsd}</td>
+          <td>${formatNumber(record.inputTokens)} / <span style="color: var(--text-secondary);">${formatNumber(record.cachedInputTokens)}</span></td>
+          <td>${formatNumber(record.outputTokens)} / <span style="color: var(--text-secondary);">${formatNumber(record.reasoningOutputTokens)}</span></td>
+          <td>${formatNumber(record.mainAgentTokens)}</td>
+          <td>${formatNumber(record.subAgentTokens)}</td>
+          <td>${formatNumber(record.requests)} 次</td>
+        </tr>
+      `;
+    }).join("");
+  } catch (caughtError) {
+    console.error("無法取得多週期結算報表:", caughtError);
+  }
+}
+
+// 取得配額重置與重置券歷史事件
+async function fetchResetEvents() {
+  try {
+    const response = await fetch("/api/resets?limit=20");
+    if (!response.ok) return;
+    const data = await response.json();
+
+    const countTag = document.getElementById("resets-count-tag");
+    if (countTag) {
+      countTag.textContent = `${data.count || 0} 筆事件`;
+    }
+
+    const tbody = document.getElementById("resets-table-body");
+    if (!tbody) return;
+
+    if (!data.events || data.events.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center">目前尚無配額重置或重置券事件</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = data.events.map((event) => {
+      const timeString = event.datetime ? event.datetime.replace("T", " ").slice(0, 19) : "—";
+      const deltaText = event.creditDelta > 0 ? `+${event.creditDelta}` : `${event.creditDelta}`;
+      const deltaClass = event.creditDelta > 0 ? "style=\"color: var(--color-green); font-weight: bold;\"" : "";
+
+      return `
+        <tr>
+          <td>${timeString}</td>
+          <td><span class="badge">${event.eventType}</span></td>
+          <td>5h: ${event.previousFiveHourUsedPercent.toFixed(1)}% | 7d: ${event.previousWeeklyUsedPercent.toFixed(1)}%</td>
+          <td>5h: ${event.newFiveHourUsedPercent.toFixed(1)}% | 7d: ${event.newWeeklyUsedPercent.toFixed(1)}%</td>
+          <td ${deltaClass}>${deltaText} (餘 ${event.availableCredits})</td>
+          <td>${event.description}</td>
+        </tr>
+      `;
+    }).join("");
+  } catch (caughtError) {
+    console.error("無法取得配額重置紀錄:", caughtError);
   }
 }
 
@@ -337,38 +442,49 @@ async function fetchHistory() {
     if (currentFilterModel) {
       url += `&model=${encodeURIComponent(currentFilterModel)}`;
     }
+    if (currentFilterAgentRole) {
+      url += `&agent_role=${encodeURIComponent(currentFilterAgentRole)}`;
+    }
 
-    const res = await fetch(url);
-    if (!res.ok) return;
-    const data = await res.json();
+    const response = await fetch(url);
+    if (!response.ok) return;
+    const data = await response.json();
 
     totalHistoryRecords = data.total;
-    document.getElementById("history-total-count").textContent = `${formatNum(data.total)} 筆紀錄`;
+    document.getElementById("history-total-count").textContent = `${formatNumber(data.total)} 筆紀錄`;
 
     const tbody = document.getElementById("history-table-body");
     if (!tbody) return;
 
     if (data.records.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center">查無符合條件的消耗紀錄</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11" class="text-center">查無符合條件的消耗紀錄</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = data.records.map((r) => {
-      const timeStr = r.datetime ? r.datetime.replace("T", " ").slice(0, 19) : "—";
-      const weeklyQuota = r.weeklyUsedPct !== null && r.weeklyUsedPct !== undefined
-        ? `${r.weeklyUsedPct}%`
+    tbody.innerHTML = data.records.map((record) => {
+      const timeString = record.datetime ? record.datetime.replace("T", " ").slice(0, 19) : "—";
+      const weeklyQuota = record.weeklyUsedPercent !== null && record.weeklyUsedPercent !== undefined
+        ? `${record.weeklyUsedPercent}%`
+        : record.weeklyUsedPct !== null && record.weeklyUsedPct !== undefined
+        ? `${record.weeklyUsedPct}%`
         : "—";
-      const shortId = r.sessionId ? `${r.sessionId.slice(0, 8)}...` : "—";
+      const shortId = record.sessionId ? `${record.sessionId.slice(0, 8)}...` : "—";
+      const costText = record.costUsd ? `$${record.costUsd.toFixed(3)}` : "$0.000";
+      const roleBadge = record.agentRole === "subagent"
+        ? "<span class=\"badge\" style=\"background: rgba(210, 153, 34, 0.2); color: var(--color-yellow);\">subAgent</span>"
+        : "<span class=\"badge\" style=\"background: rgba(88, 166, 255, 0.15); color: var(--color-blue);\">主程式</span>";
 
       return `
         <tr>
-          <td>${timeStr}</td>
-          <td><span class="badge">${r.model}</span></td>
-          <td><strong>${formatNum(r.totalTokens)}</strong></td>
-          <td>${formatNum(r.inputTokens)}</td>
-          <td style="color: var(--text-secondary);">${formatNum(r.cachedInputTokens)}</td>
-          <td>${formatNum(r.outputTokens)}</td>
-          <td style="color: var(--text-secondary);">${formatNum(r.reasoningOutputTokens)}</td>
+          <td>${timeString}</td>
+          <td>${roleBadge}</td>
+          <td><span class="badge">${record.model}</span></td>
+          <td><strong>${formatNumber(record.totalTokens)}</strong></td>
+          <td style="color: var(--color-cyan); font-weight: 500;">${costText}</td>
+          <td>${formatNumber(record.inputTokens)}</td>
+          <td style="color: var(--text-secondary);">${formatNumber(record.cachedInputTokens)}</td>
+          <td>${formatNumber(record.outputTokens)}</td>
+          <td style="color: var(--text-secondary);">${formatNumber(record.reasoningOutputTokens)}</td>
           <td>${weeklyQuota}</td>
           <td style="font-family: monospace; font-size: 11px;">${shortId}</td>
         </tr>
@@ -376,8 +492,8 @@ async function fetchHistory() {
     }).join("");
 
     updatePagination();
-  } catch (err) {
-    console.error("無法取得歷史紀錄:", err);
+  } catch (caughtError) {
+    console.error("無法取得歷史紀錄:", caughtError);
   }
 }
 
@@ -389,28 +505,30 @@ function updatePagination() {
 }
 
 function setupSse() {
-  const statusEl = document.getElementById("connection-status");
-  const sse = new EventSource("/api/stream");
+  const statusElement = document.getElementById("connection-status");
+  const eventSource = new EventSource("/api/stream");
 
-  sse.onopen = () => {
-    if (statusEl) {
-      statusEl.textContent = "即時串流連線中";
-      statusEl.className = "status-badge connected";
+  eventSource.onopen = () => {
+    if (statusElement) {
+      statusElement.textContent = "即時串流連線中";
+      statusElement.className = "status-badge connected";
     }
   };
 
-  sse.addEventListener("quota", (e) => {
+  eventSource.addEventListener("quota", (event) => {
     try {
-      const snap = JSON.parse(e.data);
-      renderQuotaSnapshot(snap);
+      const quotaSnapshot = JSON.parse(event.data);
+      renderQuotaSnapshot(quotaSnapshot);
     } catch {}
   });
 
-  sse.addEventListener("records", () => {
+  eventSource.addEventListener("records", () => {
     fetchSummary();
     fetchHourlyStats();
+    fetchSettlementReport(currentSettlementPeriod);
+    fetchResetEvents();
 
-    // 若處於第 1 頁，直接自動更新；若在後續頁面，顯示提示列避免視圖跳動
+    // 若處於第 1 頁，直接自動更新；若在後續頁面，顯示提示列避免畫面跳動
     if (currentPage === 1) {
       fetchHistory();
     } else {
@@ -421,49 +539,54 @@ function setupSse() {
     }
   });
 
-  sse.onerror = () => {
-    if (statusEl) {
-      statusEl.textContent = "重新連線中...";
-      statusEl.className = "status-badge connecting";
+  eventSource.onerror = () => {
+    if (statusElement) {
+      statusElement.textContent = "重新連線中...";
+      statusElement.className = "status-badge connecting";
     }
   };
 }
 
-function escapeCsvField(val) {
-  if (val === null || val === undefined) return "";
-  const str = String(val);
-  if (str.includes(",") || str.includes("\"") || str.includes("\n") || str.includes("\r")) {
-    return `"${str.replace(/"/g, "\"\"")}"`;
+function escapeCsvField(fieldValue) {
+  if (fieldValue === null || fieldValue === undefined) return "";
+  const stringContent = String(fieldValue);
+  if (stringContent.includes(",") || stringContent.includes("\"") || stringContent.includes("\n") || stringContent.includes("\r")) {
+    return `"${stringContent.replace(/"/g, "\"\"")}"`;
   }
-  return str;
+  return stringContent;
 }
 
-// 匯出 CSV 功能 (連動當前搜尋模型與標準 RFC 4180 格式)
+// 匯出 CSV 功能 (連動當前搜尋模型與角色篩選，遵循 RFC 4180 標準)
 async function exportCsv() {
   try {
     let url = "/api/history?limit=5000";
     if (currentFilterModel) {
       url += `&model=${encodeURIComponent(currentFilterModel)}`;
     }
+    if (currentFilterAgentRole) {
+      url += `&agent_role=${encodeURIComponent(currentFilterAgentRole)}`;
+    }
 
-    const res = await fetch(url);
-    const data = await res.json();
+    const response = await fetch(url);
+    const data = await response.json();
     if (!data.records || data.records.length === 0) {
       alert("目前查無符合條件之消耗紀錄");
       return;
     }
 
-    const headers = ["時間", "模型", "總Token", "輸入Token", "快取Token", "輸出Token", "推理Token", "週配額快照", "SessionID"];
-    const rows = data.records.map((r) => [
-      escapeCsvField(r.datetime),
-      escapeCsvField(r.model),
-      escapeCsvField(r.totalTokens),
-      escapeCsvField(r.inputTokens),
-      escapeCsvField(r.cachedInputTokens),
-      escapeCsvField(r.outputTokens),
-      escapeCsvField(r.reasoningOutputTokens),
-      escapeCsvField(r.weeklyUsedPct ?? ""),
-      escapeCsvField(r.sessionId)
+    const headers = ["時間", "角色", "模型", "總Token", "等值美元", "輸入Token", "快取Token", "輸出Token", "推理Token", "週配額快照", "SessionID"];
+    const rows = data.records.map((record) => [
+      escapeCsvField(record.datetime),
+      escapeCsvField(record.agentRole || "main"),
+      escapeCsvField(record.model),
+      escapeCsvField(record.totalTokens),
+      escapeCsvField(record.costUsd ?? 0),
+      escapeCsvField(record.inputTokens),
+      escapeCsvField(record.cachedInputTokens),
+      escapeCsvField(record.outputTokens),
+      escapeCsvField(record.reasoningOutputTokens),
+      escapeCsvField(record.weeklyUsedPercent ?? record.weeklyUsedPct ?? ""),
+      escapeCsvField(record.sessionId)
     ]);
 
     const csvContent = "\uFEFF" + [headers.join(","), ...rows.map((row) => row.join(","))].join("\r\n");
@@ -473,15 +596,15 @@ async function exportCsv() {
     link.setAttribute("href", downloadUrl);
 
     const modelSuffix = currentFilterModel ? `_${currentFilterModel.replace(/[^a-zA-Z0-9_-]/g, "_")}` : "";
-    const dateStr = new Date().toISOString().slice(0, 10);
-    link.setAttribute("download", `codex_token_usage${modelSuffix}_${dateStr}.csv`);
+    const dateString = new Date().toISOString().slice(0, 10);
+    link.setAttribute("download", `codex_token_usage${modelSuffix}_${dateString}.csv`);
 
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(downloadUrl);
-  } catch (err) {
-    alert(`匯出失敗: ${err.message}`);
+  } catch (caughtError) {
+    alert(`匯出失敗: ${caughtError.message}`);
   }
 }
 
@@ -490,6 +613,8 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchQuota();
   fetchSummary();
   fetchHourlyStats();
+  fetchSettlementReport("daily");
+  fetchResetEvents();
   fetchHistory();
   setupSse();
 
@@ -500,6 +625,8 @@ document.addEventListener("DOMContentLoaded", () => {
     fetchQuota(true);
     fetchSummary();
     fetchHourlyStats();
+    fetchSettlementReport(currentSettlementPeriod);
+    fetchResetEvents();
     fetchHistory();
   });
 
@@ -507,19 +634,39 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const modelInput = document.getElementById("filter-model");
   let debounceTimer;
-  modelInput.addEventListener("input", (e) => {
+  modelInput.addEventListener("input", (event) => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      currentFilterModel = e.target.value.trim();
+      currentFilterModel = event.target.value.trim();
       currentPage = 1;
       fetchHistory();
     }, 300);
   });
 
+  const agentRoleSelect = document.getElementById("filter-agent-role");
+  if (agentRoleSelect) {
+    agentRoleSelect.addEventListener("change", (event) => {
+      currentFilterAgentRole = event.target.value;
+      currentPage = 1;
+      fetchHistory();
+    });
+  }
+
+  // 週期切換按鈕綁定
+  const periodButtons = document.querySelectorAll(".btn-period");
+  periodButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      periodButtons.forEach((btn) => btn.classList.remove("active"));
+      button.classList.add("active");
+      const selectedPeriod = button.getAttribute("data-period") || "daily";
+      fetchSettlementReport(selectedPeriod);
+    });
+  });
+
   const noticeBanner = document.getElementById("new-records-notification");
-  const loadNewBtn = document.getElementById("btn-load-new-records");
-  if (loadNewBtn && noticeBanner) {
-    loadNewBtn.addEventListener("click", () => {
+  const loadNewButton = document.getElementById("btn-load-new-records");
+  if (loadNewButton && noticeBanner) {
+    loadNewButton.addEventListener("click", () => {
       currentPage = 1;
       noticeBanner.style.display = "none";
       fetchHistory();

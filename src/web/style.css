@@ -456,3 +456,31 @@ body {
 .text-center {
   text-align: center;
 }
+
+.settlement-section, .resets-section {
+  margin-bottom: 24px;
+}
+
+.settlement-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-period {
+  background-color: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-period:hover {
+  color: var(--text-primary);
+  border-color: var(--color-blue);
+}
+
+.btn-period.active {
+  background-color: var(--color-blue);
+  color: #fff;
+  border-color: var(--color-blue);
+}

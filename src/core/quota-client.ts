@@ -45,10 +45,20 @@ export class QuotaClient {
   private cachedSnapshot: QuotaSnapshot | null = null;
   private cachePath: string;
 
-  constructor(codexHomeDir?: string) {
-    this.codexHome = codexHomeDir || process.env.CODEX_HOME || join(homedir(), ".codex");
+  private databaseInstance: import("./history-db.js").HistoryDatabase | null = null;
+
+  constructor(codexHomeDirectory?: string, databaseInstance?: import("./history-db.js").HistoryDatabase) {
+    this.codexHome = codexHomeDirectory || process.env.CODEX_HOME || join(homedir(), ".codex");
     this.cachePath = join(this.codexHome, "codex_quota_snapshot.json");
+    this.databaseInstance = databaseInstance || null;
     this.loadPersistedCache();
+  }
+
+  /**
+   * 設定歷史資料庫實例以供重置事件記錄
+   */
+  public setDatabase(databaseInstance: import("./history-db.js").HistoryDatabase): void {
+    this.databaseInstance = databaseInstance;
   }
 
   /**
@@ -66,8 +76,8 @@ export class QuotaClient {
     if (hours > 0) {
       return `${hours}小時 ${minutes}分`;
     }
-    const secs = seconds % 60;
-    return `${minutes}分 ${secs}秒`;
+    const remainingSeconds = seconds % 60;
+    return `${minutes}分 ${remainingSeconds}秒`;
   }
 
   /**
@@ -77,13 +87,13 @@ export class QuotaClient {
     try {
       const authPath = join(this.codexHome, "auth.json");
       if (!existsSync(authPath)) return null;
-      const raw = readFileSync(authPath, "utf-8");
-      const data = JSON.parse(raw);
-      const tokens = data.tokens;
-      if (!tokens || !tokens.access_token) return null;
+      const rawFileContent = readFileSync(authPath, "utf-8");
+      const authPayload = JSON.parse(rawFileContent);
+      const tokenCollection = authPayload.tokens;
+      if (!tokenCollection || !tokenCollection.access_token) return null;
       return {
-        accessToken: tokens.access_token,
-        accountId: tokens.account_id || "",
+        accessToken: tokenCollection.access_token,
+        accountId: tokenCollection.account_id || "",
       };
     } catch {
       return null;
@@ -94,41 +104,45 @@ export class QuotaClient {
    * 取得即時配額快照 (支援記憶體快取與即時強制重整)
    */
   public async getQuotaSnapshot(forceRefresh = false): Promise<QuotaSnapshot> {
-    const now = Date.now();
-    if (!forceRefresh && this.cachedSnapshot && (now - this.cachedSnapshot.updatedAt < CACHE_TTL_MS)) {
+    const currentTimeMs = Date.now();
+    if (!forceRefresh && this.cachedSnapshot && (currentTimeMs - this.cachedSnapshot.updatedAt < CACHE_TTL_MS)) {
       return this.cachedSnapshot;
     }
 
-    const auth = this.readAuthTokens();
-    if (!auth) {
+    const authTokens = this.readAuthTokens();
+    if (!authTokens) {
       return this.cachedSnapshot || this.getEmptyFallback("無法讀取認證資訊 (未登入 Codex)");
     }
 
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+      const abortController = new AbortController();
+      const timeoutIdentifier = setTimeout(() => abortController.abort(), DEFAULT_TIMEOUT_MS);
 
-      const resp = await fetch("https://chatgpt.com/backend-api/wham/usage", {
+      const httpResponse = await fetch("https://chatgpt.com/backend-api/wham/usage", {
         headers: {
-          "Authorization": `Bearer ${auth.accessToken}`,
-          "ChatGPT-Account-Id": auth.accountId,
+          "Authorization": `Bearer ${authTokens.accessToken}`,
+          "ChatGPT-Account-Id": authTokens.accountId,
           "User-Agent": "codex-token-usage-monitor/1.0",
         },
-        signal: controller.signal,
+        signal: abortController.signal,
       });
-      clearTimeout(timeout);
+      clearTimeout(timeoutIdentifier);
 
-      if (!resp.ok) {
+      if (!httpResponse.ok) {
         // 如果遠端端點回傳錯誤，使用快取
         if (this.cachedSnapshot) return this.cachedSnapshot;
-        return this.getEmptyFallback(`遠端 API 回應代碼: ${resp.status}`);
+        return this.getEmptyFallback(`遠端 API 回應代碼: ${httpResponse.status}`);
       }
 
-      const data = (await resp.json()) as RawWhamResponse;
-      const snapshot = this.parseWhamResponse(data);
-      this.cachedSnapshot = snapshot;
-      this.persistCache(snapshot);
-      return snapshot;
+      const rawResponsePayload = (await httpResponse.json()) as RawWhamResponse;
+      const newSnapshot = this.parseWhamResponse(rawResponsePayload);
+
+      // 自動比對配額重置或重置券事件
+      this.detectAndRecordResetEvents(newSnapshot);
+
+      this.cachedSnapshot = newSnapshot;
+      this.persistCache(newSnapshot);
+      return newSnapshot;
     } catch {
       // 網路連線逾時或失敗時，優先回傳已儲存的快取
       if (this.cachedSnapshot) return this.cachedSnapshot;
@@ -137,20 +151,99 @@ export class QuotaClient {
   }
 
   /**
+   * 偵測並記錄 OpenAI 不定期配額重置或重置券發送歷史
+   */
+  private detectAndRecordResetEvents(newSnapshot: QuotaSnapshot): void {
+    if (!this.cachedSnapshot || !this.databaseInstance) {
+      return;
+    }
+
+    // 忽略 fallback 狀態的快照比較
+    if (this.cachedSnapshot.source === "fallback" || newSnapshot.source === "fallback") {
+      return;
+    }
+
+    const currentTimeMs = Date.now();
+    const currentIsoString = new Date(currentTimeMs).toISOString();
+
+    const previousCredits = this.cachedSnapshot.resetCredits ?? 0;
+    const currentCredits = newSnapshot.resetCredits ?? 0;
+    const creditDelta = currentCredits - previousCredits;
+
+    const previousFiveHourUsedPercent = this.cachedSnapshot.fiveHour?.usedPercent ?? 0;
+    const newFiveHourUsedPercent = newSnapshot.fiveHour?.usedPercent ?? 0;
+    const previousWeeklyUsedPercent = this.cachedSnapshot.weekly?.usedPercent ?? 0;
+    const newWeeklyUsedPercent = newSnapshot.weekly?.usedPercent ?? 0;
+
+    // 1. 偵測重置券發送或消耗事件
+    if (creditDelta !== 0) {
+      const eventType = creditDelta > 0 ? "credit_received" : "credit_consumed";
+      const description = creditDelta > 0
+        ? `收到 OpenAI 配額重置券（增加 ${creditDelta} 張，現有 ${currentCredits} 張）`
+        : `使用 OpenAI 配額重置券（扣除 ${Math.abs(creditDelta)} 張，剩餘 ${currentCredits} 張）`;
+
+      this.databaseInstance.insertResetEvent({
+        timestamp: currentTimeMs,
+        datetime: currentIsoString,
+        eventType,
+        previousFiveHourUsedPercent,
+        newFiveHourUsedPercent,
+        previousWeeklyUsedPercent,
+        newWeeklyUsedPercent,
+        availableCredits: currentCredits,
+        creditDelta,
+        description,
+      });
+    }
+
+    // 2. 偵測五小時週期或不定期歸零重置事件（使用率下降超過 20% 且非重置券扣除所致）
+    if (creditDelta === 0 && previousFiveHourUsedPercent >= 20 && newFiveHourUsedPercent < previousFiveHourUsedPercent && (previousFiveHourUsedPercent - newFiveHourUsedPercent) >= 20) {
+      this.databaseInstance.insertResetEvent({
+        timestamp: currentTimeMs,
+        datetime: currentIsoString,
+        eventType: "periodic_reset",
+        previousFiveHourUsedPercent,
+        newFiveHourUsedPercent,
+        previousWeeklyUsedPercent,
+        newWeeklyUsedPercent,
+        availableCredits: currentCredits,
+        creditDelta: 0,
+        description: `五小時時間視窗配額重置（使用率自 ${previousFiveHourUsedPercent.toFixed(1)}% 降至 ${newFiveHourUsedPercent.toFixed(1)}%）`,
+      });
+    }
+
+    // 3. 偵測週用量時間視窗重置事件
+    if (creditDelta === 0 && previousWeeklyUsedPercent >= 20 && newWeeklyUsedPercent < previousWeeklyUsedPercent && (previousWeeklyUsedPercent - newWeeklyUsedPercent) >= 20) {
+      this.databaseInstance.insertResetEvent({
+        timestamp: currentTimeMs,
+        datetime: currentIsoString,
+        eventType: "periodic_reset",
+        previousFiveHourUsedPercent,
+        newFiveHourUsedPercent,
+        previousWeeklyUsedPercent,
+        newWeeklyUsedPercent,
+        availableCredits: currentCredits,
+        creditDelta: 0,
+        description: `週用量時間視窗滾動重置（使用率自 ${previousWeeklyUsedPercent.toFixed(1)}% 降至 ${newWeeklyUsedPercent.toFixed(1)}%）`,
+      });
+    }
+  }
+
+  /**
    * 解析 WHAM API 回傳的資料結構
    */
-  public parseWhamResponse(data: RawWhamResponse): QuotaSnapshot {
-    const now = Date.now();
+  public parseWhamResponse(responsePayload: RawWhamResponse): QuotaSnapshot {
+    const currentTimeMs = Date.now();
     let fiveHourWindow: QuotaWindow | null = null;
     let weeklyWindow: QuotaWindow | null = null;
 
-    const inspectWindow = (win?: RawWhamWindow | null): QuotaWindow | null => {
-      if (!win) return null;
-      const usedPercent = typeof win.used_percent === "number" ? Math.max(0, Math.min(100, win.used_percent)) : 0;
+    const inspectWindow = (rawWindow?: RawWhamWindow | null): QuotaWindow | null => {
+      if (!rawWindow) return null;
+      const usedPercent = typeof rawWindow.used_percent === "number" ? Math.max(0, Math.min(100, rawWindow.used_percent)) : 0;
       const remainingPercent = Math.max(0, 100 - usedPercent);
-      const limitWindowSeconds = win.limit_window_seconds || 0;
-      const resetAfterSeconds = win.reset_after_seconds || 0;
-      const resetAtMs = win.reset_at ? (win.reset_at > 1e11 ? win.reset_at : win.reset_at * 1000) : (now + resetAfterSeconds * 1000);
+      const limitWindowSeconds = rawWindow.limit_window_seconds || 0;
+      const resetAfterSeconds = rawWindow.reset_after_seconds || 0;
+      const resetAtMs = rawWindow.reset_at ? (rawWindow.reset_at > 1e11 ? rawWindow.reset_at : rawWindow.reset_at * 1000) : (currentTimeMs + resetAfterSeconds * 1000);
 
       return {
         usedPercent,
@@ -163,54 +256,54 @@ export class QuotaClient {
     };
 
     // 檢查主配額 (rate_limit)
-    if (data.rate_limit) {
-      const primary = inspectWindow(data.rate_limit.primary_window);
-      const secondary = inspectWindow(data.rate_limit.secondary_window);
+    if (responsePayload.rate_limit) {
+      const primaryWindow = inspectWindow(responsePayload.rate_limit.primary_window);
+      const secondaryWindow = inspectWindow(responsePayload.rate_limit.secondary_window);
 
-      if (primary) {
-        if (primary.limitWindowSeconds <= 86400 && primary.limitWindowSeconds > 0) {
-          fiveHourWindow = primary;
+      if (primaryWindow) {
+        if (primaryWindow.limitWindowSeconds <= 86400 && primaryWindow.limitWindowSeconds > 0) {
+          fiveHourWindow = primaryWindow;
         } else {
-          weeklyWindow = primary;
+          weeklyWindow = primaryWindow;
         }
       }
 
-      if (secondary) {
-        if (secondary.limitWindowSeconds > 86400) {
-          weeklyWindow = secondary;
-        } else if (!fiveHourWindow && secondary.limitWindowSeconds > 0) {
-          fiveHourWindow = secondary;
+      if (secondaryWindow) {
+        if (secondaryWindow.limitWindowSeconds > 86400) {
+          weeklyWindow = secondaryWindow;
+        } else if (!fiveHourWindow && secondaryWindow.limitWindowSeconds > 0) {
+          fiveHourWindow = secondaryWindow;
         }
       }
     }
 
     // 檢查附加模型配額 (如 Spark)
     const additionalLimits: AdditionalQuotaLimit[] = [];
-    if (Array.isArray(data.additional_rate_limits)) {
-      for (const item of data.additional_rate_limits) {
-        const prim = inspectWindow(item.rate_limit?.primary_window);
-        const sec = inspectWindow(item.rate_limit?.secondary_window);
+    if (Array.isArray(responsePayload.additional_rate_limits)) {
+      for (const limitEntry of responsePayload.additional_rate_limits) {
+        const primaryWindowLimit = inspectWindow(limitEntry.rate_limit?.primary_window);
+        const secondaryWindowLimit = inspectWindow(limitEntry.rate_limit?.secondary_window);
 
         additionalLimits.push({
-          limitName: item.limit_name || "附加配額",
-          meteredFeature: item.metered_feature || "",
-          primaryWindow: prim,
-          secondaryWindow: sec,
+          limitName: limitEntry.limit_name || "附加配額",
+          meteredFeature: limitEntry.metered_feature || "",
+          primaryWindow: primaryWindowLimit,
+          secondaryWindow: secondaryWindowLimit,
         });
 
-        // 若主配額沒有 5 小時時間視窗，但附加配額有 (常見於 prolite 方案配屬 5小時 burst 視窗)
-        if (!fiveHourWindow && prim && prim.limitWindowSeconds <= 86400 && prim.limitWindowSeconds > 0) {
-          fiveHourWindow = prim;
+        // 若主配額沒有 5 小時時間視窗，但附加配額有
+        if (!fiveHourWindow && primaryWindowLimit && primaryWindowLimit.limitWindowSeconds <= 86400 && primaryWindowLimit.limitWindowSeconds > 0) {
+          fiveHourWindow = primaryWindowLimit;
         }
       }
     }
 
-    const resetCredits = data.rate_limit_reset_credits?.available_count ?? 0;
+    const resetCredits = responsePayload.rate_limit_reset_credits?.available_count ?? 0;
 
     return {
-      updatedAt: now,
-      email: data.email || null,
-      planType: data.plan_type || null,
+      updatedAt: currentTimeMs,
+      email: responsePayload.email || null,
+      planType: responsePayload.plan_type || null,
       fiveHour: fiveHourWindow,
       weekly: weeklyWindow,
       additionalLimits,
@@ -230,11 +323,11 @@ export class QuotaClient {
   private loadPersistedCache(): void {
     try {
       if (existsSync(this.cachePath)) {
-        const raw = readFileSync(this.cachePath, "utf-8");
-        const parsed = JSON.parse(raw) as QuotaSnapshot;
-        if (parsed && typeof parsed.updatedAt === "number") {
-          parsed.source = "cache";
-          this.cachedSnapshot = parsed;
+        const rawFileContent = readFileSync(this.cachePath, "utf-8");
+        const parsedSnapshot = JSON.parse(rawFileContent) as QuotaSnapshot;
+        if (parsedSnapshot && typeof parsedSnapshot.updatedAt === "number") {
+          parsedSnapshot.source = "cache";
+          this.cachedSnapshot = parsedSnapshot;
         }
       }
     } catch {
@@ -242,11 +335,11 @@ export class QuotaClient {
     }
   }
 
-  private getEmptyFallback(reason: string): QuotaSnapshot {
+  private getEmptyFallback(reasonDescription: string): QuotaSnapshot {
     return {
       updatedAt: Date.now(),
       email: null,
-      planType: reason,
+      planType: reasonDescription,
       fiveHour: null,
       weekly: null,
       additionalLimits: [],

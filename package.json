@@ -15,7 +15,9 @@
     "history": "node --no-warnings dist/cli/index.js history",
     "serve": "node --no-warnings dist/cli/index.js serve",
     "mcp": "node --no-warnings dist/cli/index.js mcp",
+    "hud": "node --no-warnings dist/cli/index.js hud",
     "build:menubar": "bash scripts/build-menubar.sh",
+    "build:hud": "bash scripts/build-hud.sh",
     "install:all": "bash scripts/install.sh"
   },
   "keywords": [
