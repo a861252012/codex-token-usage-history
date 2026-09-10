@@ -1,10 +1,23 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { QuotaSnapshot, QuotaWindow, AdditionalQuotaLimit } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const CACHE_TTL_MS = 30_000; // 快取 30 秒，避免頻繁請求打滿 API
+const MAXIMUM_QUOTA_RESPONSE_BYTES = 1024 * 1024;
+const MAXIMUM_ADDITIONAL_LIMITS = 100;
+const MAXIMUM_ACCOUNT_TEXT_LENGTH = 320;
+
+function boundedText(value: unknown): string | null {
+  return typeof value === "string" ? value.slice(0, MAXIMUM_ACCOUNT_TEXT_LENGTH) : null;
+}
+
+function finiteNumber(value: unknown, minimum: number, maximum: number, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum
+    ? value
+    : fallback;
+}
 
 export interface RawWhamResponse {
   user_id?: string;
@@ -38,6 +51,30 @@ export interface RawWhamWindow {
   limit_window_seconds?: number;
   reset_after_seconds?: number;
   reset_at?: number;
+}
+
+async function readBoundedResponseText(response: Response, maximumBytes: number): Promise<string> {
+  if (!response.body) throw new Error("Empty response body");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    receivedBytes += value.byteLength;
+    if (receivedBytes > maximumBytes) {
+      await reader.cancel();
+      throw new Error("Response exceeds size limit");
+    }
+    chunks.push(value);
+  }
+  const responseBytes = new Uint8Array(receivedBytes);
+  let writeOffset = 0;
+  for (const chunk of chunks) {
+    responseBytes.set(chunk, writeOffset);
+    writeOffset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(responseBytes);
 }
 
 export class QuotaClient {
@@ -90,10 +127,17 @@ export class QuotaClient {
       const rawFileContent = readFileSync(authPath, "utf-8");
       const authPayload = JSON.parse(rawFileContent);
       const tokenCollection = authPayload.tokens;
-      if (!tokenCollection || !tokenCollection.access_token) return null;
+      if (
+        !tokenCollection ||
+        typeof tokenCollection.access_token !== "string" ||
+        tokenCollection.access_token.length === 0 ||
+        tokenCollection.access_token.length > 16_384
+      ) return null;
       return {
         accessToken: tokenCollection.access_token,
-        accountId: tokenCollection.account_id || "",
+        accountId: typeof tokenCollection.account_id === "string"
+          ? tokenCollection.account_id.slice(0, 1024)
+          : "",
       };
     } catch {
       return null;
@@ -114,9 +158,9 @@ export class QuotaClient {
       return this.cachedSnapshot || this.getEmptyFallback("無法讀取認證資訊 (未登入 Codex)");
     }
 
+    const abortController = new AbortController();
+    const timeoutIdentifier = setTimeout(() => abortController.abort(), DEFAULT_TIMEOUT_MS);
     try {
-      const abortController = new AbortController();
-      const timeoutIdentifier = setTimeout(() => abortController.abort(), DEFAULT_TIMEOUT_MS);
 
       const httpResponse = await fetch("https://chatgpt.com/backend-api/wham/usage", {
         headers: {
@@ -126,15 +170,18 @@ export class QuotaClient {
         },
         signal: abortController.signal,
       });
-      clearTimeout(timeoutIdentifier);
-
       if (!httpResponse.ok) {
         // 如果遠端端點回傳錯誤，使用快取
         if (this.cachedSnapshot) return this.cachedSnapshot;
         return this.getEmptyFallback(`遠端 API 回應代碼: ${httpResponse.status}`);
       }
 
-      const rawResponsePayload = (await httpResponse.json()) as RawWhamResponse;
+      const declaredLength = Number(httpResponse.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > MAXIMUM_QUOTA_RESPONSE_BYTES) {
+        throw new Error("Quota response exceeds size limit");
+      }
+      const responseText = await readBoundedResponseText(httpResponse, MAXIMUM_QUOTA_RESPONSE_BYTES);
+      const rawResponsePayload = JSON.parse(responseText) as RawWhamResponse;
       const newSnapshot = this.parseWhamResponse(rawResponsePayload);
 
       // 自動比對配額重置或重置券事件
@@ -147,6 +194,8 @@ export class QuotaClient {
       // 網路連線逾時或失敗時，優先回傳已儲存的快取
       if (this.cachedSnapshot) return this.cachedSnapshot;
       return this.getEmptyFallback("無法連線至 OpenAI 配額伺服器");
+    } finally {
+      clearTimeout(timeoutIdentifier);
     }
   }
 
@@ -300,11 +349,14 @@ export class QuotaClient {
 
     const inspectWindow = (rawWindow?: RawWhamWindow | null): QuotaWindow | null => {
       if (!rawWindow) return null;
-      const usedPercent = typeof rawWindow.used_percent === "number" ? Math.max(0, Math.min(100, rawWindow.used_percent)) : 0;
+      const usedPercent = finiteNumber(rawWindow.used_percent, 0, 100);
       const remainingPercent = Math.max(0, 100 - usedPercent);
-      const limitWindowSeconds = rawWindow.limit_window_seconds || 0;
-      const resetAfterSeconds = rawWindow.reset_after_seconds || 0;
-      const resetAtMs = rawWindow.reset_at ? (rawWindow.reset_at > 1e11 ? rawWindow.reset_at : rawWindow.reset_at * 1000) : (currentTimeMs + resetAfterSeconds * 1000);
+      const limitWindowSeconds = finiteNumber(rawWindow.limit_window_seconds, 0, 366 * 86400);
+      const resetAfterSeconds = finiteNumber(rawWindow.reset_after_seconds, 0, 366 * 86400);
+      const rawResetAt = finiteNumber(rawWindow.reset_at, 0, 10_000_000_000_000);
+      const resetAtMs = rawResetAt > 0
+        ? (rawResetAt > 1e11 ? rawResetAt : rawResetAt * 1000)
+        : currentTimeMs + resetAfterSeconds * 1000;
 
       return {
         usedPercent,
@@ -341,25 +393,26 @@ export class QuotaClient {
     // 檢查附加模型配額 (如 Spark)
     const additionalLimits: AdditionalQuotaLimit[] = [];
     if (Array.isArray(responsePayload.additional_rate_limits)) {
-      for (const limitEntry of responsePayload.additional_rate_limits) {
+      for (const limitEntry of responsePayload.additional_rate_limits.slice(0, MAXIMUM_ADDITIONAL_LIMITS)) {
+        if (!limitEntry || typeof limitEntry !== "object") continue;
         const primaryWindowLimit = inspectWindow(limitEntry.rate_limit?.primary_window);
         const secondaryWindowLimit = inspectWindow(limitEntry.rate_limit?.secondary_window);
 
         additionalLimits.push({
-          limitName: limitEntry.limit_name || "附加配額",
-          meteredFeature: limitEntry.metered_feature || "",
+          limitName: boundedText(limitEntry.limit_name) || "附加配額",
+          meteredFeature: boundedText(limitEntry.metered_feature) || "",
           primaryWindow: primaryWindowLimit,
           secondaryWindow: secondaryWindowLimit,
         });
       }
     }
 
-    const resetCredits = responsePayload.rate_limit_reset_credits?.available_count ?? 0;
-    const planType = responsePayload.plan_type || null;
+    const resetCredits = finiteNumber(responsePayload.rate_limit_reset_credits?.available_count, 0, 1_000_000);
+    const planType = boundedText(responsePayload.plan_type);
 
     return {
       updatedAt: currentTimeMs,
-      email: responsePayload.email || null,
+      email: boundedText(responsePayload.email),
       planType,
       proTier: computeProTier(planType, fiveHourWindow, weeklyWindow, "wham"),
       fiveHour: fiveHourWindow,
@@ -372,7 +425,9 @@ export class QuotaClient {
 
   private persistCache(snapshot: QuotaSnapshot): void {
     try {
-      writeFileSync(this.cachePath, JSON.stringify(snapshot, null, 2), "utf-8");
+      // The snapshot contains account identity and quota details; never create it world-readable.
+      writeFileSync(this.cachePath, JSON.stringify(snapshot, null, 2), { encoding: "utf-8", mode: 0o600 });
+      chmodSync(this.cachePath, 0o600);
     } catch {
       // 寫入失敗不阻擋主流程
     }

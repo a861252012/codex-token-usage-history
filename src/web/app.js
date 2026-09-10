@@ -152,7 +152,8 @@ function setLanguage(targetLanguage) {
 }
 
 function formatNumber(numericValue) {
-  return (numericValue || 0).toLocaleString("en-US");
+  const parsedValue = Number(numericValue || 0);
+  return Number.isFinite(parsedValue) ? parsedValue.toLocaleString("en-US") : "0";
 }
 
 function escapeHtml(rawValue) {
@@ -827,7 +828,10 @@ function setupSse() {
 
 function escapeCsvField(fieldValue) {
   if (fieldValue === null || fieldValue === undefined) return "";
-  const stringContent = String(fieldValue);
+  const rawContent = String(fieldValue);
+  const stringContent = typeof fieldValue === "string" && /^[\t\r\n ]*[=+\-@]/.test(rawContent)
+    ? `'${rawContent}`
+    : rawContent;
   if (stringContent.includes(",") || stringContent.includes("\"") || stringContent.includes("\n") || stringContent.includes("\r")) {
     return `"${stringContent.replace(/"/g, "\"\"")}"`;
   }
