@@ -967,8 +967,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let weeklyItem = NSMenuItem(title: weeklyTitle, action: nil, keyEquivalent: "")
             weeklyItem.isEnabled = false
             menu.addItem(weeklyItem)
-
-            if let fiveHour = snapshot.fiveHour {
+            let proActive = determineProUser(snapshot: snapshot)
+            if let fiveHour = snapshot.fiveHour, !proActive {
                 let fiveRem = Int(fiveHour.remainingPercent)
                 let fiveCountdown = fiveHour.resetCountdown
                 let fiveTitle = "\(HudLocalization.string(key: "five_hour_quota", language: currentLanguage)): \(fiveRem)% (Reset: \(fiveCountdown))"
@@ -1386,7 +1386,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let weeklyRemaining = Int(snapshot.weekly?.remainingPercent ?? 100)
         let fiveHourRemaining = Int(snapshot.fiveHour?.remainingPercent ?? 100)
-
         let targetPercentage: Double = proActive ? Double(weeklyRemaining) : Double(min(weeklyRemaining, fiveHourRemaining))
 
         // Ring Tint Color Calculation
@@ -1473,6 +1472,4 @@ application.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
 application.delegate = delegate
 application.run()
-
-
 

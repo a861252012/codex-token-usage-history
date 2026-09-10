@@ -136,6 +136,11 @@ describe("SessionIndexer", () => {
         timestamp: "not-a-date",
         payload: { usage: { input_tokens: -1, output_tokens: 1, total_tokens: 0 } },
       },
+      {
+        type: "token_usage_record",
+        timestamp: "2026-09-09T10:01:00.000Z",
+        payload: { usage: { input_tokens: -1, output_tokens: 1, total_tokens: 0 } },
+      },
     ].map((event) => JSON.stringify(event)).join("\n"));
 
     const { records } = new SessionIndexer(db).parseFile(tempJsonlFile);
@@ -143,5 +148,51 @@ describe("SessionIndexer", () => {
     expect(records[0].sessionId).not.toContain("\u001b");
     expect(records[0].model).toBe("gpt-safemodel");
     expect(records[0].threadId).toBe("thread-id");
+  });
+
+  test("incremental events contain only inserted records even when duplicates are interleaved", () => {
+    const event = (turn: string) => JSON.stringify({
+      type: "token_usage_record", timestamp: "2026-09-09T12:00:00.000Z",
+      payload: { session_id: "duplicates", turn_id: turn, usage: { input_tokens: 10, total_tokens: 10 } },
+    });
+    const indexer = new SessionIndexer(db);
+    writeFileSync(tempJsonlFile, event("old"));
+    expect(indexer.indexFile(tempJsonlFile).insertedCount).toBe(1);
+    writeFileSync(tempJsonlFile, [event("new"), event("old"), event("new")].join("\n"));
+    const result = indexer.indexFile(tempJsonlFile, true);
+    expect(result.insertedCount).toBe(1);
+    expect(result.newRecords.map((record) => record.turnId)).toEqual(["new"]);
+    expect(indexer.indexFile(tempJsonlFile, true).newRecords).toEqual([]);
+  });
+
+  test("session_meta 支援 source.subagent 與 parent_thread_id 辨識，且 turn_context 缺少 role 不會覆寫為 main", () => {
+    // 1. source.subagent 與 parent_thread_id 結構
+    writeFileSync(tempJsonlFile, [
+      { type: "session_meta", payload: { id: "guardian-subagent", source: { subagent: { other: "guardian" } }, parent_thread_id: "parent-123" } },
+      { type: "turn_context", payload: { model: "gpt-5" } },
+      {
+        type: "token_usage_record", timestamp: "2026-09-09T12:00:00.000Z",
+        payload: { usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } },
+      },
+    ].map((event) => JSON.stringify(event)).join("\n"));
+
+    const indexer = new SessionIndexer(db);
+    const { records: records1 } = indexer.parseFile(tempJsonlFile);
+    expect(records1).toHaveLength(1);
+    expect(records1[0].agentRole).toBe("subagent");
+
+    // 2. explicit agent_role 搭配無 role 的 turn_context
+    writeFileSync(tempJsonlFile, [
+      { type: "session_meta", payload: { id: "child-subagent", agent_role: "subagent" } },
+      { type: "turn_context", payload: { model: "gpt-5.6" } },
+      {
+        type: "token_usage_record", timestamp: "2026-09-09T12:05:00.000Z",
+        payload: { usage: { input_tokens: 20, output_tokens: 10, total_tokens: 30 } },
+      },
+    ].map((event) => JSON.stringify(event)).join("\n"));
+
+    const { records: records2 } = indexer.parseFile(tempJsonlFile);
+    expect(records2).toHaveLength(1);
+    expect(records2[0].agentRole).toBe("subagent");
   });
 });

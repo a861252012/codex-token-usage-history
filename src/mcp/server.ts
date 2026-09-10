@@ -1,6 +1,7 @@
 import readline from "node:readline";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
+import { SessionIndexer } from "../core/session-indexer.js";
 import {
   getActivePricingConfig,
   getEffectiveCatalogOverview,
@@ -29,6 +30,7 @@ function parseMcpFilter(value: unknown): string | undefined {
 export async function runMcpServer(): Promise<void> {
   const database = new HistoryDatabase();
   await database.init();
+  const sessionIndexer = new SessionIndexer(database);
   const quotaClient = new QuotaClient(undefined, database);
 
   const readlineInterface = readline.createInterface({
@@ -211,6 +213,7 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_usage_history") {
         try {
+          sessionIndexer.indexAll();
           const recordLimit = parseMcpLimit(toolArguments.limit, 10);
           const requestedRole = parseMcpFilter(toolArguments.agent_role);
           const { records, total } = database.queryRecords({
@@ -251,6 +254,7 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_settlement_report") {
         try {
+          sessionIndexer.indexAll();
           const settlementPeriod = toolArguments.period === "weekly" || toolArguments.period === "monthly" || toolArguments.period === "yearly"
             ? toolArguments.period
             : "daily";

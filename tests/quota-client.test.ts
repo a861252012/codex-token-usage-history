@@ -1,4 +1,7 @@
 import { describe, test, expect } from "bun:test";
+import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { QuotaClient } from "../src/core/quota-client.js";
 
 describe("QuotaClient", () => {
@@ -46,5 +49,67 @@ describe("QuotaClient", () => {
     expect(snapshot.fiveHour?.resetAfterSeconds).toBe(0);
     expect(snapshot.resetCredits).toBe(0);
     expect(snapshot.additionalLimits).toHaveLength(100);
+  });
+
+  test("成功取得快照後遭遇 401/連線失敗/缺少憑證時，回傳保留原資料之本機快取並標註失敗原因", async () => {
+    const scratchDir = join(tmpdir(), `codex_quota_test_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    mkdirSync(scratchDir, { recursive: true });
+    const authPath = join(scratchDir, "auth.json");
+    writeFileSync(authPath, JSON.stringify({
+      tokens: { access_token: "test-token", account_id: "test-account" },
+    }));
+
+    const client = new QuotaClient(scratchDir);
+    const originalFetch = globalThis.fetch;
+
+    try {
+      // 1. 成功取得 200 OK
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        email: "test@example.com",
+        plan_type: "pro",
+        rate_limit: {
+          secondary_window: { used_percent: 15, limit_window_seconds: 604800, reset_after_seconds: 3600 },
+        },
+      }), { status: 200 });
+
+      const fresh = await client.getQuotaSnapshot(true);
+      expect(fresh.source).toBe("wham");
+      expect(fresh.email).toBe("test@example.com");
+      const originalUpdatedAt = fresh.updatedAt;
+
+      // 2. 遭遇 401
+      globalThis.fetch = async () => new Response("Unauthorized", { status: 401 });
+      const stale401 = await client.getQuotaSnapshot(true);
+      expect(stale401.source).toBe("cache");
+      expect(stale401.updatedAt).toBe(originalUpdatedAt);
+      expect(stale401.email).toBe("test@example.com");
+      expect(stale401.errorReason).toContain("401");
+
+      // 2.5 隨後呼叫普通 getQuotaSnapshot(false)，必須返回已更新為 cache 的記憶體快照而非舊 wham
+      const cachedNormal = await client.getQuotaSnapshot(false);
+      expect(cachedNormal.source).toBe("cache");
+      expect(cachedNormal.updatedAt).toBe(originalUpdatedAt);
+      expect(cachedNormal.email).toBe("test@example.com");
+      expect(cachedNormal.errorReason).toContain("401");
+
+      // 3. 遭遇連線失敗 (throw)
+      globalThis.fetch = async () => { throw new Error("mock network failure"); };
+      const staleNetwork = await client.getQuotaSnapshot(true);
+      expect(staleNetwork.source).toBe("cache");
+      expect(staleNetwork.updatedAt).toBe(originalUpdatedAt);
+      expect(staleNetwork.errorReason).toContain("mock network failure");
+
+      // 4. auth.json 遺失 / 無憑證
+      rmSync(authPath, { force: true });
+      const staleNoAuth = await client.getQuotaSnapshot(true);
+      expect(staleNoAuth.source).toBe("cache");
+      expect(staleNoAuth.updatedAt).toBe(originalUpdatedAt);
+      expect(staleNoAuth.errorReason).toContain("auth.json");
+    } finally {
+      globalThis.fetch = originalFetch;
+      try {
+        rmSync(scratchDir, { recursive: true, force: true });
+      } catch {}
+    }
   });
 });

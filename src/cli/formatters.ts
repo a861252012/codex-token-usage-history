@@ -75,6 +75,9 @@ export function renderQuotaStatus(snapshot: QuotaSnapshot): string {
   } else {
     lines.push(`  方案狀態      : ${snapshot.planType || "已連線"}`);
   }
+  if (snapshot.source === "cache" && snapshot.errorReason) {
+    lines.push(`  快取提示      : ${COLOR_YELLOW}${snapshot.errorReason}${COLOR_RESET}`);
+  }
 
   lines.push("");
   const isProUser = isProPlanSnapshot(snapshot);
