@@ -47,8 +47,9 @@ describe("CSV export security", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       const recordRow = result.stdout.trim().split("\n")[1];
-      expect(recordRow).toContain(",'=1+1,main,42,42,");
-      expect(recordRow).toEndWith(",'@danger");
+      expect(recordRow).toContain(",'=1+1,unknown,42,42,");
+      expect(recordRow.split(",")[10]).toBe("'@danger");
+      expect(recordRow.split(",")[11]).toBe("fallback");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -33,6 +33,26 @@
 .request-feedback { padding: 12px 16px; border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 20px; }
 .request-feedback[data-tone="danger"] { color: #fda4af; background: #321923; }
 .request-feedback[data-tone="success"] { color: #6ee7b7; background: #102a25; }
+.request-feedback[data-tone="warn"] { color: #fcd34d; background: #382b17; }
+.quota-trust-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; padding: 12px 16px; margin-bottom: 20px; color: var(--text-secondary); font-size: 13px; background: #111b2b; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.quota-trust-strip code { color: var(--text-primary); }
+.quota-status.success { background: #103b31; color: #6ee7b7; border: 1px solid #236b58; }
+.quota-status.warn { background: #423219; color: #fcd34d; border: 1px solid #765a2e; }
+.quota-status.danger { background: #431c2b; color: #fda4af; border: 1px solid #7f314d; }
+.diagnostics-note { color: var(--text-secondary); font-size: 13px; margin: -8px 0 16px; }
+.diagnostics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.diagnostics-grid > div { min-width: 0; padding: 12px; background: var(--bg-subtle); border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.diagnostics-grid dt { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.diagnostics-grid dd { margin-top: 4px; color: var(--text-primary); font-size: 13px; overflow-wrap: anywhere; }
+.first-use-guide { margin-top: 16px; padding: 14px 16px; border: 1px solid #765a2e; border-radius: var(--radius-md); background: #382b17; color: #fef3c7; }
+.first-use-guide p { margin-top: 5px; color: #fde68a; font-size: 13px; }
+.low-frequency-section > summary { cursor: pointer; list-style-position: outside; margin-bottom: 0; }
+.low-frequency-section[open] > summary { margin-bottom: 20px; }
+.low-frequency-section > summary::marker { color: var(--text-secondary); }
+.role-main { background: rgba(56, 189, 248, 0.15); color: var(--color-blue); }
+.role-subagent { background: rgba(245, 158, 11, 0.15); color: var(--color-yellow); }
+.role-unknown { background: rgba(148, 163, 184, 0.12); color: #cbd5e1; }
+.pricing-source { display: inline-block; max-width: 280px; white-space: normal; overflow-wrap: anywhere; }
 .empty-state { padding: 28px 16px; text-align: center; white-space: normal; }
 .empty-state strong { display: block; color: var(--text-primary); font-size: 15px; }
 .empty-state p { color: var(--text-secondary); margin: 8px 0 16px; }

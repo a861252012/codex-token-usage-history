@@ -11,7 +11,43 @@ import type {
   QuotaResetEvent,
   SettlementRecord,
   PlanChangeEvent,
+  AgentRole,
+  PricingProvenanceBreakdown,
+  PricingSource,
 } from "./types.js";
+
+const VALID_AGENT_ROLES = new Set<AgentRole>(["main", "subagent", "unknown"]);
+const VALID_PRICING_SOURCES = new Set<PricingSource>([
+  "user-config",
+  "upstream-cache",
+  "builtin",
+  "fallback",
+  "unknown",
+]);
+
+function normalizeAgentRole(value: unknown): AgentRole {
+  return typeof value === "string" && VALID_AGENT_ROLES.has(value as AgentRole)
+    ? value as AgentRole
+    : "unknown";
+}
+
+function normalizePricingSource(value: unknown): PricingSource {
+  return typeof value === "string" && VALID_PRICING_SOURCES.has(value as PricingSource)
+    ? value as PricingSource
+    : "unknown";
+}
+
+function normalizePricingVersion(value: unknown): string {
+  return typeof value === "string" && value.length > 0 ? value : "unknown";
+}
+
+function mapPricingProvenanceRows(rows: any[]): PricingProvenanceBreakdown[] {
+  return rows.map((row: any) => ({
+    source: normalizePricingSource(row.pricing_source),
+    version: normalizePricingVersion(row.pricing_version),
+    records: Number(row.records),
+  }));
+}
 
 export class HistoryDatabase {
   private databaseInstance: SqliteDb | null = null;
@@ -66,8 +102,10 @@ export class HistoryDatabase {
         output_tokens INTEGER NOT NULL DEFAULT 0,
         reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
         total_tokens INTEGER NOT NULL DEFAULT 0,
-        agent_role TEXT NOT NULL DEFAULT 'main',
+        agent_role TEXT NOT NULL DEFAULT 'unknown',
         cost_usd REAL NOT NULL DEFAULT 0.0,
+        pricing_source TEXT NOT NULL DEFAULT 'unknown',
+        pricing_version TEXT NOT NULL DEFAULT 'unknown',
         five_hour_used_pct REAL,
         weekly_used_pct REAL,
         source_file TEXT,
@@ -79,9 +117,9 @@ export class HistoryDatabase {
       CREATE INDEX IF NOT EXISTS idx_token_records_session_id ON token_records(session_id);
     `);
 
-    // 2. 自動平滑移轉: 若舊版資料表缺少 agent_role 或 cost_usd 欄位則自動補齊
+    // 2. 自動平滑移轉：舊資料無法證明角色或當時計價來源時，一律保守標為 unknown
     try {
-      this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN agent_role TEXT NOT NULL DEFAULT 'main';`);
+      this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN agent_role TEXT NOT NULL DEFAULT 'unknown';`);
     } catch {
       // 欄位已存在
     }
@@ -89,6 +127,42 @@ export class HistoryDatabase {
       this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0.0;`);
     } catch {
       // 欄位已存在
+    }
+    try {
+      this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN pricing_source TEXT NOT NULL DEFAULT 'unknown';`);
+    } catch {
+      // 欄位已存在
+    }
+    try {
+      this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN pricing_version TEXT NOT NULL DEFAULT 'unknown';`);
+    } catch {
+      // 欄位已存在
+    }
+
+    this.databaseInstance.exec(`
+      CREATE TABLE IF NOT EXISTS history_schema_migrations (
+        migration_name TEXT PRIMARY KEY,
+        applied_at INTEGER NOT NULL
+      );
+    `);
+    const roleMigrationName = "agent-role-unknown-v1";
+    const roleMigration = this.databaseInstance.prepare(
+      "SELECT migration_name FROM history_schema_migrations WHERE migration_name = ?"
+    ).get(roleMigrationName);
+    if (!roleMigration) {
+      this.databaseInstance.runTransaction(() => {
+        // 舊版 indexer 會把缺少角色證據的資料預設成 main，無法安全區分，先降級為 unknown。
+        this.databaseInstance!.exec(`
+          UPDATE token_records
+          SET agent_role = 'unknown'
+          WHERE agent_role = 'main'
+             OR agent_role IS NULL
+             OR agent_role NOT IN ('main', 'subagent', 'unknown');
+        `);
+        this.databaseInstance!.prepare(
+          "INSERT INTO history_schema_migrations (migration_name, applied_at) VALUES (?, ?)"
+        ).run(roleMigrationName, Date.now());
+      });
     }
 
     // 建立 agent_role 索引 (確保欄位已存在)
@@ -168,7 +242,13 @@ export class HistoryDatabase {
       record.costUsd == null || !Number.isFinite(record.costUsd)
         ? costResult.totalCost
         : record.costUsd;
-    const resolvedAgentRole = record.agentRole || "main";
+    const resolvedAgentRole = normalizeAgentRole(record.agentRole);
+    const pricingSource = record.costUsd == null || !Number.isFinite(record.costUsd)
+      ? costResult.pricingSource
+      : normalizePricingSource(record.pricingSource);
+    const pricingVersion = record.costUsd == null || !Number.isFinite(record.costUsd)
+      ? costResult.pricingVersion
+      : normalizePricingVersion(record.pricingVersion);
 
     try {
       const statement = database.prepare(`
@@ -176,8 +256,8 @@ export class HistoryDatabase {
           timestamp, datetime, session_id, thread_id, turn_id, response_id,
           model, input_tokens, cached_input_tokens, output_tokens,
           reasoning_output_tokens, total_tokens, agent_role, cost_usd,
-          five_hour_used_pct, weekly_used_pct, source_file
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          pricing_source, pricing_version, five_hour_used_pct, weekly_used_pct, source_file
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const executionResult = statement.run(
@@ -195,6 +275,8 @@ export class HistoryDatabase {
         record.totalTokens,
         resolvedAgentRole,
         calculatedCostUsd,
+        pricingSource,
+        pricingVersion,
         record.fiveHourUsedPercent ?? record.fiveHourUsedPct ?? null,
         record.weeklyUsedPercent ?? record.weeklyUsedPct ?? null,
         record.sourceFile || null
@@ -209,7 +291,11 @@ export class HistoryDatabase {
   /**
    * 批次寫入消耗紀錄 (使用交易保證效能)
    */
-  public insertBatch(records: TokenRecord[], onInserted?: (record: TokenRecord) => void): number {
+  public insertBatch(
+    records: TokenRecord[],
+    onInserted?: (record: TokenRecord) => void,
+    options: { updateExistingMetadata?: boolean } = {}
+  ): number {
     if (records.length === 0) return 0;
     const database = this.ensureDatabase();
     let insertedRecordCount = 0;
@@ -220,9 +306,18 @@ export class HistoryDatabase {
           timestamp, datetime, session_id, thread_id, turn_id, response_id,
           model, input_tokens, cached_input_tokens, output_tokens,
           reasoning_output_tokens, total_tokens, agent_role, cost_usd,
-          five_hour_used_pct, weekly_used_pct, source_file
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          pricing_source, pricing_version, five_hour_used_pct, weekly_used_pct, source_file
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
+      const updateRoleStatement = options.updateExistingMetadata
+        ? database.prepare(`
+            UPDATE token_records
+            SET agent_role = ?
+            WHERE session_id = ? AND turn_id = ? AND model = ? AND timestamp = ?
+              AND agent_role = 'unknown'
+              AND ? IN ('main', 'subagent')
+          `)
+        : null;
 
       for (const singleRecord of records) {
         const costResult = calculateTokenCost(
@@ -237,7 +332,13 @@ export class HistoryDatabase {
           singleRecord.costUsd == null || !Number.isFinite(singleRecord.costUsd)
             ? costResult.totalCost
             : singleRecord.costUsd;
-        const resolvedAgentRole = singleRecord.agentRole || "main";
+        const resolvedAgentRole = normalizeAgentRole(singleRecord.agentRole);
+        const pricingSource = singleRecord.costUsd == null || !Number.isFinite(singleRecord.costUsd)
+          ? costResult.pricingSource
+          : normalizePricingSource(singleRecord.pricingSource);
+        const pricingVersion = singleRecord.costUsd == null || !Number.isFinite(singleRecord.costUsd)
+          ? costResult.pricingVersion
+          : normalizePricingVersion(singleRecord.pricingVersion);
 
         const executionResult = statement.run(
           singleRecord.timestamp,
@@ -254,6 +355,8 @@ export class HistoryDatabase {
           singleRecord.totalTokens,
           resolvedAgentRole,
           calculatedCostUsd,
+          pricingSource,
+          pricingVersion,
           singleRecord.fiveHourUsedPercent ?? singleRecord.fiveHourUsedPct ?? null,
           singleRecord.weeklyUsedPercent ?? singleRecord.weeklyUsedPct ?? null,
           singleRecord.sourceFile || null
@@ -262,6 +365,15 @@ export class HistoryDatabase {
         if (executionResult.changes > 0) {
           insertedRecordCount += 1;
           onInserted?.(singleRecord);
+        } else if (updateRoleStatement) {
+          updateRoleStatement.run(
+            resolvedAgentRole,
+            singleRecord.sessionId,
+            singleRecord.turnId,
+            singleRecord.model,
+            singleRecord.timestamp,
+            resolvedAgentRole
+          );
         }
       }
     });
@@ -457,7 +569,7 @@ export class HistoryDatabase {
         id, timestamp, datetime, session_id, thread_id, turn_id, response_id,
         model, input_tokens, cached_input_tokens, output_tokens,
         reasoning_output_tokens, total_tokens, agent_role, cost_usd,
-        five_hour_used_pct, weekly_used_pct, source_file
+        pricing_source, pricing_version, five_hour_used_pct, weekly_used_pct, source_file
       FROM token_records
       ${whereClause}
       ORDER BY timestamp DESC
@@ -479,8 +591,10 @@ export class HistoryDatabase {
       outputTokens: row.output_tokens,
       reasoningOutputTokens: row.reasoning_output_tokens,
       totalTokens: row.total_tokens,
-      agentRole: row.agent_role || "main",
+      agentRole: normalizeAgentRole(row.agent_role),
       costUsd: Number(row.cost_usd ?? 0),
+      pricingSource: normalizePricingSource(row.pricing_source),
+      pricingVersion: normalizePricingVersion(row.pricing_version),
       fiveHourUsedPercent: row.five_hour_used_pct,
       weeklyUsedPercent: row.weekly_used_pct,
       fiveHourUsedPct: row.five_hour_used_pct,
@@ -508,7 +622,9 @@ export class HistoryDatabase {
         COALESCE(SUM(cached_input_tokens), 0) as cached_input_tokens,
         COALESCE(SUM(output_tokens), 0) as output_tokens,
         COALESCE(SUM(reasoning_output_tokens), 0) as reasoning_output_tokens,
-        COALESCE(SUM(CASE WHEN agent_role != 'main' THEN total_tokens ELSE 0 END), 0) as subagent_tokens,
+        COALESCE(SUM(CASE WHEN agent_role = 'main' THEN total_tokens ELSE 0 END), 0) as main_agent_tokens,
+        COALESCE(SUM(CASE WHEN agent_role = 'subagent' THEN total_tokens ELSE 0 END), 0) as subagent_tokens,
+        COALESCE(SUM(CASE WHEN agent_role = 'unknown' THEN total_tokens ELSE 0 END), 0) as unknown_agent_tokens,
         COALESCE(SUM(cost_usd), 0) as total_cost_usd,
         MIN(timestamp) as min_timestamp,
         MAX(timestamp) as max_timestamp
@@ -530,6 +646,17 @@ export class HistoryDatabase {
       ${whereClause}
       GROUP BY model
       ORDER BY total_tokens DESC
+    `).all(...queryParameters);
+
+    const pricingProvenanceRows = database.prepare(`
+      SELECT
+        pricing_source,
+        pricing_version,
+        COUNT(*) as records
+      FROM token_records
+      ${whereClause}
+      GROUP BY pricing_source, pricing_version
+      ORDER BY records DESC, pricing_source ASC, pricing_version ASC
     `).all(...queryParameters);
 
     const byModel: ModelUsageStats[] = modelRows.map((row: any) => ({
@@ -561,8 +688,9 @@ export class HistoryDatabase {
       : `$${totalCostUsd.toFixed(2)}`;
 
     const totalTokenCount = Number(totalRow?.total_tokens ?? 0);
+    const mainAgentTokenCount = Number(totalRow?.main_agent_tokens ?? 0);
     const subAgentTokenCount = Number(totalRow?.subagent_tokens ?? 0);
-    const mainAgentTokenCount = Math.max(0, totalTokenCount - subAgentTokenCount);
+    const unknownAgentTokenCount = Number(totalRow?.unknown_agent_tokens ?? 0);
 
     return {
       requests: Number(totalRow?.requests ?? 0),
@@ -573,8 +701,10 @@ export class HistoryDatabase {
       reasoningOutputTokens: Number(totalRow?.reasoning_output_tokens ?? 0),
       mainAgentTokens: mainAgentTokenCount,
       subAgentTokens: subAgentTokenCount,
+      unknownAgentTokens: unknownAgentTokenCount,
       estimatedCostUsd: totalCostUsd,
       formattedCostUsd,
+      pricingProvenance: mapPricingProvenanceRows(pricingProvenanceRows),
       byModel,
       hourlyBurnRate,
       timeRange: { startMs, endMs },
@@ -641,7 +771,9 @@ export class HistoryDatabase {
         COALESCE(SUM(cached_input_tokens), 0) as cached_input_tokens,
         COALESCE(SUM(output_tokens), 0) as output_tokens,
         COALESCE(SUM(reasoning_output_tokens), 0) as reasoning_output_tokens,
-        COALESCE(SUM(CASE WHEN agent_role != 'main' THEN total_tokens ELSE 0 END), 0) as subagent_tokens,
+        COALESCE(SUM(CASE WHEN agent_role = 'main' THEN total_tokens ELSE 0 END), 0) as main_agent_tokens,
+        COALESCE(SUM(CASE WHEN agent_role = 'subagent' THEN total_tokens ELSE 0 END), 0) as subagent_tokens,
+        COALESCE(SUM(CASE WHEN agent_role = 'unknown' THEN total_tokens ELSE 0 END), 0) as unknown_agent_tokens,
         COALESCE(SUM(cost_usd), 0) as estimated_cost_usd
       FROM token_records
       GROUP BY period_key
@@ -650,6 +782,23 @@ export class HistoryDatabase {
     `;
 
     const rows = database.prepare(querySql).all(limitCount);
+
+    const pricingProvenanceRows = database.prepare(`
+      SELECT
+        ${periodKeySql} as period_key,
+        pricing_source,
+        pricing_version,
+        COUNT(*) as records
+      FROM token_records
+      GROUP BY period_key, pricing_source, pricing_version
+      ORDER BY period_key DESC, records DESC, pricing_source ASC, pricing_version ASC
+    `).all();
+    const pricingProvenanceMap = new Map<string, PricingProvenanceBreakdown[]>();
+    for (const item of pricingProvenanceRows) {
+      const breakdown = pricingProvenanceMap.get(item.period_key) || [];
+      breakdown.push(...mapPricingProvenanceRows([item]));
+      pricingProvenanceMap.set(item.period_key, breakdown);
+    }
 
     // 單次查詢批次取得各週期使用量第一名模型，杜絕 N+1 查詢問題
     const topModelRows = database.prepare(`
@@ -681,8 +830,9 @@ export class HistoryDatabase {
         : `$${estimatedCostUsd.toFixed(2)}`;
 
       const totalTokens = Number(row.total_tokens);
+      const mainAgentTokens = Number(row.main_agent_tokens);
       const subAgentTokens = Number(row.subagent_tokens);
-      const mainAgentTokens = Math.max(0, totalTokens - subAgentTokens);
+      const unknownAgentTokens = Number(row.unknown_agent_tokens);
 
       return {
         periodKey: row.period_key,
@@ -696,8 +846,10 @@ export class HistoryDatabase {
         reasoningOutputTokens: Number(row.reasoning_output_tokens),
         mainAgentTokens,
         subAgentTokens,
+        unknownAgentTokens,
         estimatedCostUsd,
         formattedCostUsd,
+        pricingProvenance: pricingProvenanceMap.get(row.period_key) || [],
         topModel: topModelMap.get(row.period_key) || "gpt-6-astra",
       };
     });
@@ -713,7 +865,7 @@ export class HistoryDatabase {
         id, timestamp, datetime, session_id, thread_id, turn_id, response_id,
         model, input_tokens, cached_input_tokens, output_tokens,
         reasoning_output_tokens, total_tokens, agent_role, cost_usd,
-        five_hour_used_pct, weekly_used_pct, source_file
+        pricing_source, pricing_version, five_hour_used_pct, weekly_used_pct, source_file
       FROM token_records
       ORDER BY timestamp DESC
       LIMIT 1
@@ -735,8 +887,10 @@ export class HistoryDatabase {
       outputTokens: row.output_tokens,
       reasoningOutputTokens: row.reasoning_output_tokens,
       totalTokens: row.total_tokens,
-      agentRole: row.agent_role || "main",
+      agentRole: normalizeAgentRole(row.agent_role),
       costUsd: Number(row.cost_usd ?? 0),
+      pricingSource: normalizePricingSource(row.pricing_source),
+      pricingVersion: normalizePricingVersion(row.pricing_version),
       fiveHourUsedPercent: row.five_hour_used_pct,
       weeklyUsedPercent: row.weekly_used_pct,
       fiveHourUsedPct: row.five_hour_used_pct,
@@ -758,7 +912,9 @@ export class HistoryDatabase {
     let updatedCount = 0;
     database.runTransaction(() => {
       const updateStatement = database.prepare(`
-        UPDATE token_records SET cost_usd = ? WHERE id = ?
+        UPDATE token_records
+        SET cost_usd = ?, pricing_source = ?, pricing_version = ?
+        WHERE id = ?
       `);
 
       for (const singleRow of rows) {
@@ -770,7 +926,12 @@ export class HistoryDatabase {
           Number(singleRow.reasoning_output_tokens)
         );
 
-        updateStatement.run(costResult.totalCost, singleRow.id);
+        updateStatement.run(
+          costResult.totalCost,
+          costResult.pricingSource,
+          costResult.pricingVersion,
+          singleRow.id
+        );
         updatedCount += 1;
       }
     });

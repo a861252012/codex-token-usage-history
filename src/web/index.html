@@ -15,25 +15,23 @@
         <span class="sub-title" id="app-subtitle">Real-time Dashboard for macOS & Codex</span>
       </div>
       <div class="header-right">
+        <a href="#history" id="link-top-history" class="btn btn-secondary">History</a>
         <div class="lang-switch">
           <button class="btn-lang active" data-lang="en">EN</button>
           <button class="btn-lang" data-lang="zh-TW">繁中</button>
         </div>
-        <span id="connection-status" class="status-badge connecting">Connecting...</span>
-        <span id="voucher-badge" class="badge">Reset Credits: 0</span>
+        <span id="connection-status" class="status-badge connecting">Connecting local service...</span>
+        <span id="voucher-badge" class="badge">Reset Credits: —</span>
         <span id="account-badge" class="badge">Loading...</span>
         <button id="btn-refresh" class="btn btn-primary">Refresh</button>
       </div>
     </header>
     <div id="request-feedback" class="request-feedback" role="status" aria-live="polite" hidden></div>
-    <section class="card filter-card" aria-labelledby="filter-title">
-      <div><h2 id="filter-title">History filters</h2><p id="filter-help">Applies to transaction history and CSV export. Overview cards remain unchanged.</p></div>
-      <div class="filter-fields">
-        <label><span id="label-filter-model">Search model</span><input type="search" id="filter-model" placeholder="e.g. gpt-6" class="input-filter" aria-describedby="filter-help"></label>
-        <label><span id="label-filter-role">Agent role</span><select id="filter-agent-role" class="input-filter"><option value="">All Agents</option><option value="main">Main Agent Only</option><option value="subagent">subAgent Only</option></select></label>
-        <button id="btn-reset-filters" class="btn btn-secondary">Reset filters</button>
-        <a href="#history" id="link-history" class="btn btn-secondary">View history</a>
-      </div>
+    <section class="quota-trust-strip" aria-label="Quota data status">
+      <span id="quota-source-badge" class="status-badge quota-status warn">Quota: unknown</span>
+      <span><strong id="label-quota-source">Source</strong>: <code id="quota-source-value">unknown</code></span>
+      <span><strong id="label-quota-updated">Last successful update</strong>: <span id="quota-updated-value">—</span></span>
+      <span id="quota-error-row" hidden><strong id="label-quota-error">Latest error</strong>: <span id="quota-error-value">—</span></span>
     </section>
 
     <!-- Quota Cards Grid -->
@@ -52,8 +50,8 @@
                 <div id="bar-five-hour" class="progress-bar-fill" style="width: 0%;"></div>
               </div>
               <div class="progress-stats">
-                <span id="text-five-hour-used" class="stat-used">Used 0%</span>
-                <span id="text-five-hour-rem" class="stat-remaining">100% left</span>
+                <span id="text-five-hour-used" class="stat-used">Loading...</span>
+                <span id="text-five-hour-rem" class="stat-remaining">—</span>
               </div>
             </div>
             <div class="quota-meta">
@@ -63,7 +61,7 @@
               </div>
               <div class="meta-item">
                 <span class="meta-label" id="label-five-hour-status">Status</span>
-                <span id="text-five-hour-status" class="meta-value ok">Optimal</span>
+                <span id="text-five-hour-status" class="meta-value">—</span>
               </div>
             </div>
           </div>
@@ -89,8 +87,8 @@
               <div id="bar-weekly" class="progress-bar-fill" style="width: 0%;"></div>
             </div>
             <div class="progress-stats">
-              <span id="text-weekly-used" class="stat-used">Used 0%</span>
-              <span id="text-weekly-rem" class="stat-remaining">100% left</span>
+              <span id="text-weekly-used" class="stat-used">Loading...</span>
+              <span id="text-weekly-rem" class="stat-remaining">—</span>
             </div>
           </div>
           <div class="quota-meta">
@@ -100,7 +98,7 @@
             </div>
             <div class="meta-item">
               <span class="meta-label" id="label-weekly-status">Status</span>
-              <span id="text-weekly-status" class="meta-value ok">Optimal</span>
+              <span id="text-weekly-status" class="meta-value">—</span>
             </div>
           </div>
         </div>
@@ -114,33 +112,33 @@
         </div>
         <div class="card-body">
           <div class="summary-total">
-            <span class="summary-num" id="text-today-tokens">0</span>
+            <span class="summary-num" id="text-today-tokens">—</span>
             <span class="summary-unit">Tokens</span>
           </div>
           <div class="summary-breakdown">
             <div class="breakdown-row">
               <span id="label-today-cost">~API Cost (USD): <span id="pricing-meta" style="font-size: 0.75em; opacity: 0.5; cursor: help;" title="Pricing data source info"></span></span>
-              <strong id="text-today-cost" style="color: var(--color-cyan);" title="Estimated cost based on published API pricing">~$0.00 USD</strong>
+              <strong id="text-today-cost" style="color: var(--color-cyan);" title="Estimated cost based on published API pricing">—</strong>
             </div>
             <div class="breakdown-row">
               <span id="label-today-input">Input / Cached:</span>
-              <strong id="text-today-input">0</strong>
+              <strong id="text-today-input">—</strong>
             </div>
             <div class="breakdown-row">
               <span id="label-today-output">Output / Reasoning:</span>
-              <strong id="text-today-output">0</strong>
+              <strong id="text-today-output">—</strong>
             </div>
             <div class="breakdown-row">
-              <span id="label-today-agents">Agents (Main / Sub):</span>
-              <strong id="text-today-agents">Main 0% / Sub 0%</strong>
+              <span id="label-today-agents">Agents (Main / Sub / Unknown):</span>
+              <strong id="text-today-agents">—</strong>
             </div>
             <div class="breakdown-row">
-              <span id="label-today-requests">Total Requests:</span>
-              <strong id="text-today-requests">0 calls</strong>
+              <span id="label-today-requests">Token Records:</span>
+              <strong id="text-today-requests">—</strong>
             </div>
             <div class="breakdown-row">
               <span id="label-today-burn">Hourly Burn Rate:</span>
-              <strong id="text-today-burn-rate">0 / hr</strong>
+              <strong id="text-today-burn-rate">—</strong>
             </div>
           </div>
         </div>
@@ -151,6 +149,30 @@
     <section id="additional-limits-section" class="additional-section" style="display: none;">
       <h4 id="label-additional-limits" style="margin-bottom: 12px; font-size: 14px; color: var(--text-secondary);">Additional Feature Limits</h4>
       <div id="additional-limits-list" class="additional-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-bottom: 24px;"></div>
+    </section>
+
+    <section class="diagnostics-section card" aria-labelledby="label-diagnostics-title">
+      <div class="card-header">
+        <div class="header-titles">
+          <h3 id="label-diagnostics-title">Dashboard last scan</h3>
+          <span id="diagnostics-scope" class="count-tag">unknown</span>
+        </div>
+        <span id="diagnostics-status" class="status-badge quota-status warn">Last scan unknown</span>
+      </div>
+      <p id="diagnostics-note" class="diagnostics-note">unknown: the local service's latest scan could not be verified.</p>
+      <p id="diagnostics-limit-note" class="diagnostics-note">These values describe only this local service process's latest scan. Unchanged files are not reread, so the parsed range is not the database's full history range.</p>
+      <dl class="diagnostics-grid">
+        <div><dt id="label-diagnostics-directory">Data directory</dt><dd id="diagnostics-directory">—</dd></div>
+        <div><dt id="label-diagnostics-scan">Last successful scan</dt><dd id="diagnostics-scan">—</dd></div>
+        <div><dt id="label-diagnostics-files">Files</dt><dd id="diagnostics-files">—</dd></div>
+        <div><dt id="label-diagnostics-records">Records</dt><dd id="diagnostics-records">—</dd></div>
+        <div><dt id="label-diagnostics-range">Range parsed this scan</dt><dd id="diagnostics-range">—</dd></div>
+        <div><dt id="label-diagnostics-errors">Skipped / failed</dt><dd id="diagnostics-errors">—</dd></div>
+      </dl>
+      <aside id="first-use-guide" class="first-use-guide">
+        <strong id="label-first-use-title">No completed local-service scan is confirmed yet.</strong>
+        <p id="label-first-use-copy">Run <code>codex-usage index --all</code> to import configured local session history, then refresh the dashboard data. The CLI runs separately and does not change this service's last-scan scope to all.</p>
+      </aside>
     </section>
 
     <!-- Multi-Period Settlement Report -->
@@ -178,12 +200,14 @@
               <th id="th-out-reasoning">Output / Reasoning</th>
               <th id="th-main-tokens">Main Agent</th>
               <th id="th-sub-tokens">subAgent</th>
-              <th id="th-requests">Requests</th>
+              <th id="th-unknown-tokens">Unknown Role</th>
+              <th id="th-requests">Records</th>
+              <th id="th-pricing-source">Stored Pricing</th>
             </tr>
           </thead>
           <tbody id="settlement-table-body">
             <tr>
-              <td colspan="8" class="text-center">Loading settlement data...</td>
+              <td colspan="10" class="text-center">Loading settlement data...</td>
             </tr>
           </tbody>
         </table>
@@ -195,7 +219,7 @@
       <div class="card-header">
         <div class="header-titles">
           <h3 id="label-chart-title">24-Hour Token Burn Activity</h3>
-          <span id="chart-total-tokens" class="count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">24h Total: 0 tokens</span>
+          <span id="chart-total-tokens" class="count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">24h Total: —</span>
         </div>
         <span class="window-tag" id="tag-chart">Hourly Breakdown</span>
       </div>
@@ -217,13 +241,13 @@
     </section>
 
     <!-- Quota Reset & Voucher History -->
-    <section class="resets-section card">
-      <div class="card-header">
+    <details class="resets-section card low-frequency-section">
+      <summary class="card-header">
         <div class="header-titles">
           <h3 id="label-resets-title">OpenAI Quota Resets & Voucher History</h3>
-          <span class="count-tag" id="resets-count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">0 Events</span>
+          <span class="count-tag" id="resets-count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">—</span>
         </div>
-      </div>
+      </summary>
       <div class="table-responsive">
         <table class="data-table">
           <thead>
@@ -243,16 +267,16 @@
           </tbody>
         </table>
       </div>
-    </section>
+    </details>
 
     <!-- Account Plan Transitions (Upgrades / Downgrades) -->
-    <section class="plans-section card">
-      <div class="card-header">
+    <details class="plans-section card low-frequency-section">
+      <summary class="card-header">
         <div class="header-titles">
           <h3 id="label-plans-title">Account Plan Transitions</h3>
-          <span class="count-tag" id="plans-count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">0 Events</span>
+          <span class="count-tag" id="plans-count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">—</span>
         </div>
-      </div>
+      </summary>
       <div class="table-responsive">
         <table class="data-table">
           <thead>
@@ -271,7 +295,7 @@
           </tbody>
         </table>
       </div>
-    </section>
+    </details>
 
     <!-- Token Usage History Stream Table -->
     <section class="history-section card" id="history">
@@ -282,12 +306,20 @@
       <div class="card-header history-header">
         <div class="header-titles">
           <h3 id="label-history-title">Token Usage Transaction Log</h3>
-          <span id="history-total-count" class="count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">0 records</span>
+          <span id="history-total-count" class="count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">—</span>
         </div>
         <div class="history-controls">
           <button id="btn-export-csv" class="btn btn-secondary">Export CSV</button>
         </div>
       </div>
+      <section class="filter-card" aria-labelledby="filter-title">
+        <div><h2 id="filter-title">History filters</h2><p id="filter-help">Applies to transaction history and CSV export. Overview cards remain unchanged.</p></div>
+        <div class="filter-fields">
+          <label><span id="label-filter-model">Search model</span><input type="search" id="filter-model" placeholder="e.g. gpt-6" class="input-filter" aria-describedby="filter-help"></label>
+          <label><span id="label-filter-role">Agent role</span><select id="filter-agent-role" class="input-filter"><option value="">All Agents</option><option value="main">Main Agent Only</option><option value="subagent">subAgent Only</option><option value="unknown">Unknown Role Only</option></select></label>
+          <button id="btn-reset-filters" class="btn btn-secondary">Reset filters</button>
+        </div>
+      </section>
       <div class="table-responsive">
         <table class="data-table">
           <thead>

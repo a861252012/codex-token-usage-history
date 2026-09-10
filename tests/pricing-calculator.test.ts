@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   calculateTokenCost,
   resolvePricingTierForModel,
@@ -22,6 +25,8 @@ describe("PricingCalculator", () => {
     expect(result.totalCost).toBeGreaterThan(0);
     expect(result.formattedCostUsd).toBeDefined();
     expect(result.tier.modelPrefix).toBe("gpt-6-astra");
+    expect(result.pricingSource).not.toBe("unknown");
+    expect(result.pricingVersion).not.toBe("unknown");
   });
 
   test("最長前綴比對優先於短前綴", () => {
@@ -36,12 +41,50 @@ describe("PricingCalculator", () => {
     const unknownRes = resolvePricingTierForModel("totally-unknown-model-xyz");
     expect(unknownRes.tier.modelPrefix).toBe("default");
     expect(unknownRes.source).toBe("fallback");
+    expect(unknownRes.version).not.toBe("unknown");
   });
 
   test("決策結果寫入記憶體快取以支援極速查詢", () => {
     const first = resolvePricingTierForModel("gpt-5.6-sol");
     const second = resolvePricingTierForModel("gpt-5.6-sol");
     expect(first).toBe(second); // 同一物件參照
+  });
+
+  test("CODEX_HOME 切換時不會沿用另一個目錄的使用者定價快取", () => {
+    const originalCodexHome = process.env.CODEX_HOME;
+    const firstDirectory = join(tmpdir(), `pricing-home-a-${Date.now()}-${Math.random()}`);
+    const secondDirectory = join(tmpdir(), `pricing-home-b-${Date.now()}-${Math.random()}`);
+    mkdirSync(firstDirectory, { recursive: true });
+    mkdirSync(secondDirectory, { recursive: true });
+
+    const pricingConfig = (version: string, inputCostPerMillion: number) => JSON.stringify({
+      pricingVersion: version,
+      models: [{
+        modelPrefix: "path-isolation-model",
+        inputCostPerMillion,
+        outputCostPerMillion: 0,
+      }],
+    });
+    writeFileSync(join(firstDirectory, "pricing.json"), pricingConfig("first", 1));
+    writeFileSync(join(secondDirectory, "pricing.json"), pricingConfig("second", 9));
+
+    try {
+      process.env.CODEX_HOME = firstDirectory;
+      const first = calculateTokenCost("path-isolation-model", 1_000_000, 0, 0, 0);
+      process.env.CODEX_HOME = secondDirectory;
+      const second = calculateTokenCost("path-isolation-model", 1_000_000, 0, 0, 0);
+
+      expect(first.totalCost).toBe(1);
+      expect(first.pricingVersion).toBe("first");
+      expect(second.totalCost).toBe(9);
+      expect(second.pricingVersion).toBe("second");
+    } finally {
+      if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = originalCodexHome;
+      clearPricingResolutionCache();
+      rmSync(firstDirectory, { recursive: true, force: true });
+      rmSync(secondDirectory, { recursive: true, force: true });
+    }
   });
 
   test("支援向下相容之 findPricingTierForModel", () => {
@@ -57,6 +100,7 @@ describe("PricingCalculator", () => {
     const catalog = getEffectiveCatalogOverview();
     expect(catalog.length).toBeGreaterThan(0);
     expect(catalog.some((m) => m.modelPrefix === "gpt-6-astra")).toBe(true);
+    expect(catalog.every((model) => model.version.length > 0)).toBe(true);
   });
 
   test("拒絕非有限、負數或異常巨大的上游定價", () => {

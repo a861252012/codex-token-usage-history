@@ -142,16 +142,18 @@ describe("dashboard HTTP security", () => {
     process.env.CODEX_HOME = directory;
     const linkName = `.security-test-${process.pid}-${Date.now()}`;
     const linkPath = join(import.meta.dir, "../src/web", linkName);
+    const outsideFile = join(directory, "private-fixture.txt");
+    writeFileSync(outsideFile, "isolated-private-fixture");
 
     try {
       const database = new HistoryDatabase(join(directory, "history.sqlite"));
       const server = new DashboardServer(database, { port: 0 });
       runningServers.push(server);
       const port = Number(new URL(await server.start()).port);
-      symlinkSync("/etc/passwd", linkPath);
+      symlinkSync(outsideFile, linkPath);
       const response = await sendRequest(port, {}, "GET", `/${linkName}`);
       expect(response.status).toBe(404);
-      expect(response.body).not.toContain("root:");
+      expect(response.body).not.toContain("isolated-private-fixture");
     } finally {
       try { unlinkSync(linkPath); } catch {}
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME;

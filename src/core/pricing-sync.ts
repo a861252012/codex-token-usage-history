@@ -84,6 +84,7 @@ export function getPricingCacheFilePath(): string {
 let cachedUpstreamPricingData: PricingCacheFile | null = null;
 let cachedUpstreamPricingMtime = 0;
 let lastUpstreamCheckTime = 0;
+let cachedUpstreamPath: string | null = null;
 
 /**
  * 讀取本機已快取的遠端定價庫 (具備記憶體快取與 mtime 增量檢查)
@@ -91,6 +92,13 @@ let lastUpstreamCheckTime = 0;
 export function loadCachedUpstreamPricing(): PricingCacheFile | null {
   const cachePath = getPricingCacheFilePath();
   const currentTimeMs = Date.now();
+
+  if (cachePath !== cachedUpstreamPath) {
+    cachedUpstreamPath = cachePath;
+    cachedUpstreamPricingData = null;
+    cachedUpstreamPricingMtime = 0;
+    lastUpstreamCheckTime = 0;
+  }
 
   // 2 秒內直接回傳記憶體快取，免除密集重複 statSync 呼叫
   if (cachedUpstreamPricingData && currentTimeMs - lastUpstreamCheckTime < 2000) {
@@ -226,6 +234,7 @@ export async function syncPricingFromUpstream(force = false): Promise<SyncPricin
     chmodSync(cachePath, 0o600);
 
     cachedUpstreamPricingData = cacheData;
+    cachedUpstreamPath = cachePath;
     try {
       cachedUpstreamPricingMtime = statSync(cachePath).mtimeMs;
     } catch {

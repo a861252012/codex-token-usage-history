@@ -6,6 +6,7 @@ import {
   getActivePricingConfig,
   getEffectiveCatalogOverview,
 } from "../core/pricing-calculator.js";
+import type { AgentRole } from "../core/types.js";
 
 const MAXIMUM_MCP_LINE_LENGTH_BYTES = 1024 * 1024;
 const MAXIMUM_MCP_RESULT_LIMIT = 1_000;
@@ -21,6 +22,11 @@ function parseMcpFilter(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0
     ? value.slice(0, MAXIMUM_MCP_FILTER_LENGTH)
     : undefined;
+}
+
+export function parseMcpAgentRole(value: unknown): AgentRole | undefined {
+  const role = parseMcpFilter(value);
+  return role === "main" || role === "subagent" || role === "unknown" ? role : undefined;
 }
 
 /**
@@ -104,7 +110,7 @@ export async function runMcpServer(): Promise<void> {
             },
             {
               name: "get_codex_usage_history",
-              description: "取得 Codex 的 Token 消耗歷史紀錄與今日使用量統計 (包含主程式與 subAgent 分離資料及 USD 換算金額)",
+              description: "取得 Codex Token 紀錄與今日統計。requests 是 Token 紀錄筆數，不代表外部 API 呼叫次數；角色分為 main、subagent、unknown，成本包含每筆實際保存的定價來源與版本。",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -118,14 +124,15 @@ export async function runMcpServer(): Promise<void> {
                   },
                   agent_role: {
                     type: "string",
-                    description: "代理人角色篩選 (main 或 subagent，選填)",
+                    enum: ["main", "subagent", "unknown"],
+                    description: "代理人角色篩選 (main、subagent 或無足夠證據判定的 unknown，選填)",
                   },
                 },
               },
             },
             {
               name: "get_codex_settlement_report",
-              description: "取得 Token 消耗與官方 API 美元金額的多週期結算報表 (支援 daily、weekly、monthly、yearly)",
+              description: "取得 Token 消耗與 API 定價換算估值的多週期結算報表。requests 是 Token 紀錄筆數，並分列 main、subagent、unknown Token 與定價來源版本。",
               inputSchema: {
                 type: "object",
                 properties: {
@@ -215,11 +222,11 @@ export async function runMcpServer(): Promise<void> {
         try {
           sessionIndexer.indexAll();
           const recordLimit = parseMcpLimit(toolArguments.limit, 10);
-          const requestedRole = parseMcpFilter(toolArguments.agent_role);
+          const requestedRole = parseMcpAgentRole(toolArguments.agent_role);
           const { records, total } = database.queryRecords({
             limit: recordLimit,
             model: parseMcpFilter(toolArguments.model),
-            agentRole: requestedRole === "main" || requestedRole === "subagent" ? requestedRole : undefined,
+            agentRole: requestedRole,
           });
 
           const todayMidnight = new Date();

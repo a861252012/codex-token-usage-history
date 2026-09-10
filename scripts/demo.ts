@@ -33,7 +33,7 @@ const window = (used: number, seconds: number) => ({ usedPercent: used, remainin
   limitWindowSeconds: seconds, resetAfterSeconds: seconds / 2, resetAtMs: now + seconds * 500, resetCountdown: "Demo" });
 writeFileSync(join(directory, "codex_quota_snapshot.json"), JSON.stringify({
   updatedAt: now, email: "demo@example.com", planType: "demo", proTier: false,
-  fiveHour: window(28, 18000), weekly: window(63, 604800), additionalLimits: [], resetCredits: 0, source: "cache",
+  fiveHour: window(28, 18000), weekly: window(63, 604800), additionalLimits: [], resetCredits: 0, resetCreditsKnown: true, source: "cache",
 }), { mode: 0o600 });
 
 console.log("DEMO — synthetic records and quota; no real account or network credentials.");

@@ -17,6 +17,27 @@ const COLOR_GREEN = "\x1b[32m";
 const COLOR_YELLOW = "\x1b[33m";
 const COLOR_RED = "\x1b[31m";
 const COLOR_CYAN = "\x1b[36m";
+const QUOTA_FRESHNESS_MS = 2 * 60 * 1000;
+
+function isQuotaSnapshotFresh(snapshot: QuotaSnapshot): boolean {
+  const ageMs = Date.now() - snapshot.updatedAt;
+  return snapshot.source !== "fallback"
+    && Number.isFinite(snapshot.updatedAt)
+    && snapshot.updatedAt > 0
+    && ageMs >= 0
+    && ageMs <= QUOTA_FRESHNESS_MS
+    && !snapshot.errorReason;
+}
+
+function formatPricingProvenance(
+  entries: Array<{ source: string; version: string; records: number }>
+): string {
+  if (entries.length === 0) return "無紀錄";
+  const prefix = entries.length > 1 ? "mixed: " : "";
+  return prefix + entries
+    .map((entry) => `${entry.source}@${entry.version} (${formatNumber(entry.records)} 筆)`)
+    .join(", ");
+}
 
 export function getColorForPercent(usedPercent: number): string {
   if (usedPercent >= 90) return COLOR_RED;
@@ -42,7 +63,7 @@ export function renderProgressBar(usedPercent: number, barLength = 20): string {
 
 export function renderWindowLine(title: string, quotaWindow: QuotaWindow | null): string {
   if (!quotaWindow) {
-    return `  ${title.padEnd(14)}: ${STYLE_DIM}未配置此視窗限制${COLOR_RESET}`;
+    return `  ${title.padEnd(14)}: ${STYLE_DIM}無資料（無法判定）${COLOR_RESET}`;
   }
   const progressBar = renderProgressBar(quotaWindow.usedPercent, 20);
 
@@ -58,11 +79,12 @@ export function renderQuotaStatus(snapshot: QuotaSnapshot): string {
   const lines: string[] = [];
   const divider = "=".repeat(78);
 
+  const isFresh = isQuotaSnapshotFresh(snapshot);
   const sourceDescription = snapshot.source === "wham"
-    ? "官方 API"
+    ? isFresh ? "官方 API（即時）" : "官方 API（已過期）"
     : snapshot.source === "cache"
-      ? "本機快取"
-      : "離線備援";
+      ? isFresh ? "本機快取（2 分鐘內）" : "本機快取（已過期）"
+      : "無可用資料";
 
   lines.push(`${COLOR_CYAN}${divider}${COLOR_RESET}`);
   lines.push(`${STYLE_BOLD}Codex 即時配額狀態監控${COLOR_RESET} (來源: ${sourceDescription})`);
@@ -75,18 +97,15 @@ export function renderQuotaStatus(snapshot: QuotaSnapshot): string {
   } else {
     lines.push(`  方案狀態      : ${snapshot.planType || "已連線"}`);
   }
-  if (snapshot.source === "cache" && snapshot.errorReason) {
-    lines.push(`  快取提示      : ${COLOR_YELLOW}${snapshot.errorReason}${COLOR_RESET}`);
+  if (snapshot.source !== "fallback" && snapshot.updatedAt > 0) {
+    lines.push(`  資料更新時間  : ${new Date(snapshot.updatedAt).toLocaleString("zh-TW", { hour12: false })}`);
+  }
+  if (snapshot.errorReason) {
+    lines.push(`  取得失敗原因  : ${COLOR_YELLOW}${snapshot.errorReason}${COLOR_RESET}`);
   }
 
   lines.push("");
-  const isProUser = isProPlanSnapshot(snapshot);
-
-  if (isProUser) {
-    lines.push(`  五小時配額    : ${COLOR_GREEN}[Pro 方案無限額度 - 僅依週用量控管]${COLOR_RESET}`);
-  } else {
-    lines.push(renderWindowLine("五小時配額", snapshot.fiveHour));
-  }
+  lines.push(renderWindowLine("五小時配額", snapshot.fiveHour));
   lines.push(renderWindowLine("週用量配額", snapshot.weekly));
 
   if (snapshot.additionalLimits.length > 0) {
@@ -100,7 +119,7 @@ export function renderQuotaStatus(snapshot: QuotaSnapshot): string {
     }
   }
 
-  if (snapshot.resetCredits > 0) {
+  if (snapshot.resetCreditsKnown === true && snapshot.resetCredits > 0) {
     lines.push(`  重設信用額度  : ${COLOR_GREEN}${snapshot.resetCredits} 次可用${COLOR_RESET}`);
   }
 
@@ -114,12 +133,13 @@ export function renderUsageSummary(summary: UsageSummary, title = "近期 Token 
 
   lines.push(`${STYLE_BOLD}${title}${COLOR_RESET}`);
   lines.push(divider);
-  lines.push(`  總計請求次數  : ${STYLE_BOLD}${formatNumber(summary.requests)}${COLOR_RESET} 次`);
+  lines.push(`  Token 紀錄筆數: ${STYLE_BOLD}${formatNumber(summary.requests)}${COLOR_RESET} 筆`);
   lines.push(`  總計 Token 消耗: ${STYLE_BOLD}${COLOR_CYAN}${formatNumber(summary.totalTokens)}${COLOR_RESET} tokens`);
   lines.push(`  輸入 / 快取   : ${formatNumber(summary.inputTokens)} / ${STYLE_DIM}${formatNumber(summary.cachedInputTokens)} (快取)${COLOR_RESET}`);
   lines.push(`  輸出 / 推理   : ${formatNumber(summary.outputTokens)} / ${STYLE_DIM}${formatNumber(summary.reasoningOutputTokens)} (推理)${COLOR_RESET}`);
-  lines.push(`  等值美元花費  : ${STYLE_BOLD}${COLOR_GREEN}${summary.formattedCostUsd} USD${COLOR_RESET} (官方 API 定價換算)`);
-  lines.push(`  代理人分佈    : 主代理人 ${formatNumber(summary.mainAgentTokens)} / subAgent ${formatNumber(summary.subAgentTokens)} tokens`);
+  lines.push(`  等值美元花費  : ${STYLE_BOLD}${COLOR_GREEN}${summary.formattedCostUsd} USD${COLOR_RESET} (API 定價換算估值)`);
+  lines.push(`  定價依據      : ${formatPricingProvenance(summary.pricingProvenance)}`);
+  lines.push(`  代理人分佈    : 主代理人 ${formatNumber(summary.mainAgentTokens)} / subAgent ${formatNumber(summary.subAgentTokens)} / 未知 ${formatNumber(summary.unknownAgentTokens)} tokens`);
   lines.push(`  過去1小時燃燒 : ${COLOR_YELLOW}${formatNumber(summary.hourlyBurnRate)}${COLOR_RESET} tokens/hr (真實滾動視窗)`);
 
   if (summary.byModel.length > 0) {
@@ -128,7 +148,7 @@ export function renderUsageSummary(summary: UsageSummary, title = "近期 Token 
 
     const header = [
       "模型名稱".padEnd(24),
-      "請求數".padStart(8),
+      "紀錄數".padStart(8),
       "總 Token 數".padStart(15),
       "輸入 Token".padStart(13),
       "輸出 Token".padStart(11),
@@ -156,7 +176,7 @@ export function renderUsageSummary(summary: UsageSummary, title = "近期 Token 
 
 export function renderRecentRecords(records: TokenRecord[], maxRows = 15): string {
   const lines: string[] = [];
-  const divider = "-".repeat(88);
+  const divider = "-".repeat(114);
 
   lines.push(`${STYLE_BOLD}近期 Token 消耗流水帳紀錄 (最新 ${Math.min(records.length, maxRows)} 筆):${COLOR_RESET}`);
   lines.push(divider);
@@ -168,6 +188,7 @@ export function renderRecentRecords(records: TokenRecord[], maxRows = 15): strin
     "總 Token".padStart(11),
     "輸入/輸出".padStart(15),
     "金額(USD)".padStart(10),
+    "定價來源@版本".padEnd(22),
     "週配額".padStart(7),
   ].join("  ");
   lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
@@ -191,7 +212,8 @@ export function renderRecentRecords(records: TokenRecord[], maxRows = 15): strin
       : "-";
 
     const costText = record.costUsd ? `$${record.costUsd.toFixed(3)}` : "$0.000";
-    const roleText = record.agentRole || "main";
+    const roleText = record.agentRole || "unknown";
+    const pricingText = `${record.pricingSource || "unknown"}@${record.pricingVersion || "unknown"}`;
 
     const row = [
       localTimeString.padEnd(20),
@@ -200,6 +222,7 @@ export function renderRecentRecords(records: TokenRecord[], maxRows = 15): strin
       formatNumber(record.totalTokens).padStart(11),
       inOutText.padStart(15),
       costText.padStart(10),
+      pricingText.slice(0, 22).padEnd(22),
       quotaText.padStart(7),
     ].join("  ");
     lines.push(row);
@@ -214,7 +237,7 @@ export function renderRecentRecords(records: TokenRecord[], maxRows = 15): strin
  */
 export function renderSettlementTable(records: SettlementRecord[], periodType: string): string {
   const lines: string[] = [];
-  const divider = "=".repeat(92);
+  const divider = "=".repeat(132);
 
   const periodTitleMap: Record<string, string> = {
     daily: "每日結算報表 (Daily)",
@@ -236,15 +259,17 @@ export function renderSettlementTable(records: SettlementRecord[], periodType: s
 
   const header = [
     "結算週期".padEnd(14),
-    "請求次數".padStart(8),
+    "紀錄筆數".padStart(8),
     "總 Token".padStart(14),
     "主代理人".padStart(13),
     "subAgent".padStart(12),
+    "未知角色".padStart(12),
     "等值金額(USD)".padStart(13),
+    "定價來源".padEnd(24),
     "主要模型".padEnd(16),
   ].join("  ");
   lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
-  lines.push("-".repeat(92));
+  lines.push("-".repeat(132));
 
   for (const settlement of records) {
     const row = [
@@ -253,7 +278,9 @@ export function renderSettlementTable(records: SettlementRecord[], periodType: s
       formatNumber(settlement.totalTokens).padStart(14),
       formatNumber(settlement.mainAgentTokens).padStart(13),
       formatNumber(settlement.subAgentTokens).padStart(12),
+      formatNumber(settlement.unknownAgentTokens).padStart(12),
       settlement.formattedCostUsd.padStart(13),
+      formatPricingProvenance(settlement.pricingProvenance).slice(0, 24).padEnd(24),
       settlement.topModel.slice(0, 16).padEnd(16),
     ].join("  ");
     lines.push(row);
@@ -353,40 +380,25 @@ export function renderPlanChangeEventsTable(events: PlanChangeEvent[]): string {
 
 export function renderPromptString(snapshot: QuotaSnapshot): string {
   const parts: string[] = [];
-  const isProUser = isProPlanSnapshot(snapshot);
 
   if (snapshot.source === "fallback") {
-    return "[Codex: 離線]";
+    return "[Codex: 配額無法取得]";
   }
-  if (!isProUser && snapshot.fiveHour) {
+  if (!isQuotaSnapshotFresh(snapshot)) {
+    return "[Codex: 配額已過期]";
+  }
+  if (snapshot.fiveHour) {
     const remainingPercent = snapshot.fiveHour.remainingPercent;
     parts.push(`5h: ${remainingPercent}%`);
+  } else {
+    parts.push("5h: ?");
   }
   if (snapshot.weekly) {
     const remainingPercent = snapshot.weekly.remainingPercent;
     parts.push(`7d: ${remainingPercent}%`);
+  } else {
+    parts.push("7d: ?");
   }
-  if (parts.length === 0) return "[Codex: 線上]";
-  return `[Codex ${parts.join(" | ")}]`;
-}
-
-function isProPlanSnapshot(snapshot: QuotaSnapshot): boolean {
-  if (snapshot.source === "fallback") {
-    return false;
-  }
-
-  const snapshotWithOptionalProTier = snapshot as QuotaSnapshot & { proTier?: boolean };
-  if (typeof snapshotWithOptionalProTier.proTier === "boolean") {
-    return snapshotWithOptionalProTier.proTier;
-  }
-
-  const planTypeNormalized = (snapshot.planType || "").toLowerCase();
-  if (!planTypeNormalized) {
-    return false;
-  }
-
-  return planTypeNormalized === "pro"
-    || planTypeNormalized === "prolite"
-    || planTypeNormalized.startsWith("pro")
-    || planTypeNormalized.startsWith("prolite");
+  const sourceLabel = snapshot.source === "cache" ? "快取 | " : "";
+  return `[Codex ${sourceLabel}${parts.join(" | ")}]`;
 }

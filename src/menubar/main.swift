@@ -11,11 +11,15 @@ struct QuotaWindowDTO: Codable {
 }
 
 struct QuotaSnapshotDTO: Codable {
+    let updatedAt: Int64?
     let email: String?
     let planType: String?
     let fiveHour: QuotaWindowDTO?
     let weekly: QuotaWindowDTO?
     let resetCredits: Int?
+    let resetCreditsKnown: Bool?
+    let source: String?
+    let errorReason: String?
 }
 
 struct TodaySummaryDTO: Codable {
@@ -65,6 +69,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
     }
 
+    func hasValidUpdatedAt(_ timestampMilliseconds: Int64?) -> Bool {
+        guard let timestampMilliseconds = timestampMilliseconds, timestampMilliseconds > 0 else { return false }
+        return timestampMilliseconds <= Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    func isLiveSnapshot(_ snapshot: QuotaSnapshotDTO) -> Bool {
+        guard snapshot.source == "wham",
+              (snapshot.errorReason ?? "").isEmpty,
+              hasValidUpdatedAt(snapshot.updatedAt),
+              let updatedAt = snapshot.updatedAt else {
+            return false
+        }
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        return now - updatedAt <= 120_000
+    }
+
+    func sourceDescription(_ snapshot: QuotaSnapshotDTO) -> String {
+        switch snapshot.source {
+        case "wham": return isLiveSnapshot(snapshot) ? "官方 API" : "官方 API（非即時）"
+        case "cache": return "本機快取（非即時）"
+        case "fallback": return "離線備援（非即時）"
+        default: return "未知來源"
+        }
+    }
+
+    func formatUpdatedAt(_ timestampMilliseconds: Int64?) -> String {
+        guard hasValidUpdatedAt(timestampMilliseconds), let timestampMilliseconds = timestampMilliseconds else { return "未知" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestampMilliseconds) / 1000.0))
+    }
+
+    func asLocalCache(_ snapshot: QuotaSnapshotDTO) -> QuotaSnapshotDTO {
+        return QuotaSnapshotDTO(
+            updatedAt: snapshot.updatedAt,
+            email: snapshot.email,
+            planType: snapshot.planType,
+            fiveHour: snapshot.fiveHour,
+            weekly: snapshot.weekly,
+            resetCredits: snapshot.resetCredits,
+            resetCreditsKnown: snapshot.resetCreditsKnown,
+            source: "cache",
+            errorReason: snapshot.errorReason?.isEmpty == false
+                ? snapshot.errorReason
+                : "即時服務與 CLI 無法使用，顯示最後快照"
+        )
+    }
+
     @objc func refreshData() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
@@ -110,7 +162,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if let d = try? Data(contentsOf: cacheFile),
                    let snap = try? JSONDecoder().decode(QuotaSnapshotDTO.self, from: d) {
                     statusData = StatusOutputDTO(
-                        snapshot: snap,
+                        snapshot: self.asLocalCache(snap),
                         todaySummary: TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0, formattedCostUsd: nil),
                         recentRecords: []
                     )
@@ -138,9 +190,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let quotaSnapshot = data.snapshot
         var titleParts: [String] = []
         var alertActive = false
-        let isPro = (quotaSnapshot.planType?.lowercased() ?? "").contains("pro")
 
-        if let fiveHourWindow = quotaSnapshot.fiveHour, !isPro {
+        if let fiveHourWindow = quotaSnapshot.fiveHour {
             let remainingPercent = Int(fiveHourWindow.remainingPercent)
             titleParts.append("5h: \(remainingPercent)%")
             if remainingPercent <= 20 {
@@ -156,13 +207,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let alertPrefix = alertActive ? "[!] " : ""
-        let statusTitle = titleParts.isEmpty ? "[Codex 線上]" : "\(alertPrefix)[\(titleParts.joined(separator: " | "))]"
+        let sourcePrefix = isLiveSnapshot(quotaSnapshot)
+            ? ""
+            : quotaSnapshot.source == "cache" ? "快取 · "
+            : quotaSnapshot.source == "fallback" ? "離線 · " : "非即時 · "
+        let statusTitle = titleParts.isEmpty
+            ? "[Codex: \(sourcePrefix)配額資料缺少]"
+            : "\(alertPrefix)[\(sourcePrefix)\(titleParts.joined(separator: " | "))]"
         statusItem.button?.title = statusTitle
 
         // 構建下拉選單
         let menu = NSMenu()
 
-        let planTitle = "Codex 配額即時監控 (\(quotaSnapshot.planType ?? "prolite"))"
+        let planTitle = "Codex 配額監控 (\(quotaSnapshot.planType ?? "未知方案"))"
         let headerItem = NSMenuItem(title: planTitle, action: nil, keyEquivalent: "")
         headerItem.isEnabled = false
         menu.addItem(headerItem)
@@ -173,15 +230,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(emailItem)
         }
 
+        let sourceItem = NSMenuItem(title: "資料來源: \(sourceDescription(quotaSnapshot))", action: nil, keyEquivalent: "")
+        sourceItem.isEnabled = false
+        menu.addItem(sourceItem)
+
+        let updatedItem = NSMenuItem(title: "資料更新: \(formatUpdatedAt(quotaSnapshot.updatedAt))", action: nil, keyEquivalent: "")
+        updatedItem.isEnabled = false
+        menu.addItem(updatedItem)
+
+        if let reason = quotaSnapshot.errorReason, !reason.isEmpty {
+            let reasonItem = NSMenuItem(title: "狀態說明: \(reason)", action: nil, keyEquivalent: "")
+            reasonItem.isEnabled = false
+            menu.addItem(reasonItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
 
         // 5小時時間視窗
-        if let fiveHourWindow = quotaSnapshot.fiveHour, !isPro {
+        if let fiveHourWindow = quotaSnapshot.fiveHour {
             let item = NSMenuItem(title: "五小時額度: 剩餘 \(Int(fiveHourWindow.remainingPercent))% (已用 \(Int(fiveHourWindow.usedPercent))% · 重設: \(fiveHourWindow.resetCountdown))", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         } else {
-            let item = NSMenuItem(title: "五小時額度: 無限額度 (Pro 方案)", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "五小時額度: 無資料", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
         }
@@ -191,9 +262,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let item = NSMenuItem(title: "週用量額度: 剩餘 \(Int(weeklyWindow.remainingPercent))% (已用 \(Int(weeklyWindow.usedPercent))% · 重設: \(weeklyWindow.resetCountdown))", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
+        } else {
+            let item = NSMenuItem(title: "週用量額度: 無資料", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
         }
 
-        if let credits = quotaSnapshot.resetCredits, credits > 0 {
+        if quotaSnapshot.resetCreditsKnown == true,
+           let credits = quotaSnapshot.resetCredits,
+           credits > 0 {
             let creditMenuItem = NSMenuItem(title: "重設信用額度: \(credits) 次可用", action: nil, keyEquivalent: "")
             creditMenuItem.isEnabled = false
             menu.addItem(creditMenuItem)
@@ -204,6 +281,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 本日消耗真實統計 (非假資料)
         let todaySummary = data.todaySummary
         if todaySummary.requests > 0 || todaySummary.totalTokens > 0 {
+            let recordCountMenuItem = NSMenuItem(title: "本日紀錄筆數: \(formatNumber(todaySummary.requests)) 筆", action: nil, keyEquivalent: "")
+            recordCountMenuItem.isEnabled = false
+            menu.addItem(recordCountMenuItem)
+
             let costText = todaySummary.formattedCostUsd != nil ? " (~$\(todaySummary.formattedCostUsd!) USD)" : ""
             let summaryMenuItem = NSMenuItem(title: "本日消耗總計: \(formatNumber(todaySummary.totalTokens)) tokens\(costText)", action: nil, keyEquivalent: "")
             summaryMenuItem.isEnabled = false

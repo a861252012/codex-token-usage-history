@@ -29,24 +29,92 @@ function parseQuotaPercent(value: unknown): number | null {
 export class SessionIndexer {
   private codexHome: string;
   private database: HistoryDatabase;
+  private diagnostics: MutableSessionIndexDiagnostics;
 
   constructor(database: HistoryDatabase, codexHomeDirectory?: string) {
     this.database = database;
     this.codexHome = codexHomeDirectory || process.env.CODEX_HOME || join(homedir(), ".codex");
+    this.diagnostics = this.createDiagnostics("none");
+  }
+
+  /** 取得最近一次索引工作的唯讀診斷快照。 */
+  public getDiagnostics(): Readonly<SessionIndexDiagnostics> {
+    return Object.freeze({
+      ...this.diagnostics,
+      missingDirectories: Object.freeze([...this.diagnostics.missingDirectories]),
+    });
+  }
+
+  private createDiagnostics(scope: SessionIndexScope): MutableSessionIndexDiagnostics {
+    return {
+      dataDirectory: this.codexHome,
+      scope,
+      scannedAt: null,
+      lastSuccessfulScanAt: this.diagnostics?.lastSuccessfulScanAt ?? null,
+      filesDiscovered: 0,
+      filesRead: 0,
+      filesUnchanged: 0,
+      filesFailed: 0,
+      recordsParsed: 0,
+      recordsInserted: 0,
+      invalidLines: 0,
+      unsupportedEvents: 0,
+      invalidRecords: 0,
+      missingDirectories: [],
+      dataStartMs: null,
+      dataEndMs: null,
+    };
+  }
+
+  private finishDiagnostics(diagnostics: MutableSessionIndexDiagnostics): void {
+    diagnostics.scannedAt = Date.now();
+    if (diagnostics.filesFailed === 0 && diagnostics.missingDirectories.length === 0) {
+      diagnostics.lastSuccessfulScanAt = diagnostics.scannedAt;
+    }
+    this.diagnostics = diagnostics;
+  }
+
+  private mergeParseDiagnostics(diagnostics: MutableSessionIndexDiagnostics, parsedFile: ParsedFileResult): void {
+    diagnostics.invalidLines += parsedFile.invalidLines;
+    diagnostics.unsupportedEvents += parsedFile.unsupportedEvents;
+    diagnostics.invalidRecords += parsedFile.invalidRecords;
+    diagnostics.recordsParsed += parsedFile.records.length;
+    if (parsedFile.dataStartMs !== null) {
+      diagnostics.dataStartMs = diagnostics.dataStartMs === null
+        ? parsedFile.dataStartMs
+        : Math.min(diagnostics.dataStartMs, parsedFile.dataStartMs);
+    }
+    if (parsedFile.dataEndMs !== null) {
+      diagnostics.dataEndMs = diagnostics.dataEndMs === null
+        ? parsedFile.dataEndMs
+        : Math.max(diagnostics.dataEndMs, parsedFile.dataEndMs);
+    }
   }
 
   /**
    * 遞迴尋找指定目錄下的所有 .jsonl 檔案
    */
   public findJsonlFiles(targetDirectory: string, sinceMilliseconds?: number): string[] {
-    if (!existsSync(targetDirectory)) return [];
-    const results: string[] = [];
+    return this.discoverJsonlFiles(targetDirectory, sinceMilliseconds);
+  }
 
+  private discoverJsonlFiles(
+    targetDirectory: string,
+    sinceMilliseconds: number | undefined,
+    diagnostics?: MutableSessionIndexDiagnostics
+  ): string[] {
+    if (!existsSync(targetDirectory)) {
+      diagnostics?.missingDirectories.push(targetDirectory);
+      return [];
+    }
+
+    const results: string[] = [];
     const walkDirectory = (currentDirectory: string): void => {
       let directoryEntries;
       try {
         directoryEntries = readdirSync(currentDirectory, { withFileTypes: true });
       } catch {
+        diagnostics?.missingDirectories.push(currentDirectory);
         return;
       }
 
@@ -55,15 +123,14 @@ export class SessionIndexer {
         if (entry.isDirectory()) {
           walkDirectory(fullPath);
         } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-          if (sinceMilliseconds !== undefined) {
-            try {
-              const fileStatus = statSync(fullPath);
-              if (fileStatus.mtimeMs >= sinceMilliseconds) {
-                results.push(fullPath);
-              }
-            } catch {}
-          } else {
+          if (sinceMilliseconds === undefined) {
             results.push(fullPath);
+            continue;
+          }
+          try {
+            if (statSync(fullPath).mtimeMs >= sinceMilliseconds) results.push(fullPath);
+          } catch {
+            if (diagnostics) diagnostics.filesFailed += 1;
           }
         }
       }
@@ -77,18 +144,33 @@ export class SessionIndexer {
    * 掃描並解析單個 session jsonl 檔案
    */
   public parseFile(filePath: string): { records: TokenRecord[]; fileMtime: number; fileSize: number } {
+    const diagnostics = this.createDiagnostics("file");
+    diagnostics.filesDiscovered = 1;
+    const parsedFile = this.parseFileDetailed(filePath);
+    if (parsedFile.readSucceeded) diagnostics.filesRead = 1;
+    else diagnostics.filesFailed = 1;
+    this.mergeParseDiagnostics(diagnostics, parsedFile);
+    this.finishDiagnostics(diagnostics);
+    return {
+      records: parsedFile.records,
+      fileMtime: parsedFile.fileMtime,
+      fileSize: parsedFile.fileSize,
+    };
+  }
+
+  private parseFileDetailed(filePath: string): ParsedFileResult {
     let fileStatus;
     try {
       fileStatus = statSync(filePath);
     } catch {
-      return { records: [], fileMtime: 0, fileSize: 0 };
+      return createFailedParsedFile();
     }
 
     let fileContent: string;
     try {
       fileContent = readFileSync(filePath, "utf-8");
     } catch {
-      return { records: [], fileMtime: fileStatus.mtimeMs, fileSize: fileStatus.size };
+      return createFailedParsedFile(fileStatus.mtimeMs, fileStatus.size);
     }
 
     const lines = fileContent.split("\n");
@@ -96,23 +178,38 @@ export class SessionIndexer {
 
     let currentModel = "codex-default";
     let defaultSessionId = "";
-    let currentAgentRole: "main" | "subagent" = "main";
+    let currentAgentRole: "main" | "subagent" | "unknown" = "unknown";
     let lastFiveHourUsedPercent: number | null = null;
     let lastWeeklyUsedPercent: number | null = null;
+    let invalidLines = 0;
+    let unsupportedEvents = 0;
+    let invalidRecords = 0;
+    let dataStartMs: number | null = null;
+    let dataEndMs: number | null = null;
+
+    const supportedEventTypes = new Set(["session_meta", "turn_context", "event_msg", "token_usage_record"]);
 
     for (const singleLine of lines) {
-      if (!singleLine || singleLine.charCodeAt(0) !== 123) continue; // 必須為 '{'
+      if (!singleLine.trim()) continue;
 
       let parsedPayload: any;
       try {
         parsedPayload = JSON.parse(singleLine);
       } catch {
+        invalidLines += 1;
         continue;
       }
 
       const eventType = parsedPayload.type;
       const payloadData = parsedPayload.payload;
-      if (!payloadData) continue;
+      if (!supportedEventTypes.has(eventType)) {
+        unsupportedEvents += 1;
+        continue;
+      }
+      if (!payloadData || typeof payloadData !== "object") {
+        invalidRecords += 1;
+        continue;
+      }
 
       // 提取 session 資訊、預設模型與代理人角色
       if (eventType === "session_meta") {
@@ -127,6 +224,8 @@ export class SessionIndexer {
           payloadData.source?.subagent
         ) {
           currentAgentRole = "subagent";
+        } else if (payloadData.agent_role === "main" || payloadData.agent_type === "main") {
+          currentAgentRole = "main";
         }
       } else if (eventType === "turn_context") {
         if (payloadData.model) {
@@ -141,13 +240,6 @@ export class SessionIndexer {
         if (payloadData.thread_settings?.model) {
           currentModel = sanitizeDisplayString(payloadData.thread_settings.model, currentModel, MAXIMUM_MODEL_LENGTH);
         }
-        if (payloadData.thread_id) {
-          const threadIdText = String(payloadData.thread_id);
-          if (threadIdText.includes("subagent") || threadIdText.includes("sub-agent")) {
-            currentAgentRole = "subagent";
-          }
-        }
-
         // 提取 rate_limits 配額快照 (嚴格檢查主配額，避免 Spark 0% 覆寫真實週用量)
         if (payloadData.type === "token_count" && payloadData.rate_limits) {
           const rateLimits = payloadData.rate_limits;
@@ -180,27 +272,47 @@ export class SessionIndexer {
       }
 
       // 提取 token 消耗紀錄
-      if (eventType === "token_usage_record" && payloadData.usage) {
+      if (
+        eventType === "token_usage_record" &&
+        payloadData.usage &&
+        typeof payloadData.usage === "object" &&
+        [
+          "input_tokens",
+          "cached_input_tokens",
+          "output_tokens",
+          "reasoning_output_tokens",
+          "total_tokens",
+        ].some((fieldName) => payloadData.usage[fieldName] !== undefined)
+      ) {
         const usageData = payloadData.usage;
         const timestampMilliseconds = parsedPayload.timestamp === undefined
           ? Date.now()
           : new Date(parsedPayload.timestamp).getTime();
-        if (!Number.isFinite(timestampMilliseconds)) continue;
+        if (!Number.isFinite(timestampMilliseconds)) {
+          invalidRecords += 1;
+          continue;
+        }
 
         const inputTokens = parseTokenCount(usageData.input_tokens);
         const cachedInputTokens = parseTokenCount(usageData.cached_input_tokens);
         const outputTokens = parseTokenCount(usageData.output_tokens);
         const reasoningOutputTokens = parseTokenCount(usageData.reasoning_output_tokens);
         if (inputTokens === null || cachedInputTokens === null || outputTokens === null || reasoningOutputTokens === null) {
+          invalidRecords += 1;
           continue;
         }
         const totalTokens = parseTokenCount(usageData.total_tokens, inputTokens + outputTokens);
-        if (totalTokens === null) continue;
+        if (totalTokens === null) {
+          invalidRecords += 1;
+          continue;
+        }
 
         // 判斷此請求是否屬於 subAgent
-        let recordAgentRole: "main" | "subagent" = currentAgentRole;
-        if (payloadData.agent_role === "subagent" || payloadData.subagent || String(payloadData.thread_id || "").includes("subagent")) {
+        let recordAgentRole: "main" | "subagent" | "unknown" = currentAgentRole;
+        if (payloadData.agent_role === "subagent" || payloadData.agent_type === "subagent") {
           recordAgentRole = "subagent";
+        } else if (payloadData.agent_role === "main" || payloadData.agent_type === "main") {
+          recordAgentRole = "main";
         }
 
         // 計算官方 API 等值美金金額
@@ -229,36 +341,78 @@ export class SessionIndexer {
           reasoningOutputTokens,
           totalTokens,
           costUsd,
+          pricingSource: costResult.pricingSource,
+          pricingVersion: costResult.pricingVersion,
           agentRole: recordAgentRole,
           fiveHourUsedPercent: lastFiveHourUsedPercent,
           weeklyUsedPercent: lastWeeklyUsedPercent,
           sourceFile: filePath,
         });
+        dataStartMs = dataStartMs === null ? timestampMilliseconds : Math.min(dataStartMs, timestampMilliseconds);
+        dataEndMs = dataEndMs === null ? timestampMilliseconds : Math.max(dataEndMs, timestampMilliseconds);
+      } else if (eventType === "token_usage_record") {
+        invalidRecords += 1;
       }
     }
 
-    return { records, fileMtime: fileStatus.mtimeMs, fileSize: fileStatus.size };
+    return {
+      records,
+      fileMtime: fileStatus.mtimeMs,
+      fileSize: fileStatus.size,
+      readSucceeded: true,
+      invalidLines,
+      unsupportedEvents,
+      invalidRecords,
+      dataStartMs,
+      dataEndMs,
+    };
   }
 
   /**
    * 增量索引單一檔案，回傳新增之紀錄陣列 (避免二次全文解析)
    */
   public indexFile(filePath: string, force = false): { insertedCount: number; newRecords: TokenRecord[] } {
+    const diagnostics = this.createDiagnostics("file");
+    diagnostics.filesDiscovered = 1;
+    const result = this.indexFileDetailed(filePath, force, diagnostics);
+    this.finishDiagnostics(diagnostics);
+    return result;
+  }
+
+  private indexFileDetailed(
+    filePath: string,
+    force: boolean,
+    diagnostics: MutableSessionIndexDiagnostics
+  ): { insertedCount: number; newRecords: TokenRecord[] } {
     try {
       const fileStatus = statSync(filePath);
       const cursor = this.database.getCursor(filePath);
 
       if (!force && cursor && cursor.mtime === fileStatus.mtimeMs && cursor.size === fileStatus.size) {
-        return { insertedCount: 0, newRecords: [] }; // 檔案未改變，直接略過
+        diagnostics.filesUnchanged += 1;
+        return { insertedCount: 0, newRecords: [] };
       }
 
-      const { records, fileMtime, fileSize } = this.parseFile(filePath);
+      const parsedFile = this.parseFileDetailed(filePath);
+      this.mergeParseDiagnostics(diagnostics, parsedFile);
+      if (!parsedFile.readSucceeded) {
+        diagnostics.filesFailed += 1;
+        return { insertedCount: 0, newRecords: [] };
+      }
+
+      diagnostics.filesRead += 1;
       const newRecords: TokenRecord[] = [];
-      const insertedCount = this.database.insertBatch(records, (record) => newRecords.push(record));
-      this.database.updateCursor(filePath, fileMtime, fileSize, records.length);
+      const insertedCount = this.database.insertBatch(
+        parsedFile.records,
+        (record) => newRecords.push(record),
+        { updateExistingMetadata: force }
+      );
+      this.database.updateCursor(filePath, parsedFile.fileMtime, parsedFile.fileSize, parsedFile.records.length);
+      diagnostics.recordsInserted += insertedCount;
 
       return { insertedCount, newRecords };
     } catch {
+      diagnostics.filesFailed += 1;
       return { insertedCount: 0, newRecords: [] };
     }
   }
@@ -271,16 +425,19 @@ export class SessionIndexer {
     const sinceMilliseconds = startTimeMilliseconds - days * 86400 * 1000;
     const sessionDirectory = join(this.codexHome, "sessions");
 
-    const candidateFiles = this.findJsonlFiles(sessionDirectory, sinceMilliseconds);
+    const diagnostics = this.createDiagnostics("recent");
+    const candidateFiles = this.discoverJsonlFiles(sessionDirectory, sinceMilliseconds, diagnostics);
+    diagnostics.filesDiscovered = candidateFiles.length + diagnostics.filesFailed;
     let recordsInsertedCount = 0;
     const allNewRecords: TokenRecord[] = [];
 
     for (const singleFilePath of candidateFiles) {
-      const { insertedCount, newRecords } = this.indexFile(singleFilePath);
+      const { insertedCount, newRecords } = this.indexFileDetailed(singleFilePath, false, diagnostics);
       recordsInsertedCount += insertedCount;
       for (const record of newRecords) allNewRecords.push(record);
     }
 
+    this.finishDiagnostics(diagnostics);
     return {
       filesScanned: candidateFiles.length,
       recordsInserted: recordsInsertedCount,
@@ -292,26 +449,80 @@ export class SessionIndexer {
   /**
    * 完整背景索引所有歷史檔案
    */
-  public indexAll(): { filesScanned: number; recordsInserted: number; durationMs: number } {
+  public indexAll(force = false): { filesScanned: number; recordsInserted: number; durationMs: number } {
     const startTimeMilliseconds = Date.now();
     const sessionDirectory = join(this.codexHome, "sessions");
     const archivedDirectory = join(this.codexHome, "archived_sessions");
 
+    const diagnostics = this.createDiagnostics("all");
     const allFiles = [
-      ...this.findJsonlFiles(sessionDirectory),
-      ...this.findJsonlFiles(archivedDirectory),
+      ...this.discoverJsonlFiles(sessionDirectory, undefined, diagnostics),
+      ...this.discoverJsonlFiles(archivedDirectory, undefined, diagnostics),
     ];
+    diagnostics.filesDiscovered = allFiles.length + diagnostics.filesFailed;
 
     let recordsInsertedCount = 0;
     for (const singleFilePath of allFiles) {
-      const { insertedCount } = this.indexFile(singleFilePath);
+      const { insertedCount } = this.indexFileDetailed(singleFilePath, force, diagnostics);
       recordsInsertedCount += insertedCount;
     }
 
+    this.finishDiagnostics(diagnostics);
     return {
       filesScanned: allFiles.length,
       recordsInserted: recordsInsertedCount,
       durationMs: Date.now() - startTimeMilliseconds,
     };
   }
+}
+
+export type SessionIndexScope = "none" | "file" | "recent" | "all";
+
+export interface SessionIndexDiagnostics {
+  dataDirectory: string;
+  scope: SessionIndexScope;
+  scannedAt: number | null;
+  lastSuccessfulScanAt: number | null;
+  filesDiscovered: number;
+  filesRead: number;
+  filesUnchanged: number;
+  filesFailed: number;
+  recordsParsed: number;
+  recordsInserted: number;
+  invalidLines: number;
+  unsupportedEvents: number;
+  invalidRecords: number;
+  missingDirectories: readonly string[];
+  dataStartMs: number | null;
+  dataEndMs: number | null;
+}
+
+type MutableSessionIndexDiagnostics = Omit<SessionIndexDiagnostics, "missingDirectories"> & {
+  missingDirectories: string[];
+};
+
+interface ParsedFileResult {
+  records: TokenRecord[];
+  fileMtime: number;
+  fileSize: number;
+  readSucceeded: boolean;
+  invalidLines: number;
+  unsupportedEvents: number;
+  invalidRecords: number;
+  dataStartMs: number | null;
+  dataEndMs: number | null;
+}
+
+function createFailedParsedFile(fileMtime = 0, fileSize = 0): ParsedFileResult {
+  return {
+    records: [],
+    fileMtime,
+    fileSize,
+    readSucceeded: false,
+    invalidLines: 0,
+    unsupportedEvents: 0,
+    invalidRecords: 0,
+    dataStartMs: null,
+    dataEndMs: null,
+  };
 }

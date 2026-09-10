@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseMcpLimit } from "../src/mcp/server.js";
+import { parseMcpAgentRole, parseMcpLimit } from "../src/mcp/server.js";
 
 describe("MCP request validation", () => {
   test("bounds result limits and rejects invalid numeric values", () => {
@@ -9,5 +9,13 @@ describe("MCP request validation", () => {
     expect(parseMcpLimit(1.5, 10)).toBe(10);
     expect(parseMcpLimit(Number.POSITIVE_INFINITY, 10)).toBe(10);
     expect(parseMcpLimit("100", 10)).toBe(10);
+  });
+
+  test("accepts unknown as an explicit role without broadening invalid filters", () => {
+    expect(parseMcpAgentRole("main")).toBe("main");
+    expect(parseMcpAgentRole("subagent")).toBe("subagent");
+    expect(parseMcpAgentRole("unknown")).toBe("unknown");
+    expect(parseMcpAgentRole("all")).toBeUndefined();
+    expect(parseMcpAgentRole(1)).toBeUndefined();
   });
 });

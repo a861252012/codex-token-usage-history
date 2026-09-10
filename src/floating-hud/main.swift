@@ -56,11 +56,20 @@ struct HudLocalization {
             case "header_title": return "Codex 用量懸浮球"
             case "weekly_quota": return "週配額剩餘"
             case "five_hour_quota": return "5小時配額剩餘"
-            case "pro_unlimited": return "無限額度 (Pro 方案)"
+            case "quota_unavailable": return "無資料"
+            case "source": return "資料來源"
+            case "updated_at": return "資料更新"
+            case "error_reason": return "狀態說明"
+            case "source_wham": return "官方 API"
+            case "source_wham_stale": return "官方 API（非即時）"
+            case "source_cache": return "本機快取（非即時）"
+            case "source_fallback": return "離線備援（非即時）"
+            case "source_unknown": return "未知來源"
+            case "unknown": return "未知"
             case "reset_credits": return "可用重置券"
             case "plan_event": return "方案異動"
             case "today_usage": return "今日累積"
-            case "requests": return "請求次數"
+            case "requests": return "紀錄筆數"
             case "accent_color": return "色彩主題 (Accent Color)"
             case "pick_custom_color": return "自訂顏色選擇器..."
             case "alert_low_quota": return "用量吃緊時亮紅 (<20%)"
@@ -68,11 +77,9 @@ struct HudLocalization {
             case "language": return "介面語言 (Language)"
             case "open_dashboard": return "開啟 Web 儀表板"
             case "force_refresh": return "立即強制重新整理"
-            case "switch_to_standard": return "切換至標準雙條視圖 (5小時+週用量)"
-            case "switch_to_pro": return "切換至 Pro 精簡視圖 (僅週用量)"
             case "quit": return "退出 Codex 懸浮球"
             case "ready": return "已就緒"
-            case "calls": return "次"
+            case "calls": return "筆"
             default: return key
             }
         case .en:
@@ -80,11 +87,20 @@ struct HudLocalization {
             case "header_title": return "Codex Usage Orb"
             case "weekly_quota": return "Weekly Quota"
             case "five_hour_quota": return "5-Hour Quota"
-            case "pro_unlimited": return "Unlimited (Pro Tier)"
+            case "quota_unavailable": return "Unavailable"
+            case "source": return "Source"
+            case "updated_at": return "Updated"
+            case "error_reason": return "Status"
+            case "source_wham": return "Official API"
+            case "source_wham_stale": return "Official API (not live)"
+            case "source_cache": return "Local cache (not live)"
+            case "source_fallback": return "Offline fallback (not live)"
+            case "source_unknown": return "Unknown source"
+            case "unknown": return "Unknown"
             case "reset_credits": return "Reset Credits"
             case "plan_event": return "Plan Event"
             case "today_usage": return "Today"
-            case "requests": return "Requests"
+            case "requests": return "Records"
             case "accent_color": return "Accent Color"
             case "pick_custom_color": return "Pick Custom Color..."
             case "alert_low_quota": return "Alert Red When Low (<20%)"
@@ -92,11 +108,9 @@ struct HudLocalization {
             case "language": return "Language / 語言"
             case "open_dashboard": return "Open Dashboard (Web)"
             case "force_refresh": return "Force Refresh"
-            case "switch_to_standard": return "Switch to Standard View (5h + Weekly)"
-            case "switch_to_pro": return "Switch to Pro View (Weekly Only)"
             case "quit": return "Quit Codex Orb"
             case "ready": return "Ready"
-            case "calls": return "calls"
+            case "calls": return "records"
             default: return key
             }
         case .ja:
@@ -104,11 +118,20 @@ struct HudLocalization {
             case "header_title": return "Codex 使用量オーブ"
             case "weekly_quota": return "週間クォータ残り"
             case "five_hour_quota": return "5時間クォータ残り"
-            case "pro_unlimited": return "無制限 (Pro プラン)"
+            case "quota_unavailable": return "データなし"
+            case "source": return "データソース"
+            case "updated_at": return "更新日時"
+            case "error_reason": return "状態"
+            case "source_wham": return "公式 API"
+            case "source_wham_stale": return "公式 API（リアルタイムではありません）"
+            case "source_cache": return "ローカルキャッシュ（リアルタイムではありません）"
+            case "source_fallback": return "オフライン代替（リアルタイムではありません）"
+            case "source_unknown": return "不明なソース"
+            case "unknown": return "不明"
             case "reset_credits": return "利用可能なリセットチケット"
             case "plan_event": return "プラン変更履歴"
             case "today_usage": return "本日累計"
-            case "requests": return "リクエスト回数"
+            case "requests": return "記録件数"
             case "accent_color": return "アクセントカラー (Accent Color)"
             case "pick_custom_color": return "カスタムカラーを選択..."
             case "alert_low_quota": return "残量低下時に赤色警告 (<20%)"
@@ -116,11 +139,9 @@ struct HudLocalization {
             case "language": return "表示言語 (Language)"
             case "open_dashboard": return "Web ダッシュボードを開く"
             case "force_refresh": return "今すぐ更新"
-            case "switch_to_standard": return "標準ビューに切替 (5時間+週間)"
-            case "switch_to_pro": return "Pro ビューに切替 (週間のみ)"
             case "quit": return "Codex オーブを終了"
             case "ready": return "準備完了"
-            case "calls": return "回"
+            case "calls": return "件"
             default: return key
             }
         case .zhHans:
@@ -128,11 +149,20 @@ struct HudLocalization {
             case "header_title": return "Codex 用量悬浮球"
             case "weekly_quota": return "周配额剩余"
             case "five_hour_quota": return "5小时配额剩余"
-            case "pro_unlimited": return "无限额度 (Pro 方案)"
+            case "quota_unavailable": return "无数据"
+            case "source": return "数据来源"
+            case "updated_at": return "数据更新"
+            case "error_reason": return "状态说明"
+            case "source_wham": return "官方 API"
+            case "source_wham_stale": return "官方 API（非实时）"
+            case "source_cache": return "本地缓存（非实时）"
+            case "source_fallback": return "离线备用（非实时）"
+            case "source_unknown": return "未知来源"
+            case "unknown": return "未知"
             case "reset_credits": return "可用重置券"
             case "plan_event": return "方案变动"
             case "today_usage": return "今日累计"
-            case "requests": return "请求次数"
+            case "requests": return "记录条数"
             case "accent_color": return "色彩主题 (Accent Color)"
             case "pick_custom_color": return "自定义颜色选择器..."
             case "alert_low_quota": return "用量紧张时亮红 (<20%)"
@@ -140,11 +170,9 @@ struct HudLocalization {
             case "language": return "界面语言 (Language)"
             case "open_dashboard": return "打开 Web 仪表板"
             case "force_refresh": return "立即强制刷新"
-            case "switch_to_standard": return "切换至标准双条视图 (5小时+周用量)"
-            case "switch_to_pro": return "切换至 Pro 精简视图 (仅周用量)"
             case "quit": return "退出 Codex 悬浮球"
             case "ready": return "就绪"
-            case "calls": return "次"
+            case "calls": return "条"
             default: return key
             }
         }
@@ -379,11 +407,15 @@ struct WindowQuotaDTO: Codable {
 }
 
 struct QuotaSnapshotDTO: Codable {
+    let updatedAt: Int64?
     let email: String?
     let planType: String?
     let fiveHour: WindowQuotaDTO?
     let weekly: WindowQuotaDTO?
     let resetCredits: Int?
+    let resetCreditsKnown: Bool?
+    let source: String?
+    let errorReason: String?
 }
 
 struct PlanChangeEventDTO: Codable {
@@ -745,11 +777,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentLanguage: AppLanguage = .zhHant
 
     // Display state
-    // 0: Quota view (7d for Pro, 5h+7d for Standard)
+    // 0: Quota view
     // 1: Today tokens view
     // 2: Today cost view
     private var displayModeIndex: Int = 0
-    private var forceProModeOverride: Bool? = nil
 
     private var cachedStatusData: FullStatusDTO?
 
@@ -889,7 +920,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         primaryValueLabel.alignment = .center
         primaryValueLabel.textColor = NSColor.white
         primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize, weight: .bold)
-        primaryValueLabel.stringValue = "--%"
+        primaryValueLabel.stringValue = "--"
         orbContainerView.addSubview(primaryValueLabel)
     }
 
@@ -934,24 +965,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func determineProUser(snapshot: QuotaSnapshotDTO) -> Bool {
-        if let forced = forceProModeOverride {
-            return forced
+    private func hasValidUpdatedAt(_ timestampMilliseconds: Int64?) -> Bool {
+        guard let timestampMilliseconds = timestampMilliseconds, timestampMilliseconds > 0 else { return false }
+        return timestampMilliseconds <= Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    private func isLiveSnapshot(_ snapshot: QuotaSnapshotDTO) -> Bool {
+        guard snapshot.source == "wham",
+              (snapshot.errorReason ?? "").isEmpty,
+              hasValidUpdatedAt(snapshot.updatedAt),
+              let updatedAt = snapshot.updatedAt else {
+            return false
         }
-        let plan = snapshot.planType?.lowercased() ?? ""
-        if plan.contains("pro") {
-            return true
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        return now - updatedAt <= 120_000
+    }
+
+    private func sourceDescription(_ snapshot: QuotaSnapshotDTO) -> String {
+        switch snapshot.source {
+        case "wham":
+            let key = isLiveSnapshot(snapshot) ? "source_wham" : "source_wham_stale"
+            return HudLocalization.string(key: key, language: currentLanguage)
+        case "cache": return HudLocalization.string(key: "source_cache", language: currentLanguage)
+        case "fallback": return HudLocalization.string(key: "source_fallback", language: currentLanguage)
+        default: return HudLocalization.string(key: "source_unknown", language: currentLanguage)
         }
-        if snapshot.fiveHour == nil {
-            return true
+    }
+
+    private func formatUpdatedAt(_ timestampMilliseconds: Int64?) -> String {
+        guard hasValidUpdatedAt(timestampMilliseconds), let timestampMilliseconds = timestampMilliseconds else {
+            return HudLocalization.string(key: "unknown", language: currentLanguage)
         }
-        return false
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestampMilliseconds) / 1000.0))
+    }
+
+    private func asLocalCache(_ snapshot: QuotaSnapshotDTO) -> QuotaSnapshotDTO {
+        return QuotaSnapshotDTO(
+            updatedAt: snapshot.updatedAt,
+            email: snapshot.email,
+            planType: snapshot.planType,
+            fiveHour: snapshot.fiveHour,
+            weekly: snapshot.weekly,
+            resetCredits: snapshot.resetCredits,
+            resetCreditsKnown: snapshot.resetCreditsKnown,
+            source: "cache",
+            errorReason: snapshot.errorReason?.isEmpty == false
+                ? snapshot.errorReason
+                : "即時服務無法使用，顯示最後快照"
+        )
     }
 
     private func buildContextMenu() -> NSMenu {
         let menu = NSMenu(title: "Codex Orb")
 
-        let planName = cachedStatusData?.snapshot.planType ?? "Pro"
+        let planName = cachedStatusData?.snapshot.planType ?? "未知方案"
         let headerTitle = "\(HudLocalization.string(key: "header_title", language: currentLanguage)) (\(planName))"
         let headerItem = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
         headerItem.isEnabled = false
@@ -960,15 +1029,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         if let snapshot = cachedStatusData?.snapshot {
-            let weeklyRem = Int(snapshot.weekly?.remainingPercent ?? 100)
-            let readyLabel = HudLocalization.string(key: "ready", language: currentLanguage)
-            let weeklyCountdown = snapshot.weekly?.resetCountdown ?? readyLabel
-            let weeklyTitle = "\(HudLocalization.string(key: "weekly_quota", language: currentLanguage)): \(weeklyRem)% (Reset: \(weeklyCountdown))"
+            let unavailable = HudLocalization.string(key: "quota_unavailable", language: currentLanguage)
+            let weeklyTitle: String
+            if let weekly = snapshot.weekly {
+                weeklyTitle = "\(HudLocalization.string(key: "weekly_quota", language: currentLanguage)): \(Int(weekly.remainingPercent))% (Reset: \(weekly.resetCountdown))"
+            } else {
+                weeklyTitle = "\(HudLocalization.string(key: "weekly_quota", language: currentLanguage)): \(unavailable)"
+            }
             let weeklyItem = NSMenuItem(title: weeklyTitle, action: nil, keyEquivalent: "")
             weeklyItem.isEnabled = false
             menu.addItem(weeklyItem)
-            let proActive = determineProUser(snapshot: snapshot)
-            if let fiveHour = snapshot.fiveHour, !proActive {
+
+            if let fiveHour = snapshot.fiveHour {
                 let fiveRem = Int(fiveHour.remainingPercent)
                 let fiveCountdown = fiveHour.resetCountdown
                 let fiveTitle = "\(HudLocalization.string(key: "five_hour_quota", language: currentLanguage)): \(fiveRem)% (Reset: \(fiveCountdown))"
@@ -976,14 +1048,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 fiveItem.isEnabled = false
                 menu.addItem(fiveItem)
             } else {
-                let unlimLabel = HudLocalization.string(key: "pro_unlimited", language: currentLanguage)
-                let fiveTitle = "\(HudLocalization.string(key: "five_hour_quota", language: currentLanguage)): \(unlimLabel)"
-                let unlimItem = NSMenuItem(title: fiveTitle, action: nil, keyEquivalent: "")
-                unlimItem.isEnabled = false
-                menu.addItem(unlimItem)
+                let fiveTitle = "\(HudLocalization.string(key: "five_hour_quota", language: currentLanguage)): \(unavailable)"
+                let fiveItem = NSMenuItem(title: fiveTitle, action: nil, keyEquivalent: "")
+                fiveItem.isEnabled = false
+                menu.addItem(fiveItem)
             }
 
-            if let credits = snapshot.resetCredits, credits > 0 {
+            let sourceTitle = "\(HudLocalization.string(key: "source", language: currentLanguage)): \(sourceDescription(snapshot))"
+            let sourceItem = NSMenuItem(title: sourceTitle, action: nil, keyEquivalent: "")
+            sourceItem.isEnabled = false
+            menu.addItem(sourceItem)
+
+            let updatedTitle = "\(HudLocalization.string(key: "updated_at", language: currentLanguage)): \(formatUpdatedAt(snapshot.updatedAt))"
+            let updatedItem = NSMenuItem(title: updatedTitle, action: nil, keyEquivalent: "")
+            updatedItem.isEnabled = false
+            menu.addItem(updatedItem)
+
+            if let reason = snapshot.errorReason, !reason.isEmpty {
+                let reasonTitle = "\(HudLocalization.string(key: "error_reason", language: currentLanguage)): \(reason)"
+                let reasonItem = NSMenuItem(title: reasonTitle, action: nil, keyEquivalent: "")
+                reasonItem.isEnabled = false
+                menu.addItem(reasonItem)
+            }
+
+            if snapshot.resetCreditsKnown == true,
+               let credits = snapshot.resetCredits,
+               credits > 0 {
                 let creditsTitle = "\(HudLocalization.string(key: "reset_credits", language: currentLanguage)): \(credits)"
                 let creditsItem = NSMenuItem(title: creditsTitle, action: nil, keyEquivalent: "")
                 creditsItem.isEnabled = false
@@ -1118,16 +1208,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let proActive = cachedStatusData?.snapshot != nil ? determineProUser(snapshot: cachedStatusData!.snapshot) : true
-        let toggleModeTitle = proActive
-            ? HudLocalization.string(key: "switch_to_standard", language: currentLanguage)
-            : HudLocalization.string(key: "switch_to_pro", language: currentLanguage)
-        let toggleModeItem = NSMenuItem(title: toggleModeTitle, action: #selector(toggleProModeOverride), keyEquivalent: "")
-        toggleModeItem.target = self
-        menu.addItem(toggleModeItem)
-
-        menu.addItem(NSMenuItem.separator())
-
         let quitItem = NSMenuItem(
             title: HudLocalization.string(key: "quit", language: currentLanguage),
             action: #selector(terminateApplication),
@@ -1237,18 +1317,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         loadLatestData(forceRefresh: true)
     }
 
-    @objc private func toggleProModeOverride() {
-        if let current = forceProModeOverride {
-            forceProModeOverride = !current
-        } else {
-            let proActive = cachedStatusData?.snapshot != nil ? determineProUser(snapshot: cachedStatusData!.snapshot) : true
-            forceProModeOverride = !proActive
-        }
-        if let status = cachedStatusData {
-            updateUserInterface(with: status)
-        }
-    }
-
     private func startPeriodicTimer() {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.loadLatestData(forceRefresh: false)
@@ -1286,7 +1354,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     let planChangeList = latestPlanChange != nil ? [latestPlanChange!] : []
 
                     fetchedStatus = FullStatusDTO(
-                        snapshot: snapshot,
+                        snapshot: self.asLocalCache(snapshot),
                         todaySummary: sqliteTodaySummary,
                         recentRecords: [],
                         recentPlanChanges: planChangeList
@@ -1294,7 +1362,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
-            guard let statusData = fetchedStatus else { return }
+            guard let statusData = fetchedStatus else {
+                if let previousStatus = self.cachedStatusData {
+                    let staleStatus = FullStatusDTO(
+                        snapshot: self.asLocalCache(previousStatus.snapshot),
+                        todaySummary: previousStatus.todaySummary,
+                        recentRecords: previousStatus.recentRecords,
+                        recentPlanChanges: previousStatus.recentPlanChanges
+                    )
+                    self.cachedStatusData = staleStatus
+                    DispatchQueue.main.async {
+                        self.updateUserInterface(with: staleStatus)
+                    }
+                }
+                return
+            }
             self.cachedStatusData = statusData
 
             DispatchQueue.main.async {
@@ -1381,17 +1463,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateUserInterface(with statusData: FullStatusDTO) {
         let snapshot = statusData.snapshot
         let summary = statusData.todaySummary
-        let proActive = determineProUser(snapshot: snapshot)
         let sizePreset = getCurrentSizePreset()
 
-        let weeklyRemaining = Int(snapshot.weekly?.remainingPercent ?? 100)
-        let fiveHourRemaining = Int(snapshot.fiveHour?.remainingPercent ?? 100)
-        let targetPercentage: Double = proActive ? Double(weeklyRemaining) : Double(min(weeklyRemaining, fiveHourRemaining))
+        let weeklyRemaining = snapshot.weekly.map { Int($0.remainingPercent) }
+        let fiveHourRemaining = snapshot.fiveHour.map { Int($0.remainingPercent) }
+        let availablePercentages = [snapshot.fiveHour?.remainingPercent, snapshot.weekly?.remainingPercent].compactMap { $0 }
+        let targetPercentage = availablePercentages.min() ?? 0
+        let hasQuotaData = !availablePercentages.isEmpty
 
         // Ring Tint Color Calculation
         var ringTint: NSColor
 
-        if activeThemePresetKey == "dynamicHealth" {
+        if !hasQuotaData {
+            ringTint = NSColor.systemGray
+        } else if activeThemePresetKey == "dynamicHealth" {
             // 動態健康色階: 滿綠 -> 黃 -> 橘 -> 吃緊紅
             if targetPercentage >= 60.0 {
                 ringTint = NSColor(hex: "#30D158") ?? NSColor.systemGreen
@@ -1431,20 +1516,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize - 2.0, weight: .bold)
         } else {
             // View 0: Primary quota view
-            if proActive {
-                // Pro tier: Focus strictly on 7-day weekly quota
+            let isLive = isLiveSnapshot(snapshot)
+            secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.75)
+            secondaryTagLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
+
+            if !isLive {
+                switch snapshot.source {
+                case "cache": secondaryTagLabel.stringValue = "CACHE"
+                case "fallback": secondaryTagLabel.stringValue = "OFFLINE"
+                case "wham": secondaryTagLabel.stringValue = "STALE"
+                default: secondaryTagLabel.stringValue = "UNKNOWN"
+                }
+
+                if let fiveHourRemaining = fiveHourRemaining, let weeklyRemaining = weeklyRemaining {
+                    primaryValueLabel.stringValue = "5:\(fiveHourRemaining) 7:\(weeklyRemaining)"
+                    primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
+                } else if let fiveHourRemaining = fiveHourRemaining {
+                    primaryValueLabel.stringValue = "5h:\(fiveHourRemaining)%"
+                    primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
+                } else if let weeklyRemaining = weeklyRemaining {
+                    primaryValueLabel.stringValue = "7d:\(weeklyRemaining)%"
+                    primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
+                } else {
+                    primaryValueLabel.stringValue = "--"
+                    primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize, weight: .bold)
+                }
+            } else if let fiveHourRemaining = fiveHourRemaining, let weeklyRemaining = weeklyRemaining {
+                secondaryTagLabel.stringValue = "5h:\(fiveHourRemaining)%"
+                primaryValueLabel.stringValue = "7d:\(weeklyRemaining)%"
+                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
+            } else if let fiveHourRemaining = fiveHourRemaining {
+                secondaryTagLabel.stringValue = "5h"
+                primaryValueLabel.stringValue = "\(fiveHourRemaining)%"
+                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize, weight: .bold)
+            } else if let weeklyRemaining = weeklyRemaining {
                 secondaryTagLabel.stringValue = "7d"
-                secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
-                secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
                 primaryValueLabel.stringValue = "\(weeklyRemaining)%"
                 primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize, weight: .bold)
             } else {
-                // Standard tier: Present both 5-hour and 7-day limits compactly
-                secondaryTagLabel.stringValue = "5h:\(fiveHourRemaining)%"
-                secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.75)
-                secondaryTagLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
-                primaryValueLabel.stringValue = "7d:\(weeklyRemaining)%"
-                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
+                secondaryTagLabel.stringValue = "QUOTA"
+                primaryValueLabel.stringValue = "--"
+                primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize, weight: .bold)
             }
         }
     }
@@ -1472,4 +1584,3 @@ application.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
 application.delegate = delegate
 application.run()
-

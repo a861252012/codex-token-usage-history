@@ -45,10 +45,24 @@ describe("QuotaClient", () => {
 
     expect(snapshot.email).toHaveLength(320);
     expect(snapshot.planType).toHaveLength(320);
-    expect(snapshot.fiveHour?.usedPercent).toBe(0);
-    expect(snapshot.fiveHour?.resetAfterSeconds).toBe(0);
+    expect(snapshot.fiveHour).toBeNull();
+    expect(snapshot.errorReason).toContain("無效配額視窗");
     expect(snapshot.resetCredits).toBe(0);
     expect(snapshot.additionalLimits).toHaveLength(100);
+  });
+
+  test("missing or invalid usage percentages never become a fresh 100-percent window", () => {
+    const client = new QuotaClient("/non_existent_folder_xyz");
+    for (const value of [undefined, null, "0", NaN, Infinity, -1, 101]) {
+      const snapshot = client.parseWhamResponse({ rate_limit: { primary_window: { used_percent: value as number, limit_window_seconds: 18000 } } });
+      expect(snapshot.fiveHour).toBeNull();
+      expect(snapshot.errorReason).toBeTruthy();
+    }
+    const valid = client.parseWhamResponse({ rate_limit: { primary_window: { used_percent: 0, limit_window_seconds: 18000 } } });
+    expect(valid.fiveHour?.remainingPercent).toBe(100);
+    expect(valid.fiveHour?.resetAtMs).toBe(0);
+    expect(valid.fiveHour?.resetCountdown).toBe("—");
+    expect(valid.errorReason).toBeUndefined();
   });
 
   test("成功取得快照後遭遇 401/連線失敗/缺少憑證時，回傳保留原資料之本機快取並標註失敗原因", async () => {
@@ -76,6 +90,14 @@ describe("QuotaClient", () => {
       expect(fresh.source).toBe("wham");
       expect(fresh.email).toBe("test@example.com");
       const originalUpdatedAt = fresh.updatedAt;
+
+      globalThis.fetch = async () => new Response(JSON.stringify({ rate_limit: { primary_window: { used_percent: null, limit_window_seconds: 18000 } } }), { status: 200 });
+      const invalidResponse = await client.getQuotaSnapshot(true);
+      expect(invalidResponse.source).toBe("cache");
+      expect(invalidResponse.updatedAt).toBe(originalUpdatedAt);
+      expect(invalidResponse.weekly?.usedPercent).toBe(15);
+      expect(invalidResponse.fiveHour).toBeNull();
+      expect(invalidResponse.errorReason).toContain("無效配額視窗");
 
       // 2. 遭遇 401
       globalThis.fetch = async () => new Response("Unauthorized", { status: 401 });

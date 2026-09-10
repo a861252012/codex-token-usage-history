@@ -198,6 +198,11 @@ export class QuotaClient {
       const responseText = await readBoundedResponseText(httpResponse, MAXIMUM_QUOTA_RESPONSE_BYTES);
       const rawResponsePayload = JSON.parse(responseText) as RawWhamResponse;
       const newSnapshot = this.parseWhamResponse(rawResponsePayload);
+      if (newSnapshot.errorReason) {
+        return this.cachedSnapshot
+          ? this.createStaleSnapshot(this.cachedSnapshot, newSnapshot.errorReason)
+          : { ...newSnapshot, source: "fallback" };
+      }
 
       // 自動比對配額重置或重置券事件
       this.detectAndRecordResetEvents(newSnapshot);
@@ -235,15 +240,16 @@ export class QuotaClient {
 
     const previousCredits = this.cachedSnapshot.resetCredits ?? 0;
     const currentCredits = newSnapshot.resetCredits ?? 0;
-    const creditDelta = currentCredits - previousCredits;
+    const creditDelta = this.cachedSnapshot.resetCreditsKnown === true && newSnapshot.resetCreditsKnown === true
+      ? currentCredits - previousCredits : null;
 
-    const previousFiveHourUsedPercent = this.cachedSnapshot.fiveHour?.usedPercent ?? 0;
-    const newFiveHourUsedPercent = newSnapshot.fiveHour?.usedPercent ?? 0;
-    const previousWeeklyUsedPercent = this.cachedSnapshot.weekly?.usedPercent ?? 0;
-    const newWeeklyUsedPercent = newSnapshot.weekly?.usedPercent ?? 0;
+    const previousFiveHourUsedPercent = this.cachedSnapshot.fiveHour?.usedPercent ?? null;
+    const newFiveHourUsedPercent = newSnapshot.fiveHour?.usedPercent ?? null;
+    const previousWeeklyUsedPercent = this.cachedSnapshot.weekly?.usedPercent ?? null;
+    const newWeeklyUsedPercent = newSnapshot.weekly?.usedPercent ?? null;
 
     // 1. 偵測重置券發送或消耗事件
-    if (creditDelta !== 0) {
+    if (creditDelta !== null && creditDelta !== 0) {
       const eventType = creditDelta > 0 ? "credit_received" : "credit_consumed";
       const description = creditDelta > 0
         ? `收到 OpenAI 配額重置券（增加 ${creditDelta} 張，現有 ${currentCredits} 張）`
@@ -264,7 +270,7 @@ export class QuotaClient {
     }
 
     // 2. 偵測五小時週期或不定期歸零重置事件（使用率下降超過 20% 且非重置券扣除所致）
-    if (creditDelta === 0 && previousFiveHourUsedPercent >= 20 && newFiveHourUsedPercent < previousFiveHourUsedPercent && (previousFiveHourUsedPercent - newFiveHourUsedPercent) >= 20) {
+    if (creditDelta === 0 && previousFiveHourUsedPercent !== null && newFiveHourUsedPercent !== null && previousFiveHourUsedPercent >= 20 && newFiveHourUsedPercent < previousFiveHourUsedPercent && (previousFiveHourUsedPercent - newFiveHourUsedPercent) >= 20) {
       this.databaseInstance.insertResetEvent({
         timestamp: currentTimeMs,
         datetime: currentIsoString,
@@ -280,7 +286,7 @@ export class QuotaClient {
     }
 
     // 3. 偵測週用量時間視窗重置事件
-    if (creditDelta === 0 && previousWeeklyUsedPercent >= 20 && newWeeklyUsedPercent < previousWeeklyUsedPercent && (previousWeeklyUsedPercent - newWeeklyUsedPercent) >= 20) {
+    if (creditDelta === 0 && previousWeeklyUsedPercent !== null && newWeeklyUsedPercent !== null && previousWeeklyUsedPercent >= 20 && newWeeklyUsedPercent < previousWeeklyUsedPercent && (previousWeeklyUsedPercent - newWeeklyUsedPercent) >= 20) {
       this.databaseInstance.insertResetEvent({
         timestamp: currentTimeMs,
         datetime: currentIsoString,
@@ -364,17 +370,23 @@ export class QuotaClient {
     const currentTimeMs = Date.now();
     let fiveHourWindow: QuotaWindow | null = null;
     let weeklyWindow: QuotaWindow | null = null;
+    let invalidWindow = false;
 
     const inspectWindow = (rawWindow?: RawWhamWindow | null): QuotaWindow | null => {
       if (!rawWindow) return null;
-      const usedPercent = finiteNumber(rawWindow.used_percent, 0, 100);
+      const usedPercent = finiteNumber(rawWindow.used_percent, 0, 100, NaN);
       const remainingPercent = Math.max(0, 100 - usedPercent);
       const limitWindowSeconds = finiteNumber(rawWindow.limit_window_seconds, 0, 366 * 86400);
+      if (!Number.isFinite(usedPercent) || !Number.isSafeInteger(limitWindowSeconds) || limitWindowSeconds <= 0) {
+        invalidWindow = true;
+        return null;
+      }
       const resetAfterSeconds = finiteNumber(rawWindow.reset_after_seconds, 0, 366 * 86400);
+      const hasResetDelay = typeof rawWindow.reset_after_seconds === "number" && Number.isFinite(rawWindow.reset_after_seconds) && rawWindow.reset_after_seconds >= 0 && rawWindow.reset_after_seconds <= 366 * 86400;
       const rawResetAt = finiteNumber(rawWindow.reset_at, 0, 10_000_000_000_000);
       const resetAtMs = rawResetAt > 0
         ? (rawResetAt > 1e11 ? rawResetAt : rawResetAt * 1000)
-        : currentTimeMs + resetAfterSeconds * 1000;
+        : hasResetDelay ? currentTimeMs + resetAfterSeconds * 1000 : 0;
 
       return {
         usedPercent,
@@ -382,7 +394,7 @@ export class QuotaClient {
         limitWindowSeconds,
         resetAfterSeconds,
         resetAtMs,
-        resetCountdown: QuotaClient.formatCountdown(resetAfterSeconds),
+        resetCountdown: resetAtMs > 0 ? QuotaClient.formatCountdown(Math.max(0, Math.floor((resetAtMs - currentTimeMs) / 1000))) : "—",
       };
     };
 
@@ -426,6 +438,8 @@ export class QuotaClient {
     }
 
     const resetCredits = finiteNumber(responsePayload.rate_limit_reset_credits?.available_count, 0, 1_000_000);
+    const rawCredits = responsePayload.rate_limit_reset_credits?.available_count;
+    const resetCreditsKnown = typeof rawCredits === "number" && Number.isSafeInteger(rawCredits) && rawCredits >= 0 && rawCredits <= 1_000_000;
     const planType = boundedText(responsePayload.plan_type);
 
     return {
@@ -437,7 +451,11 @@ export class QuotaClient {
       weekly: weeklyWindow,
       additionalLimits,
       resetCredits,
+      resetCreditsKnown,
       source: "wham",
+      ...((invalidWindow || (!fiveHourWindow && !weeklyWindow))
+        ? { errorReason: invalidWindow ? "上游回傳無效配額視窗，無法確認目前剩餘額度" : "上游未回傳有效主配額視窗" }
+        : {}),
     };
   }
 

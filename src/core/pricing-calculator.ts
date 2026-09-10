@@ -14,6 +14,7 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { loadCachedUpstreamPricing } from "./pricing-sync.js";
+import type { PricingSource } from "./types.js";
 
 export interface ModelPricingTier {
   modelPrefix: string;
@@ -31,11 +32,14 @@ export interface CalculatedCostResult {
   totalCost: number;
   formattedCostUsd: string;
   tier: ModelPricingTier;
+  pricingSource: PricingSource;
+  pricingVersion: string;
 }
 
 export interface PricingResolution {
   tier: ModelPricingTier;
-  source: "user-config" | "upstream-cache" | "builtin" | "fallback";
+  source: PricingSource;
+  version: string;
 }
 
 export interface PricingConfigSummary {
@@ -149,6 +153,7 @@ export function getUserPricingFilePath(): string {
 let cachedUserConfigData: { version: string; models: ModelPricingTier[]; fallback?: ModelPricingTier } | null = null;
 let cachedUserConfigMtime = 0;
 let lastUserConfigCheckTime = 0;
+let cachedUserConfigPath = "";
 
 /**
  * 讀取使用者自訂定價表 (~/.codex/pricing.json)，具備記憶體快取與 mtime 檢查
@@ -156,6 +161,14 @@ let lastUserConfigCheckTime = 0;
 export function loadUserPricingConfig(): { version: string; models: ModelPricingTier[]; fallback?: ModelPricingTier } | null {
   const filePath = getUserPricingFilePath();
   const currentTimeMs = Date.now();
+
+  if (filePath !== cachedUserConfigPath) {
+    cachedUserConfigPath = filePath;
+    cachedUserConfigData = null;
+    cachedUserConfigMtime = 0;
+    lastUserConfigCheckTime = 0;
+    clearPricingResolutionCache();
+  }
 
   // 2 秒內直接回傳記憶體快取，避免密集重複 statSync
   if (cachedUserConfigData !== null && currentTimeMs - lastUserConfigCheckTime < 2000) {
@@ -284,7 +297,11 @@ export function resolvePricingTierForModel(modelName: string): PricingResolution
   if (userConfig) {
     const matchedUserTier = findBestTierInList(normalizedModelName, userConfig.models);
     if (matchedUserTier) {
-      const resolution: PricingResolution = { tier: matchedUserTier, source: "user-config" };
+      const resolution: PricingResolution = {
+        tier: matchedUserTier,
+        source: "user-config",
+        version: userConfig.version,
+      };
       modelResolutionCache.set(normalizedModelName, resolution);
       return resolution;
     }
@@ -294,7 +311,11 @@ export function resolvePricingTierForModel(modelName: string): PricingResolution
   if (upstreamCache) {
     const matchedUpstreamTier = findBestTierInList(normalizedModelName, upstreamCache.models);
     if (matchedUpstreamTier) {
-      const resolution: PricingResolution = { tier: matchedUpstreamTier, source: "upstream-cache" };
+      const resolution: PricingResolution = {
+        tier: matchedUpstreamTier,
+        source: "upstream-cache",
+        version: upstreamCache.updatedDate || "unknown",
+      };
       modelResolutionCache.set(normalizedModelName, resolution);
       return resolution;
     }
@@ -303,14 +324,22 @@ export function resolvePricingTierForModel(modelName: string): PricingResolution
   // 3. 第三優先: 檢查內建預設定價 (官方標竿與 Codex 專屬模型)
   const matchedBuiltinTier = findBestTierInList(normalizedModelName, BUILTIN_MODEL_PRICING);
   if (matchedBuiltinTier) {
-    const resolution: PricingResolution = { tier: matchedBuiltinTier, source: "builtin" };
+    const resolution: PricingResolution = {
+      tier: matchedBuiltinTier,
+      source: "builtin",
+      version: BUILTIN_VERSION,
+    };
     modelResolutionCache.set(normalizedModelName, resolution);
     return resolution;
   }
 
   // 4. 通用降級
   const fallbackTier = userConfig?.fallback || DEFAULT_FALLBACK_PRICING;
-  const resolution: PricingResolution = { tier: fallbackTier, source: "fallback" };
+  const resolution: PricingResolution = {
+    tier: fallbackTier,
+    source: "fallback",
+    version: userConfig?.fallback ? userConfig.version : BUILTIN_VERSION,
+  };
   modelResolutionCache.set(normalizedModelName, resolution);
   return resolution;
 }
@@ -332,7 +361,7 @@ export function calculateTokenCost(
   outputTokens: number,
   reasoningOutputTokens: number
 ): CalculatedCostResult {
-  const { tier } = resolvePricingTierForModel(modelName);
+  const { tier, source, version } = resolvePricingTierForModel(modelName);
 
   const directInputTokens = Math.max(0, inputTokens - cachedInputTokens);
   const inputCost = (directInputTokens / 1_000_000) * tier.inputCostPerMillion;
@@ -358,6 +387,8 @@ export function calculateTokenCost(
     totalCost,
     formattedCostUsd,
     tier,
+    pricingSource: source,
+    pricingVersion: version,
   };
 }
 
@@ -380,7 +411,7 @@ export function getActivePricingConfig(): {
     pricingVersion = userConfig.version;
   } else if (upstreamCache) {
     primarySource = "upstream-cache";
-    pricingVersion = upstreamCache.updatedDate;
+    pricingVersion = upstreamCache.updatedDate || "unknown";
   }
 
   const userConfigCount = userConfig?.models.length ?? 0;
@@ -410,7 +441,8 @@ export function getEffectiveCatalogOverview(): Array<{
   cachedInputPer1M: number;
   outputPer1M: number;
   reasoningOutputPer1M: number;
-  source: "user-config" | "upstream-cache" | "builtin" | "fallback";
+  source: PricingSource;
+  version: string;
 }> {
   // 挑選常用的主流核心模型與 Codex 模型
   const sampleModels = [
@@ -426,7 +458,7 @@ export function getEffectiveCatalogOverview(): Array<{
   ];
 
   return sampleModels.map((modelName) => {
-    const { tier, source } = resolvePricingTierForModel(modelName);
+    const { tier, source, version } = resolvePricingTierForModel(modelName);
     return {
       modelPrefix: tier.modelPrefix,
       inputPer1M: tier.inputCostPerMillion,
@@ -434,6 +466,7 @@ export function getEffectiveCatalogOverview(): Array<{
       outputPer1M: tier.outputCostPerMillion,
       reasoningOutputPer1M: tier.reasoningOutputCostPerMillion,
       source,
+      version,
     };
   });
 }

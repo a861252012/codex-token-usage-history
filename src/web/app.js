@@ -7,8 +7,11 @@ let currentFilterModel = "";
 let currentFilterAgentRole = "";
 let currentSettlementPeriod = "daily";
 let lastQuotaSnapshot = null;
+let lastQuotaTrust = null;
+let lastDiagnostics = null;
 let filterDebounceTimer;
 let visibleHistoryRecords = [];
+const QUOTA_FRESHNESS_MS = 2 * 60 * 1000;
 
 function uiText(english, chinese) { return currentLanguage === "zh-TW" ? chinese : english; }
 
@@ -116,8 +119,8 @@ const i18nDictionary = {
     todayCost: "API Cost (USD):",
     todayInput: "Input / Cached:",
     todayOutput: "Output / Reasoning:",
-    todayAgents: "Agents (Main / Sub):",
-    todayRequests: "Total Requests:",
+    todayAgents: "Agents (Main / Sub / Unknown):",
+    todayRequests: "Token Records:",
     todayBurn: "Hourly Burn Rate:",
     settlementTitle: "Multi-Period Settlement Report",
     chartTitle: "24-Hour Token Burn Activity",
@@ -138,6 +141,7 @@ const i18nDictionary = {
     allAgents: "All Agents",
     mainAgentOnly: "Main Agent Only",
     subAgentOnly: "subAgent Only",
+    unknownAgentOnly: "Unknown Role Only",
   },
   "zh-TW": {
     appTitle: "Codex Token 額度與消耗歷史",
@@ -155,8 +159,8 @@ const i18nDictionary = {
     todayCost: "等值 API 金額:",
     todayInput: "輸入 / 快取:",
     todayOutput: "輸出 / 推理:",
-    todayAgents: "代理人分佈 (主/子):",
-    todayRequests: "總請求次數:",
+    todayAgents: "代理人分佈 (主/子/未知):",
+    todayRequests: "Token 紀錄筆數:",
     todayBurn: "每小時消耗率:",
     settlementTitle: "Token 消耗多週期結算報表",
     chartTitle: "過去 24 小時 Token 燃燒趨勢",
@@ -177,6 +181,7 @@ const i18nDictionary = {
     allAgents: "全部角色",
     mainAgentOnly: "僅主程式",
     subAgentOnly: "僅 subAgent",
+    unknownAgentOnly: "僅未知角色",
   },
 };
 
@@ -198,6 +203,10 @@ function setLanguage(targetLanguage) {
 
   updateText("app-title", texts.appTitle);
   updateText("breadcrumb-current", uiText("Usage overview", "用量總覽"));
+  updateText("link-top-history", uiText("History", "歷史紀錄"));
+  updateText("label-quota-source", uiText("Source", "來源"));
+  updateText("label-quota-updated", uiText("Last successful update", "最後成功更新"));
+  updateText("label-quota-error", uiText("Latest error", "最近錯誤"));
   updateText("filter-title", uiText("History filters", "歷史紀錄篩選"));
   updateText("filter-help", uiText("Applies to transaction history and CSV export. Overview cards remain unchanged.", "僅套用至歷史紀錄與 CSV 匯出，不影響總覽卡片與結算報表。"));
   updateText("label-filter-model", uiText("Search model", "即時搜尋模型"));
@@ -237,19 +246,39 @@ function setLanguage(targetLanguage) {
   updateText("label-resets-title", texts.resetsTitle);
   updateText("label-plans-title", texts.plansTitle);
   updateText("label-history-title", texts.historyTitle);
+  updateText("label-diagnostics-title", uiText("Dashboard last scan", "本機服務最近一次掃描"));
+  updateText("label-diagnostics-directory", uiText("Data directory", "資料目錄"));
+  updateText("label-diagnostics-scan", uiText("Last successful scan", "最後成功掃描"));
+  updateText("label-diagnostics-files", uiText("Files", "檔案"));
+  updateText("label-diagnostics-records", uiText("Records", "紀錄"));
+  updateText("label-diagnostics-range", uiText("Range parsed this scan", "本輪解析資料範圍"));
+  updateText("label-diagnostics-errors", uiText("Skipped / failed", "略過／失敗"));
+  updateText("diagnostics-limit-note", uiText("These values describe only this local service process's latest scan. Unchanged files are not reread, so the parsed range is not the database's full history range.", "這些數值只描述本機服務程序的最近一輪掃描。未變更檔案不會重讀，因此本輪解析範圍不等於資料庫完整歷史範圍。"));
+  updateText("label-first-use-title", uiText("No completed local-service scan is confirmed yet.", "尚未確認本機服務完成任何一輪掃描。"));
+  updateText("label-first-use-copy", uiText("Run codex-usage index --all to import configured local session history, then refresh the dashboard data. The CLI runs separately and does not change this service's last-scan scope to all.", "請執行 codex-usage index --all 匯入已設定的本機 session 歷史，再重新整理儀表板資料。CLI 是另一個程序，不會把本機服務的最近掃描 scope 改成 all。"));
+  updateText("th-unknown-tokens", uiText("Unknown Role", "未知角色"));
+  updateText("th-requests", uiText("Records", "紀錄筆數"));
+  updateText("th-pricing-source", uiText("Stored Pricing", "已儲存定價"));
   updateText("btn-export-csv", texts.exportCsv);
   updateText("btn-prev-page", texts.prevPage);
   updateText("btn-next-page", texts.nextPage);
   updateText("desc-pro-unlimited", texts.proUnlimitedDesc);
   updateText("title-pro-window", texts.proUnlimitedTitle);
   document.querySelectorAll("#filter-agent-role option").forEach((option) => {
-    option.textContent = option.value === "subagent" ? texts.subAgentOnly : option.value === "main" ? texts.mainAgentOnly : texts.allAgents;
+    option.textContent = option.value === "subagent"
+      ? texts.subAgentOnly
+      : option.value === "main"
+      ? texts.mainAgentOnly
+      : option.value === "unknown"
+      ? texts.unknownAgentOnly
+      : texts.allAgents;
   });
   const connectionStatus = document.getElementById("connection-status");
   if (connectionStatus?.classList.contains("connected")) {
-    connectionStatus.textContent = targetLanguage === "zh-TW" ? "即時串流連線中" : "Live Stream Connected";
+    connectionStatus.textContent = targetLanguage === "zh-TW" ? "本機服務已連線" : "Local service connected";
   }
   if (lastQuotaSnapshot) renderQuotaSnapshot(lastQuotaSnapshot);
+  if (lastDiagnostics) renderDiagnostics(lastDiagnostics);
 
   const periodButtons = document.querySelectorAll(".btn-period");
   periodButtons.forEach((button) => {
@@ -318,6 +347,74 @@ function looksLikeErrorPlanType(planType) {
   return false;
 }
 
+function normalizeAgentRole(agentRole) {
+  return agentRole === "main" || agentRole === "subagent" ? agentRole : "unknown";
+}
+
+function getResetCreditsDisplay(quotaSnapshot) {
+  const credits = Number(quotaSnapshot?.resetCredits);
+  return quotaSnapshot?.resetCreditsKnown === true && Number.isSafeInteger(credits) && credits >= 0
+    ? formatNumber(credits)
+    : "—";
+}
+
+function getPlanLabel(quotaSnapshot) {
+  const planType = typeof quotaSnapshot?.planType === "string" ? quotaSnapshot.planType.trim() : "";
+  return planType && !looksLikeErrorPlanType(planType) ? planType : "—";
+}
+
+function getQuotaTrustState(quotaSnapshot, currentTimeMs = Date.now()) {
+  const source = ["wham", "cache", "fallback"].includes(quotaSnapshot?.source)
+    ? quotaSnapshot.source
+    : "unknown";
+  const updatedAt = Number(quotaSnapshot?.updatedAt);
+  const hasSuccessfulTimestamp = source !== "fallback" && Number.isFinite(updatedAt) && updatedAt > 0;
+  const timestampIsFuture = hasSuccessfulTimestamp && updatedAt > currentTimeMs;
+  const ageMs = hasSuccessfulTimestamp ? Math.max(0, currentTimeMs - updatedAt) : null;
+  const errorReason = typeof quotaSnapshot?.errorReason === "string" && quotaSnapshot.errorReason.trim()
+    ? quotaSnapshot.errorReason.trim()
+    : null;
+
+  if (source === "wham" && !timestampIsFuture && ageMs !== null && ageMs <= QUOTA_FRESHNESS_MS && !errorReason) {
+    return { level: "fresh", tone: "success", source, updatedAt, ageMs, errorReason: null };
+  }
+  if (source === "fallback") {
+    return { level: "unavailable", tone: "danger", source, updatedAt: null, ageMs: null, errorReason };
+  }
+  if (source === "cache") {
+    return { level: "cached", tone: "warn", source, updatedAt, ageMs, errorReason };
+  }
+  if (source === "wham") {
+    return { level: "stale", tone: "warn", source, updatedAt, ageMs, errorReason };
+  }
+  return { level: "unknown", tone: "warn", source, updatedAt: null, ageMs: null, errorReason };
+}
+
+function shouldShowFiveHourWindow(quotaSnapshot) {
+  return Boolean(quotaSnapshot?.fiveHour);
+}
+
+function formatTimestamp(timestampMs) {
+  if (!Number.isFinite(Number(timestampMs)) || Number(timestampMs) <= 0) return "—";
+  return new Date(Number(timestampMs)).toLocaleString(currentLanguage === "zh-TW" ? "zh-TW" : "en-US");
+}
+
+function describePricingProvenance(value) {
+  const provenance = Array.isArray(value?.pricingProvenance)
+    ? value.pricingProvenance.filter((entry) => entry && typeof entry.source === "string")
+    : [];
+  if (provenance.length === 0) return "unknown";
+  const details = provenance.map((entry) => {
+    const source = ["user-config", "upstream-cache", "builtin", "fallback"].includes(entry.source)
+      ? entry.source
+      : "unknown";
+    const version = entry.version ? ` ${entry.version}` : "";
+    const records = Number.isFinite(Number(entry.records)) ? ` · ${formatNumber(entry.records)} ${uiText("records", "筆")}` : "";
+    return `${source}${version}${records}`;
+  });
+  return provenance.length > 1 ? `mixed: ${details.join("; ")}` : details[0];
+}
+
 function getColorForPercent(percentageValue) {
   if (percentageValue >= 90) return "var(--color-red)";
   if (percentageValue >= 70) return "var(--color-yellow)";
@@ -361,7 +458,7 @@ function tickCountdown() {
   }
 }
 
-function updateWindowCard(windowPrefix, quotaWindow) {
+function updateWindowCard(windowPrefix, quotaWindow, trustState = lastQuotaTrust) {
   const progressBar = document.getElementById(`bar-${windowPrefix}`);
   const textUsed = document.getElementById(`text-${windowPrefix}-used`);
   const textRemaining = document.getElementById(`text-${windowPrefix}-rem`);
@@ -376,8 +473,12 @@ function updateWindowCard(windowPrefix, quotaWindow) {
     if (textRemaining) textRemaining.textContent = "—";
     if (textReset) textReset.textContent = "—";
     if (textStatus) {
-      textStatus.textContent = "—";
-      textStatus.className = "meta-value";
+      textStatus.textContent = trustState?.level === "unavailable"
+        ? uiText("Quota unavailable", "額度無法取得")
+        : trustState?.level === "cached"
+        ? uiText("Cached; window unavailable", "快取未含此視窗")
+        : uiText("Window unavailable", "無此視窗資料");
+      textStatus.className = `meta-value ${trustState?.level === "unavailable" ? "danger" : "warn"}`;
     }
     return;
   }
@@ -423,6 +524,19 @@ function updateWindowCard(windowPrefix, quotaWindow) {
   }
 
   if (textStatus) {
+    if (trustState?.level !== "fresh") {
+      const isCritical = usedPercent >= 95;
+      const trustLabel = trustState?.level === "cached"
+        ? uiText("Cached snapshot", "本機快取")
+        : trustState?.level === "stale"
+        ? uiText("Snapshot outdated", "資料已過期")
+        : trustState?.level === "unavailable"
+        ? uiText("Quota unavailable", "額度無法取得")
+        : uiText("Source unknown", "來源未知");
+      textStatus.textContent = isCritical ? `${trustLabel} · ${uiText("Critical", "接近用盡")}` : trustLabel;
+      textStatus.className = `meta-value ${isCritical || trustState?.level === "unavailable" ? "danger" : "warn"}`;
+      return;
+    }
     if (usedPercent >= 95) {
       textStatus.textContent = currentLanguage === "zh-TW" ? "額度即將耗盡" : "Critical";
       textStatus.className = "meta-value danger";
@@ -436,9 +550,36 @@ function updateWindowCard(windowPrefix, quotaWindow) {
   }
 }
 
+function renderQuotaTrust(trustState) {
+  const badge = document.getElementById("quota-source-badge");
+  const source = document.getElementById("quota-source-value");
+  const updated = document.getElementById("quota-updated-value");
+  const error = document.getElementById("quota-error-value");
+  const errorRow = document.getElementById("quota-error-row");
+  const labels = {
+    fresh: uiText("Quota: live", "額度：即時"),
+    cached: uiText("Quota: cached", "額度：快取"),
+    stale: uiText("Quota: outdated", "額度：已過期"),
+    unavailable: uiText("Quota: unavailable", "額度：無法取得"),
+    unknown: uiText("Quota: unknown", "額度：未知"),
+  };
+  if (badge) {
+    badge.textContent = labels[trustState.level] || labels.unknown;
+    badge.className = `status-badge quota-status ${trustState.tone}`;
+  }
+  if (source) source.textContent = trustState.source;
+  if (updated) updated.textContent = formatTimestamp(trustState.updatedAt);
+  if (error && errorRow) {
+    error.textContent = trustState.errorReason || "—";
+    errorRow.hidden = !trustState.errorReason;
+  }
+}
+
 function renderQuotaSnapshot(quotaSnapshot) {
   if (!quotaSnapshot) return;
   lastQuotaSnapshot = quotaSnapshot;
+  lastQuotaTrust = getQuotaTrustState(quotaSnapshot);
+  renderQuotaTrust(lastQuotaTrust);
 
   const isProTier = quotaSnapshot.source !== "fallback" && (
     quotaSnapshot.proTier === true || isProPlanType(quotaSnapshot.planType)
@@ -447,36 +588,32 @@ function renderQuotaSnapshot(quotaSnapshot) {
   const standardFiveHour = document.getElementById("standard-five-hour-content");
   const proFiveHour = document.getElementById("pro-five-hour-content");
   if (standardFiveHour && proFiveHour) {
-    if (isProTier && !quotaSnapshot.fiveHour) {
+    if (isProTier && !shouldShowFiveHourWindow(quotaSnapshot)) {
       standardFiveHour.style.display = "none";
       proFiveHour.style.display = "block";
     } else {
       standardFiveHour.style.display = "block";
       proFiveHour.style.display = "none";
-      updateWindowCard("five-hour", quotaSnapshot.fiveHour);
+      updateWindowCard("five-hour", quotaSnapshot.fiveHour, lastQuotaTrust);
     }
   }
 
   const accountBadge = document.getElementById("account-badge");
   if (accountBadge) {
     const emailLabel = quotaSnapshot.email || "Local User";
-    let planLabel = quotaSnapshot.planType || "prolite";
-    if (quotaSnapshot.source === "fallback") {
-      planLabel = "offline";
-    } else if (looksLikeErrorPlanType(quotaSnapshot.planType)) {
-      planLabel = "—";
-    }
+    const planLabel = getPlanLabel(quotaSnapshot);
     accountBadge.textContent = `${emailLabel} (${planLabel})`;
   }
 
   const voucherBadge = document.getElementById("voucher-badge");
   if (voucherBadge) {
+    const resetCredits = getResetCreditsDisplay(quotaSnapshot);
     voucherBadge.textContent = currentLanguage === "zh-TW"
-      ? `重置券: ${quotaSnapshot.resetCredits || 0} 張`
-      : `Reset Credits: ${quotaSnapshot.resetCredits || 0}`;
+      ? `重置券: ${resetCredits}${resetCredits === "—" ? "" : " 張"}`
+      : `Reset Credits: ${resetCredits}`;
   }
 
-  updateWindowCard("weekly", quotaSnapshot.weekly);
+  updateWindowCard("weekly", quotaSnapshot.weekly, lastQuotaTrust);
 
   // Additional Limits (Spark, etc.)
   const additionalLimitsSection = document.getElementById("additional-limits-section");
@@ -525,10 +662,12 @@ async function fetchSummary() {
     document.getElementById("text-today-cost").textContent = `~${formatUsdDisplay(summary.formattedCostUsd)} USD`;
 
     const pricingMetaElem = document.getElementById("pricing-meta");
-    if (pricingMetaElem && summary.pricing) {
-      const sourceLabel = summary.pricing.source === "user-config" ? "自訂定價" : "內建定價";
-      pricingMetaElem.textContent = `(${summary.pricing.version})`;
-      pricingMetaElem.title = `定價版本: ${summary.pricing.version} (${sourceLabel} ~/.codex/pricing.json)`;
+    if (pricingMetaElem) {
+      const pricingDescription = describePricingProvenance(summary);
+      pricingMetaElem.textContent = `(${pricingDescription})`;
+      pricingMetaElem.title = pricingDescription === "unknown"
+        ? uiText("Stored record-level pricing source is unavailable.", "沒有已儲存的逐筆定價來源資料。")
+        : uiText("Stored pricing sources used by these records.", "這些紀錄實際儲存的定價來源。") + ` ${pricingDescription}`;
     }
 
     document.getElementById("text-today-input").textContent = `${formatNumber(summary.inputTokens)} / ${formatNumber(summary.cachedInputTokens)}`;
@@ -536,12 +675,14 @@ async function fetchSummary() {
 
     const mainAgentTokens = summary.mainAgentTokens || 0;
     const subAgentTokens = summary.subAgentTokens || 0;
-    const totalAgentTokens = mainAgentTokens + subAgentTokens;
-    const mainPercent = totalAgentTokens > 0 ? Math.round((mainAgentTokens / totalAgentTokens) * 100) : 100;
-    const subPercent = 100 - mainPercent;
-    document.getElementById("text-today-agents").textContent = `Main ${mainPercent}% / Sub ${subPercent}% (${formatNumber(subAgentTokens)} tokens)`;
+    const unknownAgentTokens = summary.unknownAgentTokens || 0;
+    const totalAgentTokens = mainAgentTokens + subAgentTokens + unknownAgentTokens;
+    const mainPercent = totalAgentTokens > 0 ? Math.round((mainAgentTokens / totalAgentTokens) * 100) : 0;
+    const subPercent = totalAgentTokens > 0 ? Math.round((subAgentTokens / totalAgentTokens) * 100) : 0;
+    const unknownPercent = Math.max(0, 100 - mainPercent - subPercent);
+    document.getElementById("text-today-agents").textContent = `Main ${mainPercent}% · Sub ${subPercent}% · ${uiText("Unknown", "未知")} ${unknownPercent}% (${formatNumber(unknownAgentTokens)} tokens)`;
 
-    document.getElementById("text-today-requests").textContent = `${formatNumber(summary.requests)} calls`;
+    document.getElementById("text-today-requests").textContent = `${formatNumber(summary.requests)} ${uiText("records", "筆")}`;
     document.getElementById("text-today-burn-rate").textContent = `${formatNumber(summary.hourlyBurnRate)} / hr`;
 
     // Model breakdown bars
@@ -556,7 +697,7 @@ async function fetchSummary() {
           return `
             <div class="model-bar-row">
               <div class="model-bar-info">
-                <span><strong>${escapeHtml(modelStats.model)}</strong> (${formatNumber(modelStats.requests)} calls)</span>
+                <span><strong>${escapeHtml(modelStats.model)}</strong> (${formatNumber(modelStats.requests)} ${uiText("records", "筆")})</span>
                 <span>${formatNumber(modelStats.totalTokens)} tokens ($${(modelStats.costUsd || 0).toFixed(2)})</span>
               </div>
               <div class="model-bar-track">
@@ -676,7 +817,7 @@ async function fetchHourlyStats() {
         const tokens = parseInt(bar.getAttribute("data-tokens") || "0", 10);
         const requests = parseInt(bar.getAttribute("data-requests") || "0", 10);
 
-        tooltip.innerHTML = `<strong>${time}</strong><br>Tokens: ${formatNumber(tokens)} (${formatNumber(requests)} calls)`;
+        tooltip.innerHTML = `<strong>${time}</strong><br>Tokens: ${formatNumber(tokens)} (${formatNumber(requests)} ${uiText("records", "筆")})`;
         tooltip.style.display = "block";
 
         const containerRect = chartContainer.getBoundingClientRect();
@@ -714,7 +855,7 @@ async function fetchSettlementReport(period = "daily") {
 
     const settlementRecords = data.settlements || data.records || [];
     if (!settlementRecords.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center">No settlement records found</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="text-center">${uiText("No settlement records found", "尚無結算紀錄")}</td></tr>`;
       return;
     }
 
@@ -728,7 +869,9 @@ async function fetchSettlementReport(period = "daily") {
           <td>${formatNumber(record.outputTokens)} / <span style="color: var(--text-secondary);">${formatNumber(record.reasoningOutputTokens)}</span></td>
           <td>${formatNumber(record.mainAgentTokens)}</td>
           <td>${formatNumber(record.subAgentTokens)}</td>
+          <td>${formatNumber(record.unknownAgentTokens)}</td>
           <td>${formatNumber(record.requests)}</td>
+          <td><span class="pricing-source" title="${escapeHtml(describePricingProvenance(record))}">${escapeHtml(describePricingProvenance(record))}</span></td>
         </tr>
       `;
     }).join("");
@@ -829,6 +972,77 @@ async function fetchPlanChangeEvents() {
   }
 }
 
+function renderDiagnostics(diagnostics) {
+  lastDiagnostics = diagnostics;
+  const scopeValue = document.getElementById("diagnostics-scope");
+  const status = document.getElementById("diagnostics-status");
+  const directory = document.getElementById("diagnostics-directory");
+  const scan = document.getElementById("diagnostics-scan");
+  const files = document.getElementById("diagnostics-files");
+  const records = document.getElementById("diagnostics-records");
+  const range = document.getElementById("diagnostics-range");
+  const errors = document.getElementById("diagnostics-errors");
+  const note = document.getElementById("diagnostics-note");
+  const onboarding = document.getElementById("first-use-guide");
+  const knownScopes = ["recent", "all", "file", "none"];
+  const scope = knownScopes.includes(diagnostics?.scope) ? diagnostics.scope : "unknown";
+  const scopeDescriptions = {
+    recent: uiText("latest local-service scan checked recent files only", "本機服務最近一輪僅檢查近期檔案"),
+    all: uiText("latest local-service scan checked all configured locations", "本機服務最近一輪檢查所有已設定位置"),
+    file: uiText("latest local-service scan checked one selected file", "本機服務最近一輪檢查單一指定檔案"),
+    none: uiText("no completed local-service scan", "本機服務尚無完成的掃描"),
+    unknown: uiText("the local service's latest scan could not be verified", "無法確認本機服務最近一輪掃描"),
+  };
+  const skipped = Number(diagnostics?.invalidLines || 0)
+    + Number(diagnostics?.unsupportedEvents || 0)
+    + Number(diagnostics?.invalidRecords || 0);
+  const failed = Number(diagnostics?.filesFailed || 0);
+  const missing = Array.isArray(diagnostics?.missingDirectories) ? diagnostics.missingDirectories : [];
+  const isKnown = Boolean(diagnostics) && scope !== "unknown" && scope !== "none";
+  const hasWarnings = !isKnown || failed > 0 || skipped > 0 || missing.length > 0;
+
+  if (scopeValue) scopeValue.textContent = scope;
+  if (status) {
+    status.textContent = hasWarnings ? uiText("Last scan needs attention", "最近掃描需注意") : uiText("Last scan completed", "最近掃描已完成");
+    status.className = `status-badge quota-status ${hasWarnings ? "warn" : "success"}`;
+  }
+  if (directory) directory.textContent = diagnostics?.dataDirectory || "—";
+  if (scan) scan.textContent = formatTimestamp(diagnostics?.lastSuccessfulScanAt);
+  if (files) files.textContent = diagnostics
+    ? `${formatNumber(diagnostics.filesDiscovered)} ${uiText("found", "找到")} · ${formatNumber(diagnostics.filesRead)} ${uiText("read", "已讀")} · ${formatNumber(diagnostics.filesUnchanged)} ${uiText("unchanged", "未變更")}`
+    : "—";
+  if (records) records.textContent = diagnostics
+    ? `${formatNumber(diagnostics.recordsParsed)} ${uiText("parsed", "解析")} · ${formatNumber(diagnostics.recordsInserted)} ${uiText("inserted", "新增")}`
+    : "—";
+  if (range) range.textContent = diagnostics?.dataStartMs && diagnostics?.dataEndMs
+    ? `${formatTimestamp(diagnostics.dataStartMs)} — ${formatTimestamp(diagnostics.dataEndMs)}`
+    : "—";
+  if (errors) errors.textContent = diagnostics
+    ? `${formatNumber(skipped)} ${uiText("skipped", "略過")} · ${formatNumber(failed)} ${uiText("files failed", "檔案失敗")}`
+    : "—";
+  if (note) {
+    const missingText = missing.length > 0
+      ? ` ${uiText("Missing directories", "缺少目錄")}: ${missing.join(", ")}`
+      : "";
+    note.textContent = `${scope}: ${scopeDescriptions[scope]}.${missingText}`;
+  }
+  if (onboarding) {
+    onboarding.hidden = Boolean(diagnostics?.lastSuccessfulScanAt) && scope !== "none" && Number(diagnostics?.filesDiscovered || 0) > 0;
+  }
+}
+
+async function fetchDiagnostics() {
+  try {
+    const response = await dashboardFetch("/api/diagnostics");
+    if (!response.ok) return false;
+    renderDiagnostics(await response.json());
+    return true;
+  } catch (caughtError) {
+    renderDiagnostics(null);
+    throw caughtError;
+  }
+}
+
 async function fetchHistory() {
   try {
     const offset = (currentPage - 1) * pageSize;
@@ -847,7 +1061,7 @@ async function fetchHistory() {
     totalHistoryRecords = data.total;
     visibleHistoryRecords = data.records;
     updatePagination();
-    document.getElementById("history-total-count").textContent = `${formatNumber(data.total)} records`;
+    document.getElementById("history-total-count").textContent = `${formatNumber(data.total)} ${uiText("records", "筆紀錄")}`;
 
     const tbody = document.getElementById("history-table-body");
     if (!tbody) return;
@@ -865,10 +1079,14 @@ async function fetchHistory() {
         ? `${record.weeklyUsedPct}%`
         : "—";
       const shortId = record.sessionId ? `${record.sessionId.slice(0, 8)}...` : "—";
-      const costText = record.costUsd ? `$${record.costUsd.toFixed(3)}` : "$0.000";
-      const roleBadge = record.agentRole === "subagent"
-        ? "<span class=\"badge\" style=\"background: rgba(245, 158, 11, 0.15); color: var(--color-yellow);\">subAgent</span>"
-        : "<span class=\"badge\" style=\"background: rgba(56, 189, 248, 0.15); color: var(--color-blue);\">Main</span>";
+      const costValue = Number(record.costUsd);
+      const costText = Number.isFinite(costValue) ? `$${costValue.toFixed(3)}` : "$0.000";
+      const agentRole = normalizeAgentRole(record.agentRole);
+      const roleBadge = agentRole === "subagent"
+        ? "<span class=\"badge role-subagent\">subAgent</span>"
+        : agentRole === "main"
+        ? "<span class=\"badge role-main\">Main</span>"
+        : `<span class="badge role-unknown">${uiText("Unknown", "未知")}</span>`;
 
       return `
         <tr>
@@ -908,7 +1126,7 @@ function setupSse() {
 
   eventSource.onopen = () => {
     if (statusElement) {
-      statusElement.textContent = currentLanguage === "zh-TW" ? "即時串流連線中" : "Live Stream Connected";
+      statusElement.textContent = currentLanguage === "zh-TW" ? "本機服務已連線" : "Local service connected";
       statusElement.className = "status-badge connected";
     }
   };
@@ -925,6 +1143,7 @@ function setupSse() {
     fetchHourlyStats();
     fetchSettlementReport(currentSettlementPeriod);
     fetchResetEvents();
+    fetchDiagnostics();
 
     if (currentPage === 1) {
       fetchHistory();
@@ -938,7 +1157,7 @@ function setupSse() {
 
   eventSource.onerror = () => {
     if (statusElement) {
-      statusElement.textContent = currentLanguage === "zh-TW" ? "重新連線中..." : "Reconnecting...";
+      statusElement.textContent = currentLanguage === "zh-TW" ? "本機服務重新連線中..." : "Reconnecting local service...";
       statusElement.className = "status-badge connecting";
     }
   };
@@ -978,13 +1197,15 @@ async function exportCsv() {
       return;
     }
 
-    const headers = ["Timestamp", "Role", "Model", "TotalTokens", "CostUSD", "InputTokens", "CachedTokens", "OutputTokens", "ReasoningTokens", "WeeklyQuota", "SessionID"];
+    const headers = ["Timestamp", "Role", "Model", "TotalTokens", "CostUSD", "PricingSource", "PricingVersion", "InputTokens", "CachedTokens", "OutputTokens", "ReasoningTokens", "WeeklyQuota", "SessionID"];
     const rows = data.records.map((record) => [
       escapeCsvField(record.datetime),
-      escapeCsvField(record.agentRole || "main"),
+      escapeCsvField(normalizeAgentRole(record.agentRole)),
       escapeCsvField(record.model),
       escapeCsvField(record.totalTokens),
       escapeCsvField(record.costUsd ?? 0),
+      escapeCsvField(record.pricingSource || "unknown"),
+      escapeCsvField(record.pricingVersion || "unknown"),
       escapeCsvField(record.inputTokens),
       escapeCsvField(record.cachedInputTokens),
       escapeCsvField(record.outputTokens),
@@ -1019,10 +1240,11 @@ async function exportCsv() {
 fetchQuota = withRequestFeedback(fetchQuota);
 fetchSummary = withRequestFeedback(fetchSummary);
 fetchHourlyStats = withRequestFeedback(fetchHourlyStats);
-fetchSettlementReport = withRequestFeedback(fetchSettlementReport, { table: "settlement", columns: 8, buttons: [".btn-period"] });
+fetchSettlementReport = withRequestFeedback(fetchSettlementReport, { table: "settlement", columns: 10, buttons: [".btn-period"] });
 fetchResetEvents = withRequestFeedback(fetchResetEvents, { table: "resets", columns: 6 });
 fetchPlanChangeEvents = withRequestFeedback(fetchPlanChangeEvents, { table: "plans", columns: 5 });
 fetchHistory = withRequestFeedback(fetchHistory, { table: "history", columns: 11, buttons: ["#btn-prev-page", "#btn-next-page", "#btn-load-new-records", "#btn-reset-filters"] });
+fetchDiagnostics = withRequestFeedback(fetchDiagnostics);
 
 // Initialization
 document.addEventListener("DOMContentLoaded", () => {
@@ -1042,17 +1264,30 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchResetEvents();
   fetchPlanChangeEvents();
   fetchHistory();
+  fetchDiagnostics();
   setupSse();
 
   setInterval(tickCountdown, 1000);
+  setInterval(() => {
+    if (lastQuotaSnapshot) renderQuotaSnapshot(lastQuotaSnapshot);
+  }, 15_000);
 
   document.getElementById("btn-refresh").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     if (button.disabled) return;
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
-    const results = await Promise.all([fetchQuota(true), fetchSummary(), fetchHourlyStats(), fetchSettlementReport(currentSettlementPeriod), fetchResetEvents(), fetchPlanChangeEvents(), fetchHistory()]);
-    showFeedback(results.every(Boolean) ? uiText("Data refreshed.", "資料已更新。") : uiText("Some data could not be refreshed. Please retry.", "部分資料未能更新，請重試。"), results.every(Boolean) ? "success" : "danger");
+    const results = await Promise.all([fetchQuota(true), fetchSummary(), fetchHourlyStats(), fetchSettlementReport(currentSettlementPeriod), fetchResetEvents(), fetchPlanChangeEvents(), fetchHistory(), fetchDiagnostics()]);
+    const requestsSucceeded = results.every(Boolean);
+    const quotaIsFresh = lastQuotaTrust?.level === "fresh";
+    if (requestsSucceeded && quotaIsFresh) {
+      showFeedback(uiText("Data refreshed with a live quota snapshot.", "資料已更新，額度為即時快照。"));
+    } else if (requestsSucceeded) {
+      const reason = lastQuotaTrust?.errorReason ? ` ${lastQuotaTrust.errorReason}` : "";
+      showFeedback(`${uiText("Other data refreshed, but live quota was not confirmed.", "其他資料已更新，但未確認到即時額度。")}${reason}`, "warn");
+    } else {
+      showFeedback(uiText("Some data could not be refreshed. Please retry.", "部分資料未能更新，請重試。"), "danger");
+    }
     button.disabled = false;
     button.removeAttribute("aria-busy");
   });
@@ -1067,7 +1302,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!record) return;
     document.getElementById("record-dialog-title").textContent = uiText("Record details", "紀錄明細");
     document.getElementById("btn-close-details").textContent = uiText("Close", "關閉");
-    const fields = [["Session ID", record.sessionId], ["Thread ID", record.threadId], ["Turn ID", record.turnId], [uiText("Time", "時間"), record.datetime], [uiText("Model", "模型"), record.model], [uiText("Agent role", "代理人角色"), record.agentRole], ["Tokens", formatNumber(record.totalTokens)], [uiText("Estimated cost (USD)", "估算費用（美元）"), formatUsdDisplay(record.costUsd)]];
+    const fields = [["Session ID", record.sessionId], ["Thread ID", record.threadId], ["Turn ID", record.turnId], [uiText("Time", "時間"), record.datetime], [uiText("Model", "模型"), record.model], [uiText("Agent role", "代理人角色"), normalizeAgentRole(record.agentRole)], ["Tokens", formatNumber(record.totalTokens)], [uiText("Estimated cost (USD)", "估算費用（美元）"), formatUsdDisplay(record.costUsd)], [uiText("Stored pricing source", "已儲存定價來源"), record.pricingSource || "unknown"], [uiText("Stored pricing version", "已儲存定價版本"), record.pricingVersion || "unknown"]];
     document.getElementById("record-details").innerHTML = fields.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd>`).join("");
     document.getElementById("record-dialog").showModal();
   });

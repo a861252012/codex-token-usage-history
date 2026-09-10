@@ -3,6 +3,7 @@ import { unlinkSync, existsSync, chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { HistoryDatabase } from "../src/core/history-db.js";
+import { createSqliteDb } from "../src/core/sqlite-adapter.js";
 import type { TokenRecord, QuotaResetEvent, PlanChangeEvent } from "../src/core/types.js";
 
 describe("HistoryDatabase", () => {
@@ -99,7 +100,11 @@ describe("HistoryDatabase", () => {
     expect(summary.totalTokens).toBe(4500);
     expect(summary.subAgentTokens).toBe(3000);
     expect(summary.mainAgentTokens).toBe(1500);
+    expect(summary.unknownAgentTokens).toBe(0);
     expect(summary.estimatedCostUsd).toBeGreaterThan(0);
+    expect(summary.pricingProvenance).toHaveLength(1);
+    expect(summary.pricingProvenance[0].records).toBe(2);
+    expect(summary.pricingProvenance[0].source).not.toBe("unknown");
     expect(summary.byModel.length).toBe(1);
     expect(summary.byModel[0].model).toBe("gpt-6-astra");
   });
@@ -119,7 +124,7 @@ describe("HistoryDatabase", () => {
         outputTokens: 2000,
         reasoningOutputTokens: 0,
         totalTokens: 7000,
-        agentRole: "main",
+        agentRole: "unknown",
       },
       {
         timestamp: now - 5000,
@@ -142,6 +147,10 @@ describe("HistoryDatabase", () => {
     const settlements = db.getSettlementRecords("daily", 10);
     expect(settlements.length).toBe(1);
     expect(settlements[0].totalTokens).toBe(22000);
+    expect(settlements[0].mainAgentTokens).toBe(15000);
+    expect(settlements[0].subAgentTokens).toBe(0);
+    expect(settlements[0].unknownAgentTokens).toBe(7000);
+    expect(settlements[0].pricingProvenance[0].records).toBe(2);
     // 總量最大者應為 gpt-6-astra (15000 > 7000)
     expect(settlements[0].topModel).toBe("gpt-6-astra");
   });
@@ -171,6 +180,72 @@ describe("HistoryDatabase", () => {
 
     const latest = db.getLatestRecord();
     expect(latest?.costUsd).toBeGreaterThan(0);
+    expect(latest?.pricingSource).not.toBe("unknown");
+    expect(latest?.pricingVersion).not.toBe("unknown");
+  });
+
+  test("舊版預設 main 與既有成本來源保守遷移為 unknown，強制再索引只回填明確角色", async () => {
+    db.close();
+    for (const path of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+      if (existsSync(path)) unlinkSync(path);
+    }
+
+    const legacyDatabase = await createSqliteDb(dbPath);
+    legacyDatabase.exec(`
+      CREATE TABLE token_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL,
+        datetime TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        response_id TEXT,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        agent_role TEXT NOT NULL DEFAULT 'main',
+        cost_usd REAL NOT NULL DEFAULT 0.0,
+        five_hour_used_pct REAL,
+        weekly_used_pct REAL,
+        source_file TEXT,
+        UNIQUE(session_id, turn_id, model, timestamp)
+      )
+    `);
+    legacyDatabase.exec(`
+      INSERT INTO token_records (
+        timestamp, datetime, session_id, thread_id, turn_id, model,
+        input_tokens, total_tokens, agent_role, cost_usd, source_file
+      ) VALUES (
+        1000, '1970-01-01T00:00:01.000Z', 'legacy-session', 'legacy-thread',
+        'legacy-turn', 'gpt-6-astra', 100, 100, 'main', 1.23, '/tmp/legacy.jsonl'
+      )
+    `);
+    legacyDatabase.close();
+
+    db = new HistoryDatabase(dbPath);
+    await db.init();
+    const migrated = db.getLatestRecord();
+    expect(migrated?.agentRole).toBe("unknown");
+    expect(migrated?.costUsd).toBe(1.23);
+    expect(migrated?.pricingSource).toBe("unknown");
+    expect(migrated?.pricingVersion).toBe("unknown");
+
+    const record = {
+      ...migrated!,
+      id: undefined,
+      agentRole: "main" as const,
+      costUsd: undefined,
+      pricingSource: undefined,
+      pricingVersion: undefined,
+    };
+    expect(db.insertBatch([record], undefined, { updateExistingMetadata: true })).toBe(0);
+    const reindexed = db.getLatestRecord();
+    expect(reindexed?.agentRole).toBe("main");
+    expect(reindexed?.costUsd).toBe(1.23);
+    expect(reindexed?.pricingSource).toBe("unknown");
   });
 
   test("支援配額重置事件與方案變更事件之寫入與查詢", () => {

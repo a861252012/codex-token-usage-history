@@ -42,10 +42,28 @@ export interface QuotaSnapshot {
   additionalLimits: AdditionalQuotaLimit[];
   /** 可用重設信用額度次數 */
   resetCredits: number;
+  /** 相容數值欄位保留 0；只有此值為 true 才代表來源確實回傳可用張數。 */
+  resetCreditsKnown?: boolean;
   /** 資料來源: "wham" (官方 API), "cache" (本機快取), "fallback" */
   source: "wham" | "cache" | "fallback";
   /** fallback 失敗原因 (成功快照可省略；舊快取可能沒有此欄) */
   errorReason?: string | null;
+}
+
+export type AgentRole = "main" | "subagent" | "unknown";
+
+export type PricingSource =
+  | "user-config"
+  | "upstream-cache"
+  | "builtin"
+  | "fallback"
+  | "unknown";
+
+export interface PricingProvenanceBreakdown {
+  source: PricingSource;
+  version: string;
+  /** 使用此定價來源與版本的 Token 紀錄筆數 */
+  records: number;
 }
 
 export interface TokenRecord {
@@ -62,10 +80,14 @@ export interface TokenRecord {
   outputTokens: number;
   reasoningOutputTokens: number;
   totalTokens: number;
-  /** 代理人角色 (main 代表主對話，subagent 代表衍生子代理人) */
-  agentRole?: string;
+  /** 代理人角色；無明確來源證據時為 unknown */
+  agentRole?: AgentRole;
   /** 等值官方 API 美元金額 (USD) */
   costUsd?: number;
+  /** 此筆成本實際採用的定價來源；舊資料無法還原時為 unknown */
+  pricingSource?: PricingSource;
+  /** 此筆成本實際採用的定價版本；舊資料無法還原時為 unknown */
+  pricingVersion?: string;
   fiveHourUsedPercent?: number | null;
   weeklyUsedPercent?: number | null;
   // 向下相容別名
@@ -86,6 +108,7 @@ export interface ModelUsageStats {
 }
 
 export interface UsageSummary {
+  /** Token 紀錄筆數；不是外部 API 呼叫次數 */
   requests: number;
   totalTokens: number;
   inputTokens: number;
@@ -94,8 +117,10 @@ export interface UsageSummary {
   reasoningOutputTokens: number;
   mainAgentTokens: number;
   subAgentTokens: number;
+  unknownAgentTokens: number;
   estimatedCostUsd: number;
   formattedCostUsd: string;
+  pricingProvenance: PricingProvenanceBreakdown[];
   byModel: ModelUsageStats[];
   hourlyBurnRate: number;
   timeRange: {
@@ -110,7 +135,7 @@ export interface FilterOptions {
   sinceMs?: number;
   model?: string;
   sessionId?: string;
-  agentRole?: string;
+  agentRole?: AgentRole;
 }
 
 export interface FileScanCursor {
@@ -145,6 +170,7 @@ export interface SettlementRecord {
   periodKey: string;
   startDate: string;
   endDate: string;
+  /** Token 紀錄筆數；不是外部 API 呼叫次數 */
   requests: number;
   totalTokens: number;
   inputTokens: number;
@@ -153,8 +179,10 @@ export interface SettlementRecord {
   reasoningOutputTokens: number;
   mainAgentTokens: number;
   subAgentTokens: number;
+  unknownAgentTokens: number;
   estimatedCostUsd: number;
   formattedCostUsd: string;
+  pricingProvenance: PricingProvenanceBreakdown[];
   topModel: string;
 }
 

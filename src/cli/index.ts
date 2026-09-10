@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, accessSync, constants, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
@@ -95,6 +97,7 @@ function printHelpText(): void {
   console.log("  plans       帳號方案變更歷程");
   console.log("  history     消耗流水帳歷史紀錄");
   console.log("  index       掃描並索引 Session 檔案");
+  console.log("  doctor      唯讀環境診斷（不登入、不連網、不建立資料庫）");
   console.log("  pricing     顯示或同步模型定價");
   console.log("  reprice     依最新定價重算歷史金額");
   console.log("  prompt      輸出供 Shell Prompt 使用的狀態字串");
@@ -109,6 +112,40 @@ async function main(): Promise<void> {
 
   if (shouldPrintHelp(argumentList, commandName)) {
     printHelpText();
+    return;
+  }
+
+  if (commandName === "doctor") {
+    const { values } = parseArgs({ args: argumentList.slice(1), options: { json: { type: "boolean", default: false } } });
+    const dataDirectory = process.env.CODEX_HOME || join(homedir(), ".codex");
+    const paths = ["", "sessions", "archived_sessions", "auth.json", "token_usage_history.sqlite"].map((name) => {
+      const path = join(dataDirectory, name);
+      try {
+        const file = statSync(path);
+        const expectedDirectory = name === "" || name === "sessions" || name === "archived_sessions";
+        if (expectedDirectory ? !file.isDirectory() : !file.isFile()) return { name: name || "dataDirectory", path, status: "wrong-type" };
+        accessSync(path, constants.R_OK);
+        return { name: name || "dataDirectory", path, status: "readable" };
+      } catch (error) {
+        return { name: name || "dataDirectory", path, status: (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unreadable" };
+      }
+    });
+    let sqliteAvailable = Boolean(process.versions.bun);
+    if (!sqliteAvailable) {
+      try { await import("node:sqlite"); sqliteAvailable = true; } catch {}
+    }
+    const diagnostic = {
+      runtime: process.versions.bun ? `Bun ${process.versions.bun}` : `Node ${process.version}`,
+      platform: process.platform, architecture: process.arch, sqliteAvailable, dataDirectory, paths,
+      authenticationVerified: false,
+      notes: ["僅檢查路徑與讀取權限；不讀取認證內容、不驗證登入、不連網。", "缺少 archived_sessions 或尚未建立資料庫，不一定是錯誤。", "目前僅索引支援的 token_usage_record 事件；可執行 index --all --json 查看解析診斷。", "原生 UI 需 macOS 與 Swift 編譯；本指令不安裝或啟動服務。"],
+    };
+    if (values.json) console.log(JSON.stringify(diagnostic, null, 2));
+    else {
+      console.log(`[環境] ${diagnostic.runtime} / ${diagnostic.platform} ${diagnostic.architecture} / SQLite ${sqliteAvailable ? "可用" : "不可用"}`);
+      for (const path of paths) console.log(`[${path.status}] ${path.path}`);
+      for (const note of diagnostic.notes) console.log(`[說明] ${note}`);
+    }
     return;
   }
 
@@ -424,19 +461,35 @@ async function main(): Promise<void> {
       args: argumentList.slice(1),
       options: {
         all: { type: "boolean", short: "a", default: false },
+        force: { type: "boolean", default: false },
         days: { type: "string", short: "d", default: "7" },
+        json: { type: "boolean", default: false },
       },
     });
+
+    if (values.force && !values.all) {
+      console.error("[錯誤] --force 必須搭配 --all；重新讀取來源以補齊未辨識角色，不會重算已存金額。");
+      process.exitCode = 1;
+      return;
+    }
 
     const database = new HistoryDatabase();
     await database.init();
     const indexer = new SessionIndexer(database);
 
-    console.log(`[掃描] 開始索引 ${values.all ? "所有歷史" : `最近 ${values.days} 天`} Session 檔案...`);
+    if (!values.json) console.log(`[掃描] 開始索引 ${values.all ? "所有歷史" : `最近 ${values.days} 天`} Session 檔案...`);
     const scanResult = values.all
-      ? indexer.indexAll()
+      ? indexer.indexAll(values.force)
       : indexer.indexRecent(parseIntegerOrDefault(values.days, 7));
-    console.log(`[完成] 掃描 ${scanResult.filesScanned} 個檔案，新增索引 ${scanResult.recordsInserted} 筆紀錄 (耗時 ${scanResult.durationMs}ms)`);
+    const diagnostics = indexer.getDiagnostics();
+    if (values.json) console.log(JSON.stringify({ ...scanResult, newRecords: undefined, diagnostics }, null, 2));
+    else {
+      console.log(`[掃描結果] 掃描 ${scanResult.filesScanned} 個檔案，新增 ${scanResult.recordsInserted} 筆紀錄 (耗時 ${scanResult.durationMs}ms)`);
+      console.log(`[資料範圍] ${diagnostics.scope} / ${diagnostics.dataDirectory}`);
+      console.log(`[診斷] 讀取 ${diagnostics.filesRead}、未變更 ${diagnostics.filesUnchanged}、失敗 ${diagnostics.filesFailed}；無效行 ${diagnostics.invalidLines}、無效紀錄 ${diagnostics.invalidRecords}、其他事件 ${diagnostics.unsupportedEvents}`);
+      if (diagnostics.missingDirectories.length) console.log(`[缺少目錄] ${diagnostics.missingDirectories.join(", ")}`);
+      console.log("[說明] 零筆新增不代表沒有用量；請同時查看資料範圍、未變更與解析診斷。");
+    }
     database.close();
     return;
   }
@@ -455,6 +508,13 @@ async function main(): Promise<void> {
       },
       allowPositionals: true,
     });
+
+    const role = values.role;
+    if (role !== undefined && role !== "main" && role !== "subagent" && role !== "unknown") {
+      console.error("[錯誤] role 必須為 main、subagent 或 unknown。");
+      process.exitCode = 1;
+      return;
+    }
 
     const database = new HistoryDatabase();
     await database.init();
@@ -481,7 +541,7 @@ async function main(): Promise<void> {
     const { total, records } = database.queryRecords({
       limit,
       model: values.model,
-      agentRole: values.role,
+      agentRole: role,
       sinceMs: sinceTimestampMs,
     });
 
@@ -492,13 +552,13 @@ async function main(): Promise<void> {
     }
 
     if (values.csv) {
-      const headers = ["時間", "模型", "角色", "總Token", "輸入Token", "快取Token", "輸出Token", "推理Token", "等值金額(USD)", "週配額快照", "SessionID"];
+      const headers = ["時間", "模型", "角色", "總Token", "輸入Token", "快取Token", "輸出Token", "推理Token", "估算金額(USD)", "週配額快照", "SessionID", "定價來源", "定價版本"];
       console.log(headers.join(","));
       for (const record of records) {
         console.log([
           escapeCsvField(record.datetime),
           escapeCsvField(record.model),
-          escapeCsvField(record.agentRole || "main"),
+          escapeCsvField(record.agentRole || "unknown"),
           escapeCsvField(record.totalTokens),
           escapeCsvField(record.inputTokens),
           escapeCsvField(record.cachedInputTokens),
@@ -507,6 +567,8 @@ async function main(): Promise<void> {
           escapeCsvField(record.costUsd?.toFixed(4) ?? "0.0000"),
           escapeCsvField(record.weeklyUsedPercent ?? record.weeklyUsedPct ?? ""),
           escapeCsvField(record.sessionId),
+          escapeCsvField(record.pricingSource || "unknown"),
+          escapeCsvField(record.pricingVersion || "unknown"),
         ].join(","));
       }
       database.close();

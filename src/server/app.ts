@@ -232,6 +232,12 @@ export class DashboardServer {
       serverResponse.setHeader("Cache-Control", "no-store");
     }
 
+    if (pathname === "/api/diagnostics") {
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify(this.sessionIndexer.getDiagnostics()));
+      return;
+    }
+
     // 1. API: 即時配額狀態
     if (pathname === "/api/quota") {
       const forceRefresh = parsedUrl.searchParams.get("force") === "true";
@@ -274,6 +280,11 @@ export class DashboardServer {
       const offset = parseBoundedInteger(parsedUrl.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
       const model = parsedUrl.searchParams.get("model") || undefined;
       const role = parsedUrl.searchParams.get("role") || parsedUrl.searchParams.get("agent_role") || undefined;
+      if (role !== undefined && role !== "main" && role !== "subagent" && role !== "unknown") {
+        serverResponse.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+        serverResponse.end(JSON.stringify({ error: "agent_role must be main, subagent or unknown" }));
+        return;
+      }
       const sinceTimestampMs = parseOptionalTimestamp(parsedUrl.searchParams.get("since"));
 
       const historyData = this.databaseInstance.queryRecords({
