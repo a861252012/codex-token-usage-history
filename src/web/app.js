@@ -6,6 +6,93 @@ let totalHistoryRecords = 0;
 let currentFilterModel = "";
 let currentFilterAgentRole = "";
 let currentSettlementPeriod = "daily";
+let lastQuotaSnapshot = null;
+let filterDebounceTimer;
+let visibleHistoryRecords = [];
+
+function uiText(english, chinese) { return currentLanguage === "zh-TW" ? chinese : english; }
+
+function showFeedback(message, tone = "success") {
+  const feedback = document.getElementById("request-feedback");
+  feedback.textContent = message;
+  feedback.dataset.tone = tone;
+  feedback.hidden = false;
+}
+
+// Requests to the same resource supersede older filters; every request has a deadline.
+const resourceRequests = new Map();
+async function dashboardFetch(url) {
+  const key = url.split("?")[0];
+  resourceRequests.get(key)?.abort();
+  const controller = new AbortController();
+  resourceRequests.set(key, controller);
+  const timeout = setTimeout(() => controller.abort(new Error("Request timed out")), 15000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (resourceRequests.get(key) !== controller) throw new DOMException("Superseded", "AbortError");
+    return { json: async () => data, ok: true };
+  } finally {
+    clearTimeout(timeout);
+    if (resourceRequests.get(key) === controller) resourceRequests.delete(key);
+  }
+}
+
+function resetFilters() {
+  clearTimeout(filterDebounceTimer);
+  currentFilterModel = "";
+  currentFilterAgentRole = "";
+  currentPage = 1;
+  document.getElementById("filter-model").value = "";
+  document.getElementById("filter-agent-role").value = "";
+  return fetchHistory();
+}
+
+// Shared by all data panels: local skeletons, retry actions and request coalescing.
+function withRequestFeedback(task, { table, columns, buttons = [] } = {}) {
+  let pending;
+  let signature;
+  let version = 0;
+  return (...args) => {
+    const nextSignature = JSON.stringify([args, currentLanguage, ...(table === "history" ? [currentPage, currentFilterModel, currentFilterAgentRole] : [])]);
+    if (pending && signature === nextSignature) return pending;
+    signature = nextSignature;
+    const ticket = ++version;
+    const tbody = table && document.getElementById(`${table}-table-body`);
+    const controls = buttons.flatMap((selector) => [...document.querySelectorAll(selector)]);
+    controls.forEach((button) => { button.disabled = true; button.setAttribute("aria-busy", "true"); });
+    if (tbody) {
+      tbody.setAttribute("aria-busy", "true");
+      tbody.setAttribute("aria-label", uiText("Loading records", "正在載入紀錄"));
+      tbody.innerHTML = Array.from({ length: 4 }, () => `<tr>${'<td><div class="skeleton" aria-hidden="true"></div></td>'.repeat(columns)}</tr>`).join("");
+    }
+    const renderState = (error) => {
+      if (!tbody) return;
+      tbody.innerHTML = `<tr><td colspan="${columns}"><div class="empty-state"><strong>${error ? uiText("Unable to load records", "無法載入紀錄") : uiText("No records found", "目前沒有符合的紀錄")}</strong><p>${error ? uiText("Check the local service and try again.", "請確認本機服務正常後重試。") : uiText("Try resetting filters or index your local sessions with: codex-usage index --all", "可重設篩選；若尚未索引，請執行 codex-usage index --all。")}</p><button class="btn btn-secondary">${error ? uiText("Retry", "重新載入") : table === "history" ? uiText("Reset filters", "重設條件") : uiText("Refresh records", "重新查詢")}</button></div></td></tr>`;
+      tbody.querySelector("button").onclick = () => !error && table === "history" ? resetFilters() : wrappedRetry();
+    };
+    const wrappedRetry = () => table === "history" ? fetchHistory() : table === "settlement" ? fetchSettlementReport(currentSettlementPeriod) : table === "resets" ? fetchResetEvents() : fetchPlanChangeEvents();
+    pending = task(...args).then(() => {
+      if (ticket !== version) return;
+      if (tbody?.rows.length === 1 && tbody.rows[0].cells.length === 1) renderState(false);
+      return true;
+    }).catch((error) => {
+      if (ticket !== version || error.name === "AbortError") return false;
+      renderState(true);
+      showFeedback(uiText("Some data could not be loaded. Please retry.", "部分資料載入失敗，請重新載入。"), "danger");
+      return false;
+    }).finally(() => {
+      if (ticket !== version) return;
+      pending = null;
+      controls.forEach((button) => { button.disabled = false; button.removeAttribute("aria-busy"); });
+      tbody?.removeAttribute("aria-busy");
+      tbody?.removeAttribute("aria-label");
+      if (table === "history") updatePagination();
+    });
+    return pending;
+  };
+}
 
 // Countdown Target Timestamps (ms)
 let fiveHourResetTimestamp = 0;
@@ -43,8 +130,8 @@ const i18nDictionary = {
     btnWeekly: "Weekly",
     btnMonthly: "Monthly",
     btnYearly: "Yearly",
-    proUnlimitedTitle: "Pro Unlimited",
-    proUnlimitedDesc: "No 5-hour quota restriction on Pro tier. Only weekly cap applies.",
+    proUnlimitedTitle: "Weekly Window",
+    proUnlimitedDesc: "No 5-hour window was returned in this snapshot. Check the weekly quota below.",
     exportCsv: "Export CSV",
     prevPage: "Previous",
     nextPage: "Next",
@@ -82,8 +169,8 @@ const i18nDictionary = {
     btnWeekly: "每週結算",
     btnMonthly: "每月結算",
     btnYearly: "每年結算",
-    proUnlimitedTitle: "Pro 方案無限額度",
-    proUnlimitedDesc: "OpenAI Pro 方案不設 5 小時額度上限，僅依據週用量總額控管。",
+    proUnlimitedTitle: "週用量視窗",
+    proUnlimitedDesc: "此快照未提供五小時視窗，請參考週用量額度。",
     exportCsv: "匯出 CSV",
     prevPage: "上一頁",
     nextPage: "下一頁",
@@ -102,6 +189,7 @@ function setLanguage(targetLanguage) {
   });
 
   const texts = i18nDictionary[targetLanguage] || i18nDictionary.en;
+  document.documentElement.lang = targetLanguage;
 
   const updateText = (id, text) => {
     const element = document.getElementById(id);
@@ -109,6 +197,14 @@ function setLanguage(targetLanguage) {
   };
 
   updateText("app-title", texts.appTitle);
+  updateText("breadcrumb-current", uiText("Usage overview", "用量總覽"));
+  updateText("filter-title", uiText("History filters", "歷史紀錄篩選"));
+  updateText("filter-help", uiText("Applies to transaction history and CSV export. Overview cards remain unchanged.", "僅套用至歷史紀錄與 CSV 匯出，不影響總覽卡片與結算報表。"));
+  updateText("label-filter-model", uiText("Search model", "即時搜尋模型"));
+  updateText("label-filter-role", uiText("Agent role", "代理人角色"));
+  updateText("btn-reset-filters", uiText("Reset filters", "重設條件"));
+  updateText("link-history", uiText("View history", "查看歷史結果"));
+  updateText("th-hist-session", uiText("Actions", "操作"));
   updateText("app-subtitle", texts.appSubtitle);
   updateText("btn-refresh", texts.refreshBtn);
   updateText("label-card-five-hour", texts.cardFiveHour);
@@ -116,11 +212,19 @@ function setLanguage(targetLanguage) {
   updateText("label-five-hour-reset", texts.resetIn);
   updateText("label-five-hour-status", texts.statusLabel);
   updateText("label-card-weekly", texts.cardWeekly);
+  updateText("tag-weekly", texts.tagWeekly);
   updateText("label-weekly-reset", texts.resetCountdown);
   updateText("label-weekly-status", texts.statusLabel);
   updateText("label-card-today", texts.cardToday);
   updateText("tag-card-today", texts.tagToday);
-  updateText("label-today-cost", texts.todayCost);
+  const costLabel = document.getElementById("label-today-cost");
+  if (costLabel) {
+    const metaChild = costLabel.querySelector("#pricing-meta") || document.getElementById("pricing-meta");
+    costLabel.textContent = (texts.todayCost || "API Cost (USD):") + " ";
+    if (metaChild) {
+      costLabel.appendChild(metaChild);
+    }
+  }
   updateText("label-today-input", texts.todayInput);
   updateText("label-today-output", texts.todayOutput);
   updateText("label-today-agents", texts.todayAgents);
@@ -137,6 +241,15 @@ function setLanguage(targetLanguage) {
   updateText("btn-prev-page", texts.prevPage);
   updateText("btn-next-page", texts.nextPage);
   updateText("desc-pro-unlimited", texts.proUnlimitedDesc);
+  updateText("title-pro-window", texts.proUnlimitedTitle);
+  document.querySelectorAll("#filter-agent-role option").forEach((option) => {
+    option.textContent = option.value === "subagent" ? texts.subAgentOnly : option.value === "main" ? texts.mainAgentOnly : texts.allAgents;
+  });
+  const connectionStatus = document.getElementById("connection-status");
+  if (connectionStatus?.classList.contains("connected")) {
+    connectionStatus.textContent = targetLanguage === "zh-TW" ? "即時串流連線中" : "Live Stream Connected";
+  }
+  if (lastQuotaSnapshot) renderQuotaSnapshot(lastQuotaSnapshot);
 
   const periodButtons = document.querySelectorAll(".btn-period");
   periodButtons.forEach((button) => {
@@ -256,13 +369,15 @@ function updateWindowCard(windowPrefix, quotaWindow) {
   const textStatus = document.getElementById(`text-${windowPrefix}-status`);
 
   if (!quotaWindow) {
+    if (windowPrefix === "five-hour") fiveHourResetTimestamp = 0;
+    if (windowPrefix === "weekly") weeklyResetTimestamp = 0;
     if (progressBar) progressBar.style.width = "0%";
-    if (textUsed) textUsed.textContent = currentLanguage === "zh-TW" ? "無限制" : "Unlimited";
-    if (textRemaining) textRemaining.textContent = currentLanguage === "zh-TW" ? "無限制" : "Unlimited";
+    if (textUsed) textUsed.textContent = currentLanguage === "zh-TW" ? "尚無資料" : "Unavailable";
+    if (textRemaining) textRemaining.textContent = "—";
     if (textReset) textReset.textContent = "—";
     if (textStatus) {
-      textStatus.textContent = "Optimal";
-      textStatus.className = "meta-value ok";
+      textStatus.textContent = "—";
+      textStatus.className = "meta-value";
     }
     return;
   }
@@ -323,6 +438,7 @@ function updateWindowCard(windowPrefix, quotaWindow) {
 
 function renderQuotaSnapshot(quotaSnapshot) {
   if (!quotaSnapshot) return;
+  lastQuotaSnapshot = quotaSnapshot;
 
   const isProTier = quotaSnapshot.source !== "fallback" && (
     quotaSnapshot.proTier === true || isProPlanType(quotaSnapshot.planType)
@@ -331,7 +447,7 @@ function renderQuotaSnapshot(quotaSnapshot) {
   const standardFiveHour = document.getElementById("standard-five-hour-content");
   const proFiveHour = document.getElementById("pro-five-hour-content");
   if (standardFiveHour && proFiveHour) {
-    if (isProTier) {
+    if (isProTier && !quotaSnapshot.fiveHour) {
       standardFiveHour.style.display = "none";
       proFiveHour.style.display = "block";
     } else {
@@ -388,12 +504,12 @@ function renderQuotaSnapshot(quotaSnapshot) {
 
 async function fetchQuota(force = false) {
   try {
-    const response = await fetch(`/api/quota${force ? "?force=true" : ""}`);
+    const response = await dashboardFetch(`/api/quota${force ? "?force=true" : ""}`);
     if (!response.ok) return;
     const quotaSnapshot = await response.json();
     renderQuotaSnapshot(quotaSnapshot);
   } catch (caughtError) {
-    console.error("Failed to fetch quota snapshot:", caughtError);
+    throw caughtError;
   }
 }
 
@@ -401,7 +517,7 @@ async function fetchSummary() {
   try {
     const todayMidnight = new Date();
     todayMidnight.setHours(0, 0, 0, 0);
-    const response = await fetch(`/api/summary?since=${todayMidnight.getTime()}`);
+    const response = await dashboardFetch(`/api/summary?since=${todayMidnight.getTime()}`);
     if (!response.ok) return;
     const summary = await response.json();
 
@@ -452,13 +568,13 @@ async function fetchSummary() {
       }
     }
   } catch (caughtError) {
-    console.error("Failed to fetch summary:", caughtError);
+    throw caughtError;
   }
 }
 
 async function fetchHourlyStats() {
   try {
-    const response = await fetch("/api/stats/hourly?hours=24");
+    const response = await dashboardFetch("/api/stats/hourly?hours=24");
     if (!response.ok) return;
     const hourlyData = await response.json();
 
@@ -577,20 +693,20 @@ async function fetchHourlyStats() {
       });
     });
   } catch (caughtError) {
-    console.error("Failed to fetch hourly stats:", caughtError);
+    throw caughtError;
   }
 }
 
 async function fetchSettlementReport(period = "daily") {
   try {
     currentSettlementPeriod = period;
-    const response = await fetch(`/api/settlement?period=${encodeURIComponent(period)}&limit=14`);
+    const response = await dashboardFetch(`/api/settlement?period=${encodeURIComponent(period)}&limit=14`);
     if (!response.ok) return;
     const data = await response.json();
 
     const infoTag = document.getElementById("settlement-info-tag");
     if (infoTag) {
-      infoTag.textContent = `${period.toUpperCase()} (14 entries)`;
+      infoTag.textContent = `${period.toUpperCase()} (${(data.settlements || data.records || []).length} ${uiText("entries", "筆")})`;
     }
 
     const tbody = document.getElementById("settlement-table-body");
@@ -617,13 +733,13 @@ async function fetchSettlementReport(period = "daily") {
       `;
     }).join("");
   } catch (caughtError) {
-    console.error("Failed to fetch settlement report:", caughtError);
+    throw caughtError;
   }
 }
 
 async function fetchResetEvents() {
   try {
-    const response = await fetch("/api/resets?limit=20");
+    const response = await dashboardFetch("/api/resets?limit=20");
     if (!response.ok) return;
     const data = await response.json();
 
@@ -660,13 +776,13 @@ async function fetchResetEvents() {
       `;
     }).join("");
   } catch (caughtError) {
-    console.error("Failed to fetch reset events:", caughtError);
+    throw caughtError;
   }
 }
 
 async function fetchPlanChangeEvents() {
   try {
-    const response = await fetch("/api/plan-changes?limit=20");
+    const response = await dashboardFetch("/api/plan-changes?limit=20");
     if (!response.ok) return;
     const planChanges = await response.json();
 
@@ -709,7 +825,7 @@ async function fetchPlanChangeEvents() {
       `;
     }).join("");
   } catch (caughtError) {
-    console.error("Failed to fetch plan change events:", caughtError);
+    throw caughtError;
   }
 }
 
@@ -724,11 +840,13 @@ async function fetchHistory() {
       url += `&agent_role=${encodeURIComponent(currentFilterAgentRole)}`;
     }
 
-    const response = await fetch(url);
+    const response = await dashboardFetch(url);
     if (!response.ok) return;
     const data = await response.json();
 
     totalHistoryRecords = data.total;
+    visibleHistoryRecords = data.records;
+    updatePagination();
     document.getElementById("history-total-count").textContent = `${formatNumber(data.total)} records`;
 
     const tbody = document.getElementById("history-table-body");
@@ -739,7 +857,7 @@ async function fetchHistory() {
       return;
     }
 
-    tbody.innerHTML = data.records.map((record) => {
+    tbody.innerHTML = data.records.map((record, index) => {
       const timeString = record.datetime ? record.datetime.replace("T", " ").slice(0, 19) : "—";
       const weeklyQuota = record.weeklyUsedPercent !== null && record.weeklyUsedPercent !== undefined
         ? `${record.weeklyUsedPercent}%`
@@ -764,14 +882,14 @@ async function fetchHistory() {
           <td>${formatNumber(record.outputTokens)}</td>
           <td style="color: var(--text-secondary);">${formatNumber(record.reasoningOutputTokens)}</td>
           <td>${weeklyQuota}</td>
-          <td style="font-family: monospace; font-size: 11px;">${escapeHtml(shortId)}</td>
+          <td><button class="btn btn-sm" data-record-index="${index}" aria-label="${uiText("View record", "查看紀錄")} ${escapeHtml(shortId)}">${uiText("View", "查看")}</button></td>
         </tr>
       `;
     }).join("");
 
     updatePagination();
   } catch (caughtError) {
-    console.error("Failed to fetch history records:", caughtError);
+    throw caughtError;
   }
 }
 
@@ -839,6 +957,10 @@ function escapeCsvField(fieldValue) {
 }
 
 async function exportCsv() {
+  const button = document.getElementById("btn-export-csv");
+  if (button.getAttribute("aria-busy") === "true") return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
   try {
     let url = "/api/history?limit=5000";
     if (currentFilterModel) {
@@ -848,10 +970,11 @@ async function exportCsv() {
       url += `&agent_role=${encodeURIComponent(currentFilterAgentRole)}`;
     }
 
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (!data.records || data.records.length === 0) {
-      alert("No usage records available to export");
+      showFeedback(uiText("No records to export. Reset filters and try again.", "目前沒有可匯出的紀錄，請重設條件後重試。"), "danger");
       return;
     }
 
@@ -884,10 +1007,22 @@ async function exportCsv() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(downloadUrl);
+    showFeedback(uiText(`CSV prepared: ${data.records.length} records (maximum 5,000).`, `CSV 已產生：${data.records.length} 筆（上限 5,000 筆）。`));
   } catch (caughtError) {
-    alert(`Export failed: ${caughtError.message}`);
+    showFeedback(uiText("Export failed. Please retry.", "匯出失敗，請稍後重試。"), "danger");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
   }
 }
+
+fetchQuota = withRequestFeedback(fetchQuota);
+fetchSummary = withRequestFeedback(fetchSummary);
+fetchHourlyStats = withRequestFeedback(fetchHourlyStats);
+fetchSettlementReport = withRequestFeedback(fetchSettlementReport, { table: "settlement", columns: 8, buttons: [".btn-period"] });
+fetchResetEvents = withRequestFeedback(fetchResetEvents, { table: "resets", columns: 6 });
+fetchPlanChangeEvents = withRequestFeedback(fetchPlanChangeEvents, { table: "plans", columns: 5 });
+fetchHistory = withRequestFeedback(fetchHistory, { table: "history", columns: 11, buttons: ["#btn-prev-page", "#btn-next-page", "#btn-load-new-records", "#btn-reset-filters"] });
 
 // Initialization
 document.addEventListener("DOMContentLoaded", () => {
@@ -911,23 +1046,37 @@ document.addEventListener("DOMContentLoaded", () => {
 
   setInterval(tickCountdown, 1000);
 
-  document.getElementById("btn-refresh").addEventListener("click", () => {
-    fetchQuota(true);
-    fetchSummary();
-    fetchHourlyStats();
-    fetchSettlementReport(currentSettlementPeriod);
-    fetchResetEvents();
-    fetchPlanChangeEvents();
-    fetchHistory();
+  document.getElementById("btn-refresh").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    const results = await Promise.all([fetchQuota(true), fetchSummary(), fetchHourlyStats(), fetchSettlementReport(currentSettlementPeriod), fetchResetEvents(), fetchPlanChangeEvents(), fetchHistory()]);
+    showFeedback(results.every(Boolean) ? uiText("Data refreshed.", "資料已更新。") : uiText("Some data could not be refreshed. Please retry.", "部分資料未能更新，請重試。"), results.every(Boolean) ? "success" : "danger");
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
   });
 
   document.getElementById("btn-export-csv").addEventListener("click", exportCsv);
 
   const modelInput = document.getElementById("filter-model");
-  let debounceTimer;
+  document.getElementById("history-table-body").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-record-index]");
+    if (!button) return;
+    const record = visibleHistoryRecords[Number(button.dataset.recordIndex)];
+    if (!record) return;
+    document.getElementById("record-dialog-title").textContent = uiText("Record details", "紀錄明細");
+    document.getElementById("btn-close-details").textContent = uiText("Close", "關閉");
+    const fields = [["Session ID", record.sessionId], ["Thread ID", record.threadId], ["Turn ID", record.turnId], [uiText("Time", "時間"), record.datetime], [uiText("Model", "模型"), record.model], [uiText("Agent role", "代理人角色"), record.agentRole], ["Tokens", formatNumber(record.totalTokens)], [uiText("Estimated cost (USD)", "估算費用（美元）"), formatUsdDisplay(record.costUsd)]];
+    document.getElementById("record-details").innerHTML = fields.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd>`).join("");
+    document.getElementById("record-dialog").showModal();
+  });
+  document.getElementById("btn-reset-filters").addEventListener("click", resetFilters);
   modelInput.addEventListener("input", (event) => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
+    clearTimeout(filterDebounceTimer);
+    currentFilterModel = event.target.value.trim();
+    currentPage = 1;
+    filterDebounceTimer = setTimeout(() => {
       currentFilterModel = event.target.value.trim();
       currentPage = 1;
       fetchHistory();

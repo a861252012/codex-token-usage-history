@@ -20,6 +20,15 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install Development Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck and Test
+        run: |
+          bun run typecheck
+          bun test
+          git diff --check
+
       - name: Verify Bundle Build
         run: |
           npm run build
@@ -31,4 +40,4 @@ jobs:
 
       - name: Verify CLI Basic Commands
         run: |
-          bin/codex-usage prompt
+          CODEX_HOME="$RUNNER_TEMP/codex-usage-smoke" bin/codex-usage prompt

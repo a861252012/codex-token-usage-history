@@ -53,8 +53,26 @@ xml_escape() {
   printf '%s' "$s"
 }
 
+RUNTIME_BIN=""
+if command -v bun >/dev/null 2>&1; then
+  RUNTIME_BIN="$(dirname "$(command -v bun)")"
+elif command -v node >/dev/null 2>&1; then
+  RUNTIME_BIN="$(dirname "$(command -v node)")"
+fi
+
+SYSTEM_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+if [ -n "$RUNTIME_BIN" ]; then
+  case ":$SYSTEM_PATH:" in
+    *":$RUNTIME_BIN:"*) COMBINED_PATH="$SYSTEM_PATH" ;;
+    *) COMBINED_PATH="$RUNTIME_BIN:$SYSTEM_PATH" ;;
+  esac
+else
+  COMBINED_PATH="$SYSTEM_PATH"
+fi
+
 ESCAPED_BIN="$(xml_escape "$SCRIPT_DIRECTORY/bin/codex-usage")"
 ESCAPED_LOG="$(xml_escape "$HOME/.codex/token-usage-server.log")"
+ESCAPED_PATH="$(xml_escape "$COMBINED_PATH")"
 
 cat << PLIST_EOF > "$PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -63,6 +81,11 @@ cat << PLIST_EOF > "$PLIST_PATH"
 <dict>
   <key>Label</key>
   <string>com.codex.token-usage-monitor</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$ESCAPED_PATH</string>
+  </dict>
   <key>ProgramArguments</key>
   <array>
     <string>$ESCAPED_BIN</string>
@@ -76,9 +99,9 @@ cat << PLIST_EOF > "$PLIST_PATH"
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>$ESCAPED_LOG</string>
+    <string>$ESCAPED_LOG</string>
   <key>StandardErrorPath</key>
-  <string>$ESCAPED_LOG</string>
+    <string>$ESCAPED_LOG</string>
 </dict>
 </plist>
 PLIST_EOF

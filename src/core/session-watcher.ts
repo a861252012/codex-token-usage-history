@@ -53,6 +53,7 @@ export class SessionWatcher extends EventEmitter {
         this.setupDateDirectoryWatchers();
         const scanResult = this.indexer.indexRecent(1);
         if (scanResult.recordsInserted > 0) {
+          this.emit("newRecords", scanResult.newRecords);
           const quotaSnapshot = await this.quotaClient.getQuotaSnapshot(true);
           this.emit("quotaUpdated", quotaSnapshot);
         } else {
