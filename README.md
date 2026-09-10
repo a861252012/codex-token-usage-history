@@ -1,357 +1,225 @@
-# Codex Token & Quota Usage Monitor (`codex-token-usage-history`)
+# Codex Token & Quota Monitor
+
+把 Codex 配額、Token 歷史與估算成本集中在本機：Web Dashboard、終端機、macOS 懸浮球與 MCP 共用 SQLite 資料。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: macOS](https://img.shields.io/badge/Platform-macOS-lightgrey.svg)](https://apple.com)
-[![Engine: Node.js 22+ / Bun](https://img.shields.io/badge/Engine-Node.js%2022%2B%20%7C%20Bun-green.svg)](https://bun.sh)
-[![Zero-Dependency](https://img.shields.io/badge/Dependencies-Zero%20NPM-brightgreen.svg)](#architecture-highlights)
-[![OpenAI Open Source Grant Candidate](https://img.shields.io/badge/OpenAI-Open%20Source%20Grant%20Candidate-orange.svg)](#about-the-project)
+[![CI](https://github.com/a861252012/codex-token-usage-history/actions/workflows/ci.yml/badge.svg)](https://github.com/a861252012/codex-token-usage-history/actions/workflows/ci.yml)
 
-[English](#overview) | [正體中文說明 (Traditional Chinese)](#正體中文說明-traditional-chinese)
+[快速開始](#快速開始) · [操作截圖](#操作截圖) · [常用指令](#常用指令) · [資料與限制](#資料與限制) · [English](#english)
 
----
+這是社群專案，並非 OpenAI 官方產品。金額是依專案定價表換算的 **API 等值估算**，不是 ChatGPT 訂閱帳單，也不代表實際扣款。
 
-## Overview
+## 操作截圖
 
-**Codex Token Usage History** is a high-performance, zero-external-dependency quota monitor, token transaction recorder, multi-period cost accounting engine, and ultra-compact desktop companion HUD designed exclusively for **macOS** and heavy **OpenAI Codex / ChatGPT** power users.
+以下是實際啟動此專案、以瀏覽器操作後擷取的 PNG，並非設計稿。畫面使用 `bun run demo` 產生的示範紀錄與配額，帳號為 `demo@example.com`；不含真實使用者的帳號或 Session 資料。
 
-Whether you code inside **Codex CLI**, interact with the **Codex macOS Desktop App**, or automate workflows across autonomous subAgents, this project guarantees **real-time visibility** over your rate limits, remaining allowances, official USD API cost estimations, rate limit reset credit history, and token burn rates—without polling friction or battery drain.
+### 配額與每日用量
 
----
+查看五小時／每週視窗、今日 Token、估算成本與主／子代理人用量。右上角可切換英文與正體中文。
 
-## Key Highlights
+![正體中文 Dashboard：配額、每日用量與每日結算](docs/screenshots/dashboard-zh-tw.png)
 
-### 1. Smart Adaptive Quota Engine (Pro Tier vs. Standard Tier)
-OpenAI applies different rate limiting tiers: users spending $100+/mo or subscribed to higher-tier Pro plans do not have a 5-hour quota cap.
-- **Pro Tier (Auto-Detected)**: Clean, distraction-free display focusing purely on the **7-day rolling window**. Unnecessary "5h: 100%" clutter and redundant status labels are eliminated.
-- **Standard Tier**: Simultaneously tracks both the **5-hour burst window** and the **weekly rolling window** with precise countdown timers.
-- **Rate Limit Reset Credits & Periodic Reset Tracking**: Automatically detects when OpenAI delivers reset vouchers or triggers periodic quota resets, persisting the timeline in SQLite.
+<details>
+<summary>English dashboard</summary>
 
-### 2. Ultra-Compact Desktop Companion Orb (Always-on-Top Circular Ring Widget)
-A sleek, unobtrusive macOS circular glassmorphism widget (`bin/codex-hud`):
-- **Circular Progress Ring**: 56px precision circular orb with smooth `CAShapeLayer` arc progress indicating remaining allowance.
-- **Electric Blue Default & Full Custom Palette**: Shipped out of the box in iconic **Electric Blue** (`#0A84FF`), with 7 built-in presets (Cyber Cyan, Emerald Green, Neon Purple, Sunset Amber, Radiant Pink, Pure White) and a native macOS system **Color Picker** for choosing any bespoke hue. Preference is automatically persisted to `~/.codex/hud_config.json`.
-- **4-Tier Widget & Font Scaling**: Freely toggle between **Small** (46px), **Default** (56px), **Large** (68px), and **Extra Large** (84px). The orb geometry, stroke line-width, and typography scale synchronously.
-- **Account Plan Transition Tracking**: Automatically captures subscription changes (e.g. upgrades/downgrades between Free, Plus, Pro, Team), displaying event history directly in the detailed report, Web dashboard, and context menu.
-- **Pro Tier Perfection**: Clean, distraction-free display focusing purely on the **7-day weekly quota** (e.g. `7d` / `37%`), completely eliminating redundant "5h: 100%" noise. Non-Pro mode displays both 5-hour and 7-day limits compactly.
-- **Desktop Pet Feeding Animation**: Spring scale bounce and teal pulse animation displaying `+XXk` tokens fed in real time.
-- **Rich Context Menu (Right-Click)**:
-  - Detailed quota breakdowns, countdowns, and plan change history.
-  - Today's cumulative token usage and estimated USD cost.
-  - **Accent Color Selection**: Switch presets, launch the system color picker, or toggle smart red alerts when quota drops below 20%.
-  - **Widget Size Selection**: Small (46px), Default (56px), Large (68px), Extra Large (84px).
-  - Instant toggle between Pro Mode (Weekly Only) and Standard Mode (5h + Weekly).
-  - One-click launcher for the Web Dashboard.
-- **Left-Click Quick View Cycle**: Cycle between Quota %, Today's Tokens, and Today's USD Cost.
-- **Freely Draggable**: Position anywhere on your screen as an intelligent desktop companion.
+![English dashboard with sample quota and usage](docs/screenshots/dashboard-en.png)
 
-### 3. Comprehensive Accounting & Multi-Period Settlement
-- **Daily, Weekly, Monthly, and Yearly Settlement**: Aggregate token volume, requests, top models, and official USD cost calculations across any historical period.
-- **SubAgent Attribution**: Explicitly tracks and isolates tokens consumed by background subAgents versus primary interactive threads.
-- **Official API Pricing Translation**: Built-in pricing tables covering `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.3-codex-spark`, and legacy models with prompt, cache-hit, and reasoning token weights.
+</details>
 
-### 4. Zero NPM Dependencies & Superior Performance
-- Powered by native **Node.js 22+ (`node:sqlite`)** or **Bun (`bun:sqlite`)** with SQLite WAL mode.
-- Incremental file cursor indexing: parses over 8,000+ local session turns in under 4 seconds on initial launch, and under 15ms on subsequent updates.
-- Native Swift Mach-O binaries (`bin/codex-hud` and `bin/codex-menubar`) consuming under 15MB RAM and near 0% CPU.
+### 切換每週報表
 
----
+點選「每週結算」，比較各週的 Token、估算成本與代理人用量。
 
-## Architecture
+![實際點選每週結算後的報表](docs/screenshots/weekly-report.png)
 
-```
-+---------------------------------------------------------------------------------------+
-|                                    Data Core Layer                                    |
-|  - QuotaClient: Direct WHAM API client with automated quota reset & voucher detection |
-|  - PricingCalculator: Official API pricing weights & token-to-USD conversion          |
-|  - HistoryDatabase: SQLite WAL engine with multi-period settlements & zero SELECT *   |
-|  - SessionIndexer: Incremental scanner for ~/.codex/sessions/**/*.jsonl with subAgents|
-|  - SessionWatcher: Real-time file watcher & event broadcaster                         |
-+---------------------------------------------------------------------------------------+
-                                           |
-                                       +--------------------+--------------+--------------+--------------------+
-                                       |                    |                             |                    |
-                                       v                    v                             v                    v
-                                [Circular Orb HUD]   [macOS Menu Bar]             [Codex CLI Suite]      [Model Context Protocol]
-                                - Native Swift Mach-O- Native Cocoa Item          - codex-usage status   - Native MCP Server
-                                - Always-on-Top      - [7d: 37%]                  - codex-usage live     - For Codex Desktop App
-                                - Circular ring arc  - Detailed drop-down         - codex-usage report   - Direct chat tools
-                                - Feeding bounce     - Low RAM usage              - codex-usage resets   - Quota & history
-                                - Right-click menu
-                                                                                   |
-                                                                                   v
-                                                                        [Modern Web Dashboard]
-                                                                        - Glassmorphism dark UI
-                                                                        - EN / 繁中 dual language
-                                                                        - Live SSE updates
-                                                                        - 24-hour SVG charts
-                                                                        - CSV export & breakdowns
-```
+### 篩選 subagent 與匯出 CSV
 
----
+在頁首篩選卡片選擇「僅 subAgent」，可搭配即時模型搜尋，再按「查看歷史結果」。篩選只影響歷史與 CSV，不影響總覽和結算；「重設條件」可還原全部紀錄。歷史表格的「查看」會開啟完整 Session／Thread／Turn 明細，按 Escape 可關閉。
 
-## Getting Started
+「匯出 CSV」採用目前篩選條件，最多 5,000 筆。載入時表格顯示骨架列；空結果提供重設操作，失敗則可重試。重新整理與匯出期間會停用按鈕，避免重複送出。本介面沒有刪除或批次異動功能。
 
-### Prerequisites
+![實際選擇 subagent 篩選後的歷史紀錄](docs/screenshots/subagent-history.png)
 
-- **macOS** 12.0+ (Apple Silicon or Intel)
-- **Node.js** 22.0.0+ (with native `node:sqlite`) or **Bun** 1.1.0+
-- **OpenAI Codex CLI** or desktop setup (generating `~/.codex/sessions/**/*.jsonl`)
+<details>
+<summary>窄視窗顯示（390px）</summary>
 
-### One-Line Automated Installation
+<img src="docs/screenshots/dashboard-mobile.png" alt="390px 寬度的 Dashboard，標題與操作列換行顯示" width="390">
+
+這是本機瀏覽器的窄視窗測試；Dashboard 仍僅允許 loopback 連線，並非開放給手機透過區網存取。
+
+</details>
+
+## 快速開始
+
+### 先看示範，不需登入
+
+準備 Bun。原生 HUD／選單列另需 macOS 與 Xcode Command Line Tools（`swiftc`）。
 
 ```bash
 git clone https://github.com/a861252012/codex-token-usage-history.git
 cd codex-token-usage-history
+bun install --frozen-lockfile
+bun run demo
+```
+
+開啟 [http://127.0.0.1:10201](http://127.0.0.1:10201)。示範在臨時目錄產生 14 天資料，正常結束時清除；使用 `Ctrl+C` 停止。原生 HUD 不會隨示範啟動。
+
+### 使用自己的 Codex 紀錄
+
+```bash
+# 索引 sessions 與 archived_sessions
+./bin/codex-usage index --all
+
+# 查看配額與今日用量
+./bin/codex-usage status
+
+# 啟動 Web Dashboard
+./bin/codex-usage dashboard
+```
+
+預設網址為 [http://127.0.0.1:10200](http://127.0.0.1:10200)。配額讀取需要可用的本機 `auth.json`；沒有登入資料時，歷史查詢仍可使用，配額會採快取或 fallback。程式不會替你登入。
+
+不想自動開啟瀏覽器，或預設 port 已被占用：
+
+```bash
+./bin/codex-usage dashboard --no-open --port 10202
+```
+
+`--port 0` 會讓作業系統分配可用 port，實際網址會印在終端機。停止服務使用 `Ctrl+C`。
+
+### Node.js 路徑
+
+核心也支援具有 `node:sqlite` 的 Node.js。先確認目前執行環境是否支援：
+
+```bash
+node -e 'require("node:sqlite"); console.log("SQLite available")'
+npm install
+npx tsc
+node --no-warnings dist/cli/index.js dashboard
+```
+
+`bun test` 需要 Bun。`npm run build` 目前也使用 Bun 打包；僅使用 Node.js 時請採 `npx tsc`。本次本機驗證使用 Bun 1.2.17、Node.js 22.14.0 與 Apple Silicon macOS。
+
+## 常用指令
+
+從專案根目錄執行；完成全域捷徑設定後，可將 `./bin/codex-usage` 換成 `codex-usage`。
+
+| 目的 | 指令 |
+| --- | --- |
+| 配額與今日用量 | `./bin/codex-usage status` |
+| 機器可讀狀態 | `./bin/codex-usage status --json` |
+| 即時終端監控 | `./bin/codex-usage live` |
+| 最近 50 筆紀錄 | `./bin/codex-usage history --limit 50` |
+| 子代理人歷史 | `./bin/codex-usage history --role subagent --json` |
+| 匯出 CSV | `./bin/codex-usage history --csv --limit 5000` |
+| 最近 14 日結算 | `./bin/codex-usage report --period daily --limit 14` |
+| 每週／每月／每年結算 | `./bin/codex-usage report --period weekly`（或 `monthly`、`yearly`） |
+| 配額重置／方案異動 | `./bin/codex-usage resets` / `./bin/codex-usage plans` |
+| 完整重新掃描 | `./bin/codex-usage index --all` |
+| 查看／更新定價 | `./bin/codex-usage pricing` / `./bin/codex-usage pricing update` |
+| 重算已存歷史的估算成本 | `./bin/codex-usage reprice` |
+| Shell 狀態字串 | `./bin/codex-usage prompt` |
+| 指令總覽 | `./bin/codex-usage --help` |
+
+`reprice` 會修改歷史估算成本。定價順序是使用者設定 → 社群快取 → 內建值 → fallback。重置與方案異動是程式觀察快照差異後記錄，並非帳號完整稽核紀錄，也不會替你兌換重置券。
+
+## macOS 懸浮球與選單列
+
+```bash
+bash scripts/build-hud.sh
+bash scripts/build-menubar.sh
+./bin/codex-usage hud
+./bin/codex-menubar &
+```
+
+懸浮球可拖曳；左鍵切換配額、今日 Token 與估算成本；右鍵調整尺寸、顏色與顯示模式。Pro 模式是顯示偏好，不是方案額度保證；實際配額以回傳快照與帳號介面為準。
+
+HUD 編譯預設採目前 CPU 架構，可用 `ARCH=arm64` 或 `ARCH=x86_64` 指定。跨架構執行仍需相容的系統環境。
+
+### 選用：安裝整合
+
+```bash
 bash scripts/install.sh
 ```
 
-The installer will:
-1. Compile the native TypeScript engine for both Bun and Node.js.
-2. Compile native macOS Swift Mach-O binaries for Apple Silicon / Intel (`bin/codex-hud`, `bin/codex-menubar`).
-3. Automatically configure Model Context Protocol (MCP) in your `~/.codex/config.toml`.
-4. Perform an initial lightning-fast scan of historical session files.
+此腳本會編譯 TypeScript／Swift、建立 `~/.local/bin/codex-usage` 捷徑、嘗試加入 MCP 設定、索引最近七天資料，並產生 LaunchAgent plist。它不會自動載入 LaunchAgent。請先閱讀 [安裝腳本](scripts/install.sh)，確認這些本機設定變更符合需求。
 
-Once installed, `codex-usage`, `codex-hud`, and `codex-menubar` are immediately accessible from any terminal.
+全域指令找不到時，確認 `~/.local/bin` 已在 `PATH`，或使用專案內的 `./bin/codex-usage`。安裝腳本只建立 `codex-usage` 全域捷徑，HUD 與選單列執行檔位於專案 `bin/`。
 
----
+## MCP
 
-## Terminal & GUI Usage Guide
-
-### 1. Ultra-Compact Desktop Companion Orb (`codex-usage hud`)
-
-Launch the always-on-top circular ring orb widget:
-
-```bash
-codex-usage hud
-# Or run the compiled Mach-O binary in background:
-./bin/codex-hud &
-```
-
-- **Default Pro Display**: Displays a 56px circular glassmorphism orb with a circular progress arc and weekly remaining allowance (e.g. `7d` / `37%`).
-- **Left-Click View Cycling**: Cycles through remaining percentage, today's total tokens (e.g. `186.7k`), and today's USD cost (e.g. `$0.42`).
-- **Right-Click (Context Menu)**:
-  - Inspect detailed remaining percentages and countdowns.
-  - View today's total request count and USD cost.
-  - Switch display mode between Pro Mode (Weekly only) and Standard Mode (5h + Weekly).
-  - Open the Web Dashboard in your default browser.
-
-### 2. Instant CLI Overview (`codex-usage status`)
-
-```bash
-codex-usage
-```
-
-Example Output (Adaptive Pro Tier):
-```
-==============================================================================
-Codex Real-Time Quota Status (Source: Official API)
-==============================================================================
-  Account       : developer@example.com (Plan: prolite)
-
-  5-Hour Quota  : [Pro Unlimited - Weekly Rolling Cap Applies]
-  Weekly Quota  : [█████████████░░░░░░░] 63% used (37% remaining) | Reset: 5d 22h
-  Reset Credits : 1 available
-==============================================================================
-
-Today's Token Usage (Since 00:00)
-------------------------------------------------------------------------------
-  Total Requests : 1,252 calls
-  Total Tokens   : 186,692,502 tokens
-  Input / Cached : 186,436,871 / 182,031,616 (cached)
-  Output / Reason: 255,631 / 10,692 (reasoning)
-  Estimated Cost : $37.420 USD (Official API Pricing)
-  Agent Breakdown: Main 186,692,502 / SubAgent 0 tokens
-  Hourly Burn    : 9,382,700 tokens/hr
-==============================================================================
-```
-
-### 3. Multi-Period Settlement Reports (`codex-usage report`)
-
-Generate multi-period token accounting and USD cost statements:
-
-```bash
-# Daily statement (Default: last 14 days)
-codex-usage report --period daily --limit 14
-
-# Weekly statement (Last 8 weeks)
-codex-usage report --period weekly --limit 8
-
-# Monthly statement (Last 12 months)
-codex-usage report --period monthly --limit 12
-
-# Yearly statement
-codex-usage report --period yearly
-
-# Export as JSON for scripting/dashboards
-codex-usage report --period daily --json
-```
-
-### 4. Quota Resets & Voucher History (`codex-usage resets`)
-
-Inspect OpenAI quota reset events and rate limit reset credit transactions:
-
-```bash
-codex-usage resets --limit 20
-```
-
-### 5. Live Fullscreen Terminal TUI (`codex-usage live`)
-
-```bash
-codex-usage live
-```
-
-- In-place flicker-free terminal updates.
-- Real-time countdown clock ticks every second.
-- Live streaming log of incoming turns as you chat with Codex.
-- Hotkeys: `r` to force refresh, `q` to quit.
-
-### 6. Shell Prompt Integration (zsh / bash)
-
-Add to `~/.zshrc`:
-
-```bash
-codex_quota_prompt() {
-  codex-usage prompt 2>/dev/null
-}
-RPROMPT="$(codex_quota_prompt) $RPROMPT"
-```
-
-Pro users will see `[Codex 7d: 37%]`, while standard users will see `[Codex 5h: 100% | 7d: 37%]`.
-
-### 7. Unified Comprehensive Dashboard (`codex-usage dashboard`)
-
-All dashboard interfaces are consolidated into a single intuitive command:
-
-```bash
-# Launch modern real-time Web Dashboard (automatically opens browser)
-codex-usage dashboard
-
-# Or switch to terminal TUI mode:
-codex-usage dashboard --terminal
-
-# Or generate multi-period financial settlement statement:
-codex-usage dashboard --report --period weekly
-```
-
-Visit `http://127.0.0.1:10200`:
-- Dark glassmorphism interface with language toggle (**EN / 繁中**).
-- Adaptive Pro cards (automatically hides redundant 5h 100% meters for Pro tier).
-- 24-hour token burn histogram rendered in pure SVG.
-- Interactive multi-period settlement tables.
-- Subscription plan upgrade/downgrade transition history.
-- RFC 4180-compliant CSV export with subAgent filters.
-
-### 8. Dynamic API Pricing & Repricing (`codex-usage pricing`)
-
-Accurately tracks OpenAI equivalent API costs using a robust four-tier pricing chain:
-
-```bash
-# View active pricing catalog, current version, and decision sources
-codex-usage pricing
-
-# Pull the latest global community pricing catalog (3,200+ models from LiteLLM)
-codex-usage pricing update
-
-# Batch-recalculate all historical records in SQLite with the latest pricing table
-codex-usage reprice
-```
-
-- **Four-Tier Hierarchy**: User Overrides (`~/.codex/pricing.json`) -> Upstream Community Cache (`~/.codex/pricing_cache.json`) -> Built-in Baseline -> Safe Fallback.
-- **Zero-Blocking Sync**: Updates run silently in the background without slowing down CLI or UI interactions.
-- **Exact & Longest Prefix Matching**: Eliminates prefix collision errors between models like `gpt-4` vs `gpt-4o` vs `gpt-4o-mini`.
-
-### 9. Native Codex App & Claude Desktop Integration (MCP)
-
-The installer automatically writes to `~/.codex/config.toml`:
+此專案提供 stdio MCP server。手動整合的設定範例（請換成實際專案絕對路徑）：
 
 ```toml
 [mcp_servers.codex_token_usage]
-command = "/Users/your-username/.local/bin/codex-usage"
+command = "/absolute/path/codex-token-usage-history/bin/codex-usage"
 args = ["mcp"]
 enabled = true
 ```
 
-Available Tools:
-1. `get_codex_quota`: Real-time remaining quota, countdowns, and reset credits.
-2. `get_codex_usage_history`: Filterable transaction log supporting subAgent isolation.
-3. `get_codex_settlement_report`: Multi-period financial settlement statements.
-4. `get_codex_reset_events`: Timeline of quota reset events and voucher grants.
+提供六個工具：`get_codex_quota`、`get_codex_usage_history`、`get_codex_settlement_report`、`get_codex_reset_events`、`get_codex_plan_changes`、`get_codex_pricing_info`。
 
----
+歷史與結算查詢會先增量索引完整 Session 目錄。首次執行可能較久；後續依檔案修改時間與大小略過未改變的檔案。
 
-## Project Structure
+## 資料與限制
 
-```
-codex-token-usage-history/
-├── .github/workflows/ci.yml   # Multi-engine GitHub Actions CI workflow
-├── bin/
-│   ├── codex-usage            # Main POSIX executable entry point
-│   ├── codex-hud              # Modern circular ring orb widget HUD
-│   └── codex-menubar          # Native macOS Menu Bar companion
-├── src/
-│   ├── core/
-│   │   ├── types.ts           # Unified DTOs with backwards-compatible aliases
-│   │   ├── quota-client.ts    # Direct WHAM API client & reset event detector
-│   │   ├── pricing-calculator.ts # Official token pricing matrix & USD conversion
-│   │   ├── sqlite-adapter.ts  # Node 22+ / Bun unified SQLite adapter
-│   │   ├── history-db.ts      # Multi-period settlements, subAgents, zero SELECT *
-│   │   ├── session-indexer.ts # Incremental JSONL parser with subAgent tags
-│   │   └── session-watcher.ts # Real-time date-bucketed file watcher
-│   ├── cli/
-│   │   ├── index.ts           # CLI command router
-│   │   ├── formatters.ts      # Terminal formatters & settlement layout
-│   │   └── live-monitor.ts    # Dynamic TUI monitor
-│   ├── server/app.ts          # HTTP & SSE server implementation
-│   ├── mcp/server.ts          # Standard Model Context Protocol server
-│   ├── floating-hud/main.swift# Circular ring orb widget with right-click menu
-│   ├── menubar/main.swift     # Native Cocoa menu bar application
-│   └── web/
-│       ├── index.html         # Modern glassmorphism dashboard (EN / 繁中)
-│       ├── app.js             # Client logic, i18n dictionaries, SSE listener
-│       └── style.css          # Deep midnight sleek dark mode styling
-├── scripts/
-│   ├── install.sh             # Zero-config automated setup script
-│   ├── build-hud.sh           # Swift compiler script for the circular HUD orb
-│   ├── build-menubar.sh       # Swift compiler script for the menu bar app
-│   └── setup-codex-hook.sh    # MCP & CLI symlink configuration script
-├── CONTRIBUTING.md            # Contribution guidelines & coding conventions
-├── SECURITY.md                # Security policy & vulnerability disclosures
-├── LICENSE                    # MIT License
-└── package.json
+核心資料路徑預設為 `~/.codex`，可用 `CODEX_HOME` 指定；原生 UI 與安裝腳本部分路徑仍固定使用 `~/.codex`。
+
+| 資料 | 用途 |
+| --- | --- |
+| `auth.json` | 配額查詢的本機認證來源 |
+| `sessions/`、`archived_sessions/` | 本機 JSONL 紀錄 |
+| `token_usage_history.sqlite` | 歷史、索引游標與觀察到的事件 |
+| `codex_quota_snapshot.json` | 最近配額快照 |
+| `pricing.json`、`pricing_cache.json` | 自訂與社群定價 |
+| `hud_config.json` | 懸浮球偏好 |
+
+- 索引器目前從 `token_usage_record` 事件取得用量；不保證支援所有 Codex 版本的日誌格式。查不到資料時，先確認來源格式，再執行 `index --all`。
+- 主／子代理人歸屬取決於來源 metadata；缺少標記時不能保證辨識完整。
+- 配額來自程式使用的 WHAM 端點，端點或認證方式變更可能導致查詢失敗。快取可能已過期；沒有資料不等於無限額度。
+- 定價來源可能是自訂、社群、內建或 fallback，不能當成官方最新報價或實際帳單。
+- 核心無第三方 runtime npm 套件；開發仍使用 TypeScript 與 Node 型別，截圖工具另需 Playwright。
+- 配額查詢會連線至 OpenAI；定價同步會讀取 GitHub 上的 LiteLLM 資料。此工具不是完全離線程式。
+- Dashboard 僅監聽 loopback，並檢查 Host／Origin／跨站請求；不要用反向代理將它公開上網。安全政策見 [SECURITY.md](SECURITY.md)。
+
+## 開發與驗證
+
+```bash
+bun install --frozen-lockfile
+bun test
+bun run typecheck
+bun run build
+bash scripts/build-hud.sh
+bash scripts/build-menubar.sh
+git diff --check
 ```
 
----
+GitHub Actions 會執行測試、型別檢查、JS 打包與 Swift 編譯。
 
-## 正體中文說明 (Traditional Chinese)
+### 重拍操作截圖
 
-### 專案特色
+Playwright 是選用工具，僅用於瀏覽器驗證與 PNG 擷取。準備可由 Node 載入的 `playwright` 套件及 Chromium 後：
 
-1. **極簡圓形環狀進度靈動球 (Always-on-Top Circular Ring Orb HUD)**：
-   - 56px × 56px 精緻正圓形毛玻璃 Widget，置頂懸浮於所有視窗之上，擺脫長條扁平外觀。
-   - **右上角快速關閉按鈕 (✕)**：右上角配備精巧微型關閉按鈕，平時微透明低調，游標懸停（Hover）時平滑浮現並轉為警示紅，點擊即可一秒退出懸浮球。
-   - **預設科技藍與自訂色彩**：出廠預設為質感**科技電光藍**（Electric Blue `#0A84FF`），並內建 7 款預設主題色（賽博青藍、翡翠綠、賽博紫、日落橘、亮粉紅、極簡白），更可直接喚起 macOS 原生系統調色盤（Color Picker）自訂任意色彩，偏好設定自動持久化於 `~/.codex/hud_config.json`。
-   - **4 檔尺寸與字體自由切換**：支援**小 (46px)**、**預設 (56px)**、**大 (68px)**、**超大 (84px)** 四種檔位，圓形幾何、進度線寬與字體大小等比例同步縮放。
-   - **環狀進度條**：以 QuartzCore 繪製順時針動態進度弧線，支援智慧低電量（<20%）轉紅警示切換。
-   - **Pro 用戶極致精簡**：自動識別 Pro / 100$+ 方案，僅顯示週用量（例如上方標籤 `7d`，中心數字 `37%`），消除無意義的「5h: 100%」與贅述文字。非 Pro 模式則精巧並列 5h 與 7d。
-   - **桌面寵物級進食反饋**：Codex 消耗 Token 時觸發彈性縮放跳動並微光顯示 `+XXk`。
-   - **多模式切換與右鍵選單**：左鍵點擊在週配額、今日總 Token、今日美金金額循環切換；右鍵彈出完整配額數據、方案異動紀錄與尺寸/配色控制選單，支援一鍵喚起完整儀表板。
-2. **全方位整合儀表板單一指令 (`codex-usage dashboard`)**：
-   - 儀表板指令全數匯總成單一指令：`codex-usage dashboard`（或 `npm run dashboard`）！
-   - 預設直接開啟現代化 Web 即時儀表板並自動彈出瀏覽器。
-   - 支援 `--terminal`（或 `-t`）切換為全螢幕 TUI 動態監控儀表板。
-   - 支援 `--report`（或 `-r`）切換為終端機多週期結算報表儀表板。
-3. **多週期結算體系 (日/週/月/年) 與方案升降級紀錄**：
-   - 隨時產生完整的 Token 與官方美金結算報表，並同步呈現帳號方案升級/降級歷程。
-   - 執行 `codex-usage plans` 可單獨檢視方案歷程紀錄。
-4. **OpenAI 配額重置事件與重置券紀錄**：
-   - 自動捕捉週期性重置與重置券（Reset Credits）發送/消耗紀錄，支援 `codex-usage resets` 隨時回溯。
-5. **subAgent 消耗分離標記**：
-   - 區分主程式與背景 subAgent 的 Token 佔比與花費。
-6. **Codex APP 直接對話支援 (MCP)**：
-   - 於對話中直接詢問「目前剩餘額度」、「本週消耗結算」、「帳號方案歷程」等。
+```bash
+# 終端機 1：啟動示範
+bun run demo
 
----
+# 終端機 2：操作 Dashboard 並擷取畫面
+node scripts/capture-screenshots.cjs
+```
+
+若 Playwright 裝在獨立工具目錄，可透過 `NODE_PATH` 指向該目錄的 `node_modules`。腳本驗證語系切換、定價標示、每週結算、subagent 篩選、CSV 下載與窄視窗溢位，並更新 `docs/screenshots/`。它使用獨立瀏覽器，不讀取日常瀏覽器的登入狀態。
+
+## English
+
+Codex Token & Quota Monitor is a community-maintained local usage dashboard with CLI, macOS HUD/menu bar, and stdio MCP interfaces. It indexes supported local JSONL events into SQLite and displays quota snapshots, usage history, agent attribution, and estimated API-equivalent costs.
+
+Start with `bun install --frozen-lockfile` and `bun run demo`, then open `http://127.0.0.1:10201`. The screenshots above are actual browser captures of the running application with synthetic demo data. Stop with Ctrl+C.
+
+For your own data, run `./bin/codex-usage index --all`, then `./bin/codex-usage dashboard`. The normal dashboard uses port 10200. Quota requests require readable local authentication; history remains available independently. Native macOS tools require Swift.
+
+Costs are estimates, not subscription bills or authoritative current prices. Log formats and quota endpoints can change. Missing quota data must not be interpreted as unlimited usage. This is not an official OpenAI product.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE) - Copyright (c) 2026 a861252012. All rights reserved.
+[MIT](LICENSE).

@@ -105,6 +105,14 @@ export class QuotaClient {
     return `${minutes}分 ${remainingSeconds}秒`;
   }
 
+  private createStaleSnapshot(baseSnapshot: QuotaSnapshot, failureReason: string): QuotaSnapshot {
+    return (this.cachedSnapshot = {
+      ...baseSnapshot,
+      source: "cache",
+      errorReason: failureReason,
+    });
+  }
+
   /**
    * 從 ~/.codex/auth.json 讀取認證 Token
    */
@@ -136,13 +144,17 @@ export class QuotaClient {
 
     const authTokens = this.readAuthTokens();
     if (!authTokens) {
-      return this.cachedSnapshot || this.getEmptyFallback("無法讀取認證資訊 (未登入 Codex)");
+      if (this.cachedSnapshot) {
+        return this.createStaleSnapshot(this.cachedSnapshot, "尚未於 ~/.codex/auth.json 找到有效登入憑證");
+      }
+      return this.getEmptyFallback("尚未於 ~/.codex/auth.json 找到有效登入憑證");
     }
 
     const abortController = new AbortController();
     const timeoutIdentifier = setTimeout(() => abortController.abort(), DEFAULT_TIMEOUT_MS);
-    try {
+    timeoutIdentifier.unref?.();
 
+    try {
       const httpResponse = await fetch("https://chatgpt.com/backend-api/wham/usage", {
         headers: {
           "Authorization": `Bearer ${authTokens.accessToken}`,
@@ -151,10 +163,13 @@ export class QuotaClient {
         },
         signal: abortController.signal,
       });
+
       if (!httpResponse.ok) {
-        // 如果遠端端點回傳錯誤，使用快取
-        if (this.cachedSnapshot) return this.cachedSnapshot;
-        return this.getEmptyFallback(`遠端 API 回應代碼: ${httpResponse.status}`);
+        const failureReason = `遠端 API 回應代碼: ${httpResponse.status}`;
+        if (this.cachedSnapshot) {
+          return this.createStaleSnapshot(this.cachedSnapshot, failureReason);
+        }
+        return this.getEmptyFallback(failureReason);
       }
 
       const declaredLength = Number(httpResponse.headers.get("content-length"));
@@ -171,9 +186,12 @@ export class QuotaClient {
       this.cachedSnapshot = newSnapshot;
       this.persistCache(newSnapshot);
       return newSnapshot;
-    } catch {
+    } catch (caughtError: any) {
       // 網路連線逾時或失敗時，優先回傳已儲存的快取
-      if (this.cachedSnapshot) return this.cachedSnapshot;
+      const failureReason = caughtError?.message || "無法連線至 OpenAI 配額伺服器";
+      if (this.cachedSnapshot) {
+        return this.createStaleSnapshot(this.cachedSnapshot, failureReason);
+      }
       return this.getEmptyFallback("無法連線至 OpenAI 配額伺服器");
     } finally {
       clearTimeout(timeoutIdentifier);

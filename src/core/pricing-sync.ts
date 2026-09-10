@@ -190,8 +190,9 @@ export async function syncPricingFromUpstream(force = false): Promise<SyncPricin
 
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), 6000); // 6 秒逾時保護
-  try {
+  timeoutHandle.unref?.();
 
+  try {
     const response = await fetch(UPSTREAM_PRICING_URL, {
       signal: controller.signal,
       headers: {

@@ -8,6 +8,7 @@
     "codex-usage": "bin/codex-usage"
   },
   "scripts": {
+    "demo": "bun scripts/demo.ts",
     "build": "bun build src/cli/index.ts --target node --outdir dist/cli",
     "start": "node --no-warnings dist/cli/index.js",
     "dashboard": "node --no-warnings dist/cli/index.js dashboard",

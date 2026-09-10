@@ -99,7 +99,12 @@ export class SessionIndexer {
         if (payloadData.provenance?.model) {
           currentModel = payloadData.provenance.model;
         }
-        if (payloadData.agent_role === "subagent" || payloadData.agent_type === "subagent") {
+        if (
+          payloadData.agent_role === "subagent" ||
+          payloadData.agent_type === "subagent" ||
+          payloadData.parent_thread_id ||
+          payloadData.source?.subagent
+        ) {
           currentAgentRole = "subagent";
         }
       } else if (eventType === "turn_context") {
@@ -108,7 +113,7 @@ export class SessionIndexer {
         }
         if (payloadData.role === "subagent" || payloadData.agent_role === "subagent" || payloadData.subagent_id) {
           currentAgentRole = "subagent";
-        } else {
+        } else if (payloadData.role === "main" || payloadData.agent_role === "main") {
           currentAgentRole = "main";
         }
       } else if (eventType === "event_msg") {
@@ -217,15 +222,10 @@ export class SessionIndexer {
       }
 
       const { records, fileMtime, fileSize } = this.parseFile(filePath);
-      const insertedCount = this.database.insertBatch(records);
+      const newRecords: TokenRecord[] = [];
+      const insertedCount = this.database.insertBatch(records, (record) => newRecords.push(record));
       this.database.updateCursor(filePath, fileMtime, fileSize, records.length);
 
-      let newRecords: TokenRecord[] = [];
-      if (insertedCount === records.length) {
-        newRecords = records;
-      } else if (insertedCount > 0) {
-        newRecords = records.slice(-insertedCount);
-      }
       return { insertedCount, newRecords };
     } catch {
       return { insertedCount: 0, newRecords: [] };
@@ -235,23 +235,26 @@ export class SessionIndexer {
   /**
    * 快速索引近期檔案 (預設最近 7 天)
    */
-  public indexRecent(days = 7): { filesScanned: number; recordsInserted: number; durationMs: number } {
+  public indexRecent(days = 7): { filesScanned: number; recordsInserted: number; durationMs: number; newRecords: TokenRecord[] } {
     const startTimeMilliseconds = Date.now();
     const sinceMilliseconds = startTimeMilliseconds - days * 86400 * 1000;
     const sessionDirectory = join(this.codexHome, "sessions");
 
     const candidateFiles = this.findJsonlFiles(sessionDirectory, sinceMilliseconds);
     let recordsInsertedCount = 0;
+    const allNewRecords: TokenRecord[] = [];
 
     for (const singleFilePath of candidateFiles) {
-      const { insertedCount } = this.indexFile(singleFilePath);
+      const { insertedCount, newRecords } = this.indexFile(singleFilePath);
       recordsInsertedCount += insertedCount;
+      for (const record of newRecords) allNewRecords.push(record);
     }
 
     return {
       filesScanned: candidateFiles.length,
       recordsInserted: recordsInsertedCount,
       durationMs: Date.now() - startTimeMilliseconds,
+      newRecords: allNewRecords,
     };
   }
 
