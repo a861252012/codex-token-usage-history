@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync, statSync } from "node:fs";
 import { join, extname, resolve, relative, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { QuotaClient } from "../core/quota-client.js";
@@ -388,8 +388,16 @@ export class DashboardServer {
 
     // 9. 靜態檔案服務 (Web 儀表板，具備記憶體快取與安全路徑校驗)
     const relativeFilePath = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
-    const staticDirectory = resolveWebStaticDirectoryPath();
-    const absoluteFilePath = resolve(staticDirectory, relativeFilePath);
+    const staticDirectory = realpathSync(resolveWebStaticDirectoryPath());
+    const requestedFilePath = resolve(staticDirectory, relativeFilePath);
+    let absoluteFilePath: string;
+    try {
+      absoluteFilePath = realpathSync(requestedFilePath);
+    } catch {
+      serverResponse.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      serverResponse.end("找不到指定的靜態檔案");
+      return;
+    }
     const relativePath = relative(staticDirectory, absoluteFilePath);
 
     if (
@@ -397,7 +405,7 @@ export class DashboardServer {
       || relativePath.startsWith("..")
       || relativePath.startsWith(`..${sep}`)
       || isAbsolute(relativePath)
-      || !existsSync(absoluteFilePath)
+      || !statSync(absoluteFilePath).isFile()
     ) {
       serverResponse.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       serverResponse.end("找不到指定的靜態檔案");
