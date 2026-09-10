@@ -36,10 +36,9 @@ bun run demo
 ### 读取自己的 Codex 记录
 
 ```bash
-./bin/codex-usage doctor
-./bin/codex-usage index --all --json
 ./bin/codex-usage dashboard
 ```
+服务启动时自动导入完整历史，之后增量更新，无需先执行索引命令。
 
 打开 [http://127.0.0.1:10200](http://127.0.0.1:10200)
 
@@ -67,6 +66,8 @@ bun run demo
 ## macOS
 
 需要 Xcode Command Line Tools。悬浮窗可拖动，左键切换指标，右键调整设置。
+右键勾选“登录时自动启动”，下次登录 Mac 就会打开；再次点击可取消。移动项目后请重新勾选。
+Dashboard 的悬浮球设置可调整更新间隔：默认 5 秒，仅限 1～300 的整数，最迟于下一轮更新生效。
 
 ```bash
 bash scripts/build-hud.sh

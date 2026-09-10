@@ -72,7 +72,7 @@ function withRequestFeedback(task, { table, columns, buttons = [] } = {}) {
     }
     const renderState = (error) => {
       if (!tbody) return;
-      tbody.innerHTML = `<tr><td colspan="${columns}"><div class="empty-state"><strong>${error ? uiText("Unable to load records", "無法載入紀錄") : uiText("No records found", "目前沒有符合的紀錄")}</strong><p>${error ? uiText("Check the local service and try again.", "請確認本機服務正常後重試。") : uiText("Try resetting filters or index your local sessions with: codex-usage index --all", "可重設篩選；若尚未索引，請執行 codex-usage index --all。")}</p><button class="btn btn-secondary">${error ? uiText("Retry", "重新載入") : table === "history" ? uiText("Reset filters", "重設條件") : uiText("Refresh records", "重新查詢")}</button></div></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${columns}"><div class="empty-state"><strong>${error ? uiText("Unable to load records", "無法載入紀錄") : uiText("No records found", "目前沒有符合的紀錄")}</strong><p>${error ? uiText("Check the local service and try again.", "請確認本機服務正常後重試。") : uiText("Try resetting filters. Local history is imported automatically when the service starts.", "可重設篩選；服務啟動時會自動匯入本機歷史。")}</p><button class="btn btn-secondary">${error ? uiText("Retry", "重新載入") : table === "history" ? uiText("Reset filters", "重設條件") : uiText("Refresh records", "重新查詢")}</button></div></td></tr>`;
       tbody.querySelector("button").onclick = () => !error && table === "history" ? resetFilters() : wrappedRetry();
     };
     const wrappedRetry = () => table === "history" ? fetchHistory() : table === "settlement" ? fetchSettlementReport(currentSettlementPeriod) : table === "resets" ? fetchResetEvents() : fetchPlanChangeEvents();
@@ -202,6 +202,10 @@ function setLanguage(targetLanguage) {
   };
 
   updateText("app-title", texts.appTitle);
+  updateText("label-hud-settings", targetLanguage === "zh-TW" ? "懸浮球設定" : "HUD settings");
+  updateText("label-hud-interval", targetLanguage === "zh-TW" ? "懸浮球更新間隔（秒）" : "HUD refresh interval (seconds)");
+  updateText("hud-interval-help", targetLanguage === "zh-TW" ? "限 1～300 的整數，預設 5 秒。最晚於懸浮球下一輪更新套用；後台即時推播不變。" : "1–300 seconds, default 5. Applies by the next HUD refresh. Dashboard live updates are unchanged.");
+  updateText("btn-save-hud-settings", targetLanguage === "zh-TW" ? "儲存" : "Save");
   updateText("breadcrumb-current", uiText("Usage overview", "用量總覽"));
   updateText("link-top-history", uiText("History", "歷史紀錄"));
   updateText("label-quota-source", uiText("Source", "來源"));
@@ -254,8 +258,8 @@ function setLanguage(targetLanguage) {
   updateText("label-diagnostics-range", uiText("Range parsed this scan", "本輪解析資料範圍"));
   updateText("label-diagnostics-errors", uiText("Skipped / failed", "略過／失敗"));
   updateText("diagnostics-limit-note", uiText("These values describe only this local service process's latest scan. Unchanged files are not reread, so the parsed range is not the database's full history range.", "這些數值只描述本機服務程序的最近一輪掃描。未變更檔案不會重讀，因此本輪解析範圍不等於資料庫完整歷史範圍。"));
-  updateText("label-first-use-title", uiText("No completed local-service scan is confirmed yet.", "尚未確認本機服務完成任何一輪掃描。"));
-  updateText("label-first-use-copy", uiText("Run codex-usage index --all to import configured local session history, then refresh the dashboard data. The CLI runs separately and does not change this service's last-scan scope to all.", "請執行 codex-usage index --all 匯入已設定的本機 session 歷史，再重新整理儀表板資料。CLI 是另一個程序，不會把本機服務的最近掃描 scope 改成 all。"));
+  updateText("label-first-use-title", uiText("Loading local history…", "正在載入本機歷史…"));
+  updateText("label-first-use-copy", uiText("History is imported automatically when the dashboard service starts. No terminal command is needed.", "Dashboard 服務啟動時會自動匯入歷史，不需要手動執行指令。"));
   updateText("th-unknown-tokens", uiText("Unknown Role", "未知角色"));
   updateText("th-requests", uiText("Records", "紀錄筆數"));
   updateText("th-pricing-source", uiText("Stored Pricing", "已儲存定價"));
@@ -1027,7 +1031,15 @@ function renderDiagnostics(diagnostics) {
     note.textContent = `${scope}: ${scopeDescriptions[scope]}.${missingText}`;
   }
   if (onboarding) {
-    onboarding.hidden = Boolean(diagnostics?.lastSuccessfulScanAt) && scope !== "none" && Number(diagnostics?.filesDiscovered || 0) > 0;
+    onboarding.hidden = isKnown && !hasWarnings && Number(diagnostics?.filesDiscovered || 0) > 0;
+    document.getElementById("label-first-use-title").textContent = !isKnown
+      ? uiText("Unable to confirm history import", "無法確認歷史匯入狀態")
+      : Number(diagnostics.filesDiscovered) === 0
+        ? uiText("No local history found", "尚未找到本機歷史")
+        : uiText("History imported with warnings", "歷史已匯入，部分檔案需注意");
+    document.getElementById("label-first-use-copy").textContent = !isKnown
+      ? uiText("Check the local service, then click Refresh to retry.", "請確認本機服務正常，再按重新整理重試。")
+      : uiText("History is imported automatically. Check the data directory and skipped/failed counts above if records are missing.", "歷史會自動匯入；若缺少紀錄，請檢查上方資料目錄與略過／失敗筆數。");
   }
 }
 
@@ -1247,8 +1259,55 @@ fetchHistory = withRequestFeedback(fetchHistory, { table: "history", columns: 11
 fetchDiagnostics = withRequestFeedback(fetchDiagnostics);
 
 // Initialization
+async function loadHudSettings() {
+  const input = document.getElementById("hud-interval");
+  try {
+    const response = await dashboardFetch("/api/hud-settings");
+    const settings = await response.json();
+    if (!input.dataset.edited) input.value = settings.refreshIntervalSeconds;
+  } catch {
+    if (!input.dataset.edited) showFeedback(uiText("Could not read the saved interval. Showing default 5 seconds; you can edit and save it.", "無法讀取已存間隔，目前顯示預設 5 秒；可直接修改並儲存。"), "warn");
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   setLanguage(currentLanguage);
+  loadHudSettings();
+  const intervalInput = document.getElementById("hud-interval");
+  intervalInput.addEventListener("input", () => {
+    intervalInput.dataset.edited = "true";
+    intervalInput.setCustomValidity("");
+  });
+  document.getElementById("hud-settings-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = document.getElementById("btn-save-hud-settings");
+    if (button.disabled) return;
+    const value = Number(intervalInput.value);
+    if (!/^\d+$/.test(intervalInput.value) || !Number.isInteger(value) || value < 1 || value > 300) {
+      intervalInput.setCustomValidity(uiText("Enter an integer from 1 to 300.", "請輸入 1～300 的整數。"));
+      intervalInput.reportValidity();
+      return;
+    }
+    intervalInput.dataset.edited = "true";
+    button.disabled = intervalInput.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch("/api/hud-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshIntervalSeconds: value }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      intervalInput.value = (await response.json()).refreshIntervalSeconds;
+      showFeedback(uiText("Saved. Applies by the next HUD refresh.", "已儲存，最晚於懸浮球下一輪更新套用。"));
+    } catch {
+      showFeedback(uiText("Save was not confirmed. Your input is kept; you can save again.", "未確認儲存成功，已保留輸入內容，可再次儲存。"), "danger");
+    } finally {
+      button.disabled = intervalInput.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  });
 
   document.querySelectorAll(".btn-lang").forEach((button) => {
     button.addEventListener("click", () => {

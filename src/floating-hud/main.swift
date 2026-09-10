@@ -1,6 +1,55 @@
 import Cocoa
 import Foundation
 import QuartzCore
+import Darwin
+
+func acquireHudLock(at path: String) throws -> Int32? {
+    let descriptor = open(path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR)
+    guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    if flock(descriptor, LOCK_EX | LOCK_NB) == 0 { return descriptor }
+    let error = errno
+    close(descriptor)
+    if error == EWOULDBLOCK { return nil }
+    throw NSError(domain: NSPOSIXErrorDomain, code: Int(error))
+}
+
+struct HudLoginItem {
+    let homeDirectory: URL
+    let executableURL: URL
+
+    private var plistURL: URL {
+        homeDirectory.appendingPathComponent("Library/LaunchAgents/com.codex.token-usage-hud.plist")
+    }
+
+    var isEnabled: Bool {
+        guard let data = try? Data(contentsOf: plistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
+            return false
+        }
+        return plist["Label"] as? String == "com.codex.token-usage-hud"
+            && plist["RunAtLoad"] as? Bool == true
+            && plist["ProgramArguments"] as? [String] == [executableURL.path]
+    }
+
+    func setEnabled(_ enabled: Bool) throws {
+        if enabled {
+            guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
+                throw CocoaError(.fileReadNoSuchFile)
+            }
+            let plist: [String: Any] = [
+                "Label": "com.codex.token-usage-hud",
+                "ProgramArguments": [executableURL.path],
+                "RunAtLoad": true,
+                "LimitLoadToSessionType": "Aqua"
+            ]
+            let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            try FileManager.default.createDirectory(at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: plistURL, options: .atomic)
+        } else if FileManager.default.fileExists(atPath: plistURL.path) {
+            try FileManager.default.removeItem(at: plistURL)
+        }
+    }
+}
 
 // MARK: - Color Hex Conversion Extension
 
@@ -70,14 +119,12 @@ struct HudLocalization {
             case "plan_event": return "方案異動"
             case "today_usage": return "今日累積"
             case "requests": return "紀錄筆數"
-            case "accent_color": return "色彩主題 (Accent Color)"
-            case "pick_custom_color": return "自訂顏色選擇器..."
-            case "alert_low_quota": return "用量吃緊時亮紅 (<20%)"
             case "widget_size": return "視窗尺寸 (Widget Size)"
             case "language": return "介面語言 (Language)"
             case "open_dashboard": return "開啟 Web 儀表板"
-            case "force_refresh": return "立即強制重新整理"
             case "quit": return "退出 Codex 懸浮球"
+            case "launch_at_login": return "登入時自動啟動"
+            case "login_error": return "無法變更自動啟動設定"
             case "ready": return "已就緒"
             case "calls": return "筆"
             default: return key
@@ -101,14 +148,12 @@ struct HudLocalization {
             case "plan_event": return "Plan Event"
             case "today_usage": return "Today"
             case "requests": return "Records"
-            case "accent_color": return "Accent Color"
-            case "pick_custom_color": return "Pick Custom Color..."
-            case "alert_low_quota": return "Alert Red When Low (<20%)"
             case "widget_size": return "Widget Size"
             case "language": return "Language / 語言"
             case "open_dashboard": return "Open Dashboard (Web)"
-            case "force_refresh": return "Force Refresh"
             case "quit": return "Quit Codex Orb"
+            case "launch_at_login": return "Launch at Login"
+            case "login_error": return "Could not change login settings"
             case "ready": return "Ready"
             case "calls": return "records"
             default: return key
@@ -132,14 +177,12 @@ struct HudLocalization {
             case "plan_event": return "プラン変更履歴"
             case "today_usage": return "本日累計"
             case "requests": return "記録件数"
-            case "accent_color": return "アクセントカラー (Accent Color)"
-            case "pick_custom_color": return "カスタムカラーを選択..."
-            case "alert_low_quota": return "残量低下時に赤色警告 (<20%)"
             case "widget_size": return "ウィジェットサイズ (Widget Size)"
             case "language": return "表示言語 (Language)"
             case "open_dashboard": return "Web ダッシュボードを開く"
-            case "force_refresh": return "今すぐ更新"
             case "quit": return "Codex オーブを終了"
+            case "launch_at_login": return "ログイン時に自動起動"
+            case "login_error": return "自動起動設定を変更できませんでした"
             case "ready": return "準備完了"
             case "calls": return "件"
             default: return key
@@ -163,14 +206,12 @@ struct HudLocalization {
             case "plan_event": return "方案变动"
             case "today_usage": return "今日累计"
             case "requests": return "记录条数"
-            case "accent_color": return "色彩主题 (Accent Color)"
-            case "pick_custom_color": return "自定义颜色选择器..."
-            case "alert_low_quota": return "用量紧张时亮红 (<20%)"
             case "widget_size": return "窗口尺寸 (Widget Size)"
             case "language": return "界面语言 (Language)"
             case "open_dashboard": return "打开 Web 仪表板"
-            case "force_refresh": return "立即强制刷新"
             case "quit": return "退出 Codex 悬浮球"
+            case "launch_at_login": return "登录时自动启动"
+            case "login_error": return "无法更改自动启动设置"
             case "ready": return "就绪"
             case "calls": return "条"
             default: return key
@@ -178,101 +219,6 @@ struct HudLocalization {
         }
     }
 }
-
-// MARK: - Color Preset Configuration
-
-struct ThemeColorPreset {
-    let key: String
-    let hexCode: String
-    let nameZhHant: String
-    let nameEn: String
-    let nameJa: String
-    let nameZhHans: String
-
-    func getLocalizedName(for language: AppLanguage) -> String {
-        switch language {
-        case .zhHant: return nameZhHant
-        case .en: return nameEn
-        case .ja: return nameJa
-        case .zhHans: return nameZhHans
-        }
-    }
-}
-
-let availableThemePresets: [ThemeColorPreset] = [
-    ThemeColorPreset(
-        key: "dynamicHealth",
-        hexCode: "#30D158",
-        nameZhHant: "動態健康色 (綠滿/紅吃緊) [預設推薦]",
-        nameEn: "Dynamic Health (Green Full / Red Low) [Default]",
-        nameJa: "動的ヘルスカラー (満タン緑/逼迫赤) [推奨]",
-        nameZhHans: "动态健康色 (满绿/红紧张) [默认推荐]"
-    ),
-    ThemeColorPreset(
-        key: "emeraldGreen",
-        hexCode: "#30D158",
-        nameZhHant: "Emerald Green (翡翠綠)",
-        nameEn: "Emerald Green",
-        nameJa: "Emerald Green (エメラルドグリーン)",
-        nameZhHans: "Emerald Green (翡翠绿)"
-    ),
-    ThemeColorPreset(
-        key: "lightBlue",
-        hexCode: "#38B6FF",
-        nameZhHant: "Light Blue (淺天藍)",
-        nameEn: "Light Blue",
-        nameJa: "Light Blue (ライトブルー)",
-        nameZhHans: "Light Blue (浅天蓝)"
-    ),
-    ThemeColorPreset(
-        key: "electricBlue",
-        hexCode: "#0A84FF",
-        nameZhHant: "Electric Blue (深電光藍)",
-        nameEn: "Electric Blue",
-        nameJa: "Electric Blue (エレクトリックブルー)",
-        nameZhHans: "Electric Blue (深电光蓝)"
-    ),
-    ThemeColorPreset(
-        key: "cyberCyan",
-        hexCode: "#00F2FE",
-        nameZhHant: "Cyber Cyan (賽博青)",
-        nameEn: "Cyber Cyan",
-        nameJa: "Cyber Cyan (サイバーシアン)",
-        nameZhHans: "Cyber Cyan (赛博青)"
-    ),
-    ThemeColorPreset(
-        key: "neonPurple",
-        hexCode: "#BF5AF2",
-        nameZhHant: "Neon Purple (賽博紫)",
-        nameEn: "Neon Purple",
-        nameJa: "Neon Purple (ネオンパープル)",
-        nameZhHans: "Neon Purple (霓虹紫)"
-    ),
-    ThemeColorPreset(
-        key: "sunsetAmber",
-        hexCode: "#FF9F0A",
-        nameZhHant: "Sunset Amber (日落橘)",
-        nameEn: "Sunset Amber",
-        nameJa: "Sunset Amber (サンセットアンバー)",
-        nameZhHans: "Sunset Amber (落日橙)"
-    ),
-    ThemeColorPreset(
-        key: "radiantPink",
-        hexCode: "#FF375F",
-        nameZhHant: "Radiant Pink (亮粉紅)",
-        nameEn: "Radiant Pink",
-        nameJa: "Radiant Pink (ラディアントピンク)",
-        nameZhHans: "Radiant Pink (亮粉红)"
-    ),
-    ThemeColorPreset(
-        key: "pureWhite",
-        hexCode: "#F2F2F7",
-        nameZhHant: "Pure White (極簡白)",
-        nameEn: "Pure White",
-        nameJa: "Pure White (ピュアホワイト)",
-        nameZhHans: "Pure White (极简白)"
-    )
-]
 
 // MARK: - Widget Size Preset Configuration
 
@@ -390,9 +336,6 @@ let availableSizePresets: [WidgetSizePreset] = [
 ]
 
 struct HudUserConfiguration: Codable {
-    var themeColorHex: String
-    var themePresetKey: String
-    var enableLowQuotaWarning: Bool
     var widgetSizePresetKey: String?
     var languageKey: String?
 }
@@ -760,15 +703,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var primaryValueLabel: NSTextField!
 
     private var refreshTimer: Timer?
+    private var refreshIntervalSeconds: TimeInterval = 5
     private let homeDirectoryPath = FileManager.default.homeDirectoryForCurrentUser.path
     private var previousTotalTokens: Int = 0
     private var feedingCountdownRounds: Int = 0
     private var latestIncrementTokens: Int = 0
 
     // Theme Color State & Preferences
-    private var activeThemeColor: NSColor = NSColor(hex: "#30D158") ?? NSColor.systemGreen
-    private var activeThemePresetKey: String = "dynamicHealth"
-    private var lowQuotaWarningEnabled: Bool = true
 
     // Size Preset State & Preferences
     private var activeSizePresetKey: String = "default"
@@ -778,8 +719,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Display state
     // 0: Quota view
-    // 1: Today tokens view
-    // 2: Today cost view
+    // 1: Today cost view
     private var displayModeIndex: Int = 0
 
     private var cachedStatusData: FullStatusDTO?
@@ -802,16 +742,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if !userConfig.themePresetKey.isEmpty {
-            activeThemePresetKey = userConfig.themePresetKey
-        } else {
-            activeThemePresetKey = "dynamicHealth"
-        }
-
-        if let loadedColor = NSColor(hex: userConfig.themeColorHex) {
-            activeThemeColor = loadedColor
-        }
-        lowQuotaWarningEnabled = userConfig.enableLowQuotaWarning
         if let savedSize = userConfig.widgetSizePresetKey,
            availableSizePresets.contains(where: { $0.key == savedSize }) {
             activeSizePresetKey = savedSize
@@ -825,9 +755,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func saveUserConfiguration() {
         let configurationFilePath = getConfigurationFilePath()
         let configRecord = HudUserConfiguration(
-            themeColorHex: activeThemeColor.toHex(),
-            themePresetKey: activeThemePresetKey,
-            enableLowQuotaWarning: lowQuotaWarningEnabled,
             widgetSizePresetKey: activeSizePresetKey,
             languageKey: currentLanguage.rawValue
         )
@@ -959,7 +886,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func cycleNextDisplayMode() {
-        displayModeIndex = (displayModeIndex + 1) % 3
+        displayModeIndex = (displayModeIndex + 1) % 2
         if let statusData = cachedStatusData {
             updateUserInterface(with: statusData)
         }
@@ -1020,137 +947,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildContextMenu() -> NSMenu {
         let menu = NSMenu(title: "Codex Orb")
 
-        let planName = cachedStatusData?.snapshot.planType ?? "未知方案"
-        let headerTitle = "\(HudLocalization.string(key: "header_title", language: currentLanguage)) (\(planName))"
-        let headerItem = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
-        headerItem.isEnabled = false
-        menu.addItem(headerItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        if let snapshot = cachedStatusData?.snapshot {
-            let unavailable = HudLocalization.string(key: "quota_unavailable", language: currentLanguage)
-            let weeklyTitle: String
-            if let weekly = snapshot.weekly {
-                weeklyTitle = "\(HudLocalization.string(key: "weekly_quota", language: currentLanguage)): \(Int(weekly.remainingPercent))% (Reset: \(weekly.resetCountdown))"
-            } else {
-                weeklyTitle = "\(HudLocalization.string(key: "weekly_quota", language: currentLanguage)): \(unavailable)"
-            }
-            let weeklyItem = NSMenuItem(title: weeklyTitle, action: nil, keyEquivalent: "")
-            weeklyItem.isEnabled = false
-            menu.addItem(weeklyItem)
-
-            if let fiveHour = snapshot.fiveHour {
-                let fiveRem = Int(fiveHour.remainingPercent)
-                let fiveCountdown = fiveHour.resetCountdown
-                let fiveTitle = "\(HudLocalization.string(key: "five_hour_quota", language: currentLanguage)): \(fiveRem)% (Reset: \(fiveCountdown))"
-                let fiveItem = NSMenuItem(title: fiveTitle, action: nil, keyEquivalent: "")
-                fiveItem.isEnabled = false
-                menu.addItem(fiveItem)
-            } else {
-                let fiveTitle = "\(HudLocalization.string(key: "five_hour_quota", language: currentLanguage)): \(unavailable)"
-                let fiveItem = NSMenuItem(title: fiveTitle, action: nil, keyEquivalent: "")
-                fiveItem.isEnabled = false
-                menu.addItem(fiveItem)
-            }
-
-            let sourceTitle = "\(HudLocalization.string(key: "source", language: currentLanguage)): \(sourceDescription(snapshot))"
-            let sourceItem = NSMenuItem(title: sourceTitle, action: nil, keyEquivalent: "")
-            sourceItem.isEnabled = false
-            menu.addItem(sourceItem)
-
-            let updatedTitle = "\(HudLocalization.string(key: "updated_at", language: currentLanguage)): \(formatUpdatedAt(snapshot.updatedAt))"
-            let updatedItem = NSMenuItem(title: updatedTitle, action: nil, keyEquivalent: "")
-            updatedItem.isEnabled = false
-            menu.addItem(updatedItem)
-
-            if let reason = snapshot.errorReason, !reason.isEmpty {
-                let reasonTitle = "\(HudLocalization.string(key: "error_reason", language: currentLanguage)): \(reason)"
-                let reasonItem = NSMenuItem(title: reasonTitle, action: nil, keyEquivalent: "")
-                reasonItem.isEnabled = false
-                menu.addItem(reasonItem)
-            }
-
-            if snapshot.resetCreditsKnown == true,
-               let credits = snapshot.resetCredits,
-               credits > 0 {
-                let creditsTitle = "\(HudLocalization.string(key: "reset_credits", language: currentLanguage)): \(credits)"
-                let creditsItem = NSMenuItem(title: creditsTitle, action: nil, keyEquivalent: "")
-                creditsItem.isEnabled = false
-                menu.addItem(creditsItem)
-            }
-        }
-
-        // Plan Transition History item (if exists)
-        if let planChanges = cachedStatusData?.recentPlanChanges, let latestChange = planChanges.first {
-            let changeTypeUpper = (latestChange.changeType ?? "change").uppercased()
-            let planHistoryText = "\(HudLocalization.string(key: "plan_event", language: currentLanguage)): [\(changeTypeUpper)] \(latestChange.description ?? "")"
-            let planItem = NSMenuItem(title: planHistoryText, action: nil, keyEquivalent: "")
-            planItem.isEnabled = false
-            menu.addItem(planItem)
-        }
-
-        menu.addItem(NSMenuItem.separator())
-
-        if let summary = cachedStatusData?.todaySummary {
-            let totalFormatted = formatTokenCount(tokens: summary.totalTokens)
-            let costText = summary.formattedCostUsd ?? "$0.00"
-            let summaryTitle = "\(HudLocalization.string(key: "today_usage", language: currentLanguage)): \(totalFormatted) tokens (\(costText) USD)"
-            let summaryItem = NSMenuItem(title: summaryTitle, action: nil, keyEquivalent: "")
-            summaryItem.isEnabled = false
-            menu.addItem(summaryItem)
-
-            let callsUnit = HudLocalization.string(key: "calls", language: currentLanguage)
-            let requestsTitle = "\(HudLocalization.string(key: "requests", language: currentLanguage)): \(summary.requests) \(callsUnit)"
-            let requestsItem = NSMenuItem(title: requestsTitle, action: nil, keyEquivalent: "")
-            requestsItem.isEnabled = false
-            menu.addItem(requestsItem)
-        }
-
-        menu.addItem(NSMenuItem.separator())
-
-        // 1. Accent Color Submenu
-        let colorSubmenuTitle = HudLocalization.string(key: "accent_color", language: currentLanguage)
-        let colorSubmenu = NSMenu(title: colorSubmenuTitle)
-        for preset in availableThemePresets {
-            let presetItem = NSMenuItem(
-                title: preset.getLocalizedName(for: currentLanguage),
-                action: #selector(handlePresetColorSelected(_:)),
-                keyEquivalent: ""
-            )
-            presetItem.target = self
-            presetItem.representedObject = preset.key
-            presetItem.state = (activeThemePresetKey == preset.key) ? .on : .off
-            colorSubmenu.addItem(presetItem)
-        }
-
-        colorSubmenu.addItem(NSMenuItem.separator())
-
-        let customPickerItem = NSMenuItem(
-            title: HudLocalization.string(key: "pick_custom_color", language: currentLanguage),
-            action: #selector(openSystemColorPicker),
-            keyEquivalent: ""
-        )
-        customPickerItem.target = self
-        customPickerItem.state = (activeThemePresetKey == "custom") ? .on : .off
-        colorSubmenu.addItem(customPickerItem)
-
-        colorSubmenu.addItem(NSMenuItem.separator())
-
-        let warningToggleItem = NSMenuItem(
-            title: HudLocalization.string(key: "alert_low_quota", language: currentLanguage),
-            action: #selector(toggleLowQuotaWarning),
-            keyEquivalent: ""
-        )
-        warningToggleItem.target = self
-        warningToggleItem.state = lowQuotaWarningEnabled ? .on : .off
-        colorSubmenu.addItem(warningToggleItem)
-
-        let colorMenuItem = NSMenuItem(title: colorSubmenuTitle, action: nil, keyEquivalent: "")
-        colorMenuItem.submenu = colorSubmenu
-        menu.addItem(colorMenuItem)
-
-        // 2. Widget Size Submenu
+        // Widget Size Submenu
         let sizeSubmenuTitle = HudLocalization.string(key: "widget_size", language: currentLanguage)
         let sizeSubmenu = NSMenu(title: sizeSubmenuTitle)
         for preset in availableSizePresets {
@@ -1198,13 +995,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         webItem.target = self
         menu.addItem(webItem)
 
-        let refreshItem = NSMenuItem(
-            title: HudLocalization.string(key: "force_refresh", language: currentLanguage),
-            action: #selector(forceRefreshData),
-            keyEquivalent: "r"
+        let loginItem = NSMenuItem(
+            title: HudLocalization.string(key: "launch_at_login", language: currentLanguage),
+            action: #selector(toggleLaunchAtLogin),
+            keyEquivalent: ""
         )
-        refreshItem.target = self
-        menu.addItem(refreshItem)
+        loginItem.target = self
+        loginItem.state = hudLoginItem?.isEnabled == true ? .on : .off
+        loginItem.isEnabled = hudLoginItem != nil
+        menu.addItem(loginItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -1219,6 +1018,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
+    private var hudLoginItem: HudLoginItem? {
+        guard let executableURL = Bundle.main.executableURL else { return nil }
+        return HudLoginItem(homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+                            executableURL: executableURL.resolvingSymlinksInPath())
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        guard let loginItem = hudLoginItem else { return }
+        do {
+            try loginItem.setEnabled(!loginItem.isEnabled)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = HudLocalization.string(key: "login_error", language: currentLanguage)
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+    }
+
     @objc private func handleLanguageSelected(_ sender: NSMenuItem) {
         guard let langRaw = sender.representedObject as? String,
               let selectedLang = AppLanguage(rawValue: langRaw) else {
@@ -1229,23 +1047,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         saveUserConfiguration()
     }
 
-    @objc private func handlePresetColorSelected(_ sender: NSMenuItem) {
-        guard let selectedPresetKey = sender.representedObject as? String,
-              let matchedPreset = availableThemePresets.first(where: { $0.key == selectedPresetKey }) else {
-            return
-        }
-
-        activeThemePresetKey = matchedPreset.key
-        if let resolvedColor = NSColor(hex: matchedPreset.hexCode) {
-            activeThemeColor = resolvedColor
-        }
-        saveUserConfiguration()
-
-        if let status = cachedStatusData {
-            updateUserInterface(with: status)
-        }
-    }
-
     @objc private func handleSizePresetSelected(_ sender: NSMenuItem) {
         guard let selectedSizeKey = sender.representedObject as? String,
               let matchedPreset = availableSizePresets.first(where: { $0.key == selectedSizeKey }) else {
@@ -1253,34 +1054,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         applyWidgetSizePreset(matchedPreset)
-    }
-
-    @objc private func openSystemColorPicker() {
-        let colorPanel = NSColorPanel.shared
-        colorPanel.color = activeThemeColor
-        colorPanel.setTarget(self)
-        colorPanel.setAction(#selector(handleCustomColorFromPanel(_:)))
-        colorPanel.orderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    @objc private func handleCustomColorFromPanel(_ sender: NSColorPanel) {
-        activeThemeColor = sender.color
-        activeThemePresetKey = "custom"
-        saveUserConfiguration()
-
-        if let status = cachedStatusData {
-            updateUserInterface(with: status)
-        }
-    }
-
-    @objc private func toggleLowQuotaWarning() {
-        lowQuotaWarningEnabled = !lowQuotaWarningEnabled
-        saveUserConfiguration()
-
-        if let status = cachedStatusData {
-            updateUserInterface(with: status)
-        }
     }
 
     @objc private func openWebDashboard() {
@@ -1313,23 +1086,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func forceRefreshData() {
-        loadLatestData(forceRefresh: true)
-    }
-
     private func startPeriodicTimer() {
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            self?.loadLatestData(forceRefresh: false)
+        let directory = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? "\(homeDirectoryPath)/.codex"
+        var interval: TimeInterval = 5
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: directory).appendingPathComponent("hud-settings.json")),
+           let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let value = settings["refreshIntervalSeconds"] as? NSNumber,
+           CFGetTypeID(value) != CFBooleanGetTypeID(),
+           value.doubleValue.isFinite,
+           value.doubleValue.rounded() == value.doubleValue,
+           (1...300).contains(value.doubleValue) {
+            interval = value.doubleValue
+        }
+        refreshIntervalSeconds = interval
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshIntervalSeconds, repeats: false) { [weak self] _ in
+            self?.loadLatestData()
+            self?.startPeriodicTimer()
         }
     }
 
-    private func loadLatestData(forceRefresh: Bool = false) {
+    private func loadLatestData() {
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self = self else { return }
 
             var fetchedStatus: FullStatusDTO?
 
-            let urlString = "http://127.0.0.1:10200/api/status" + (forceRefresh ? "?force=true" : "")
+            let urlString = "http://127.0.0.1:10200/api/status"
             if let serverUrl = URL(string: urlString) {
                 var request = URLRequest(url: serverUrl)
                 request.timeoutInterval = 0.8
@@ -1476,7 +1259,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !hasQuotaData {
             ringTint = NSColor.systemGray
-        } else if activeThemePresetKey == "dynamicHealth" {
+        } else {
             // 動態健康色階: 滿綠 -> 黃 -> 橘 -> 吃緊紅
             if targetPercentage >= 60.0 {
                 ringTint = NSColor(hex: "#30D158") ?? NSColor.systemGreen
@@ -1487,13 +1270,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 ringTint = NSColor(hex: "#FF453A") ?? NSColor.systemRed
             }
-        } else {
-            // 使用者自訂選取 Accent Color (例如 霓虹紫、日落橘、亮粉紅、極簡白、自訂色等)
-            if lowQuotaWarningEnabled && targetPercentage < 20.0 {
-                ringTint = NSColor(hex: "#FF453A") ?? NSColor.systemRed
-            } else {
-                ringTint = activeThemeColor
-            }
         }
 
         orbContainerView.updateRingProgress(percentage: targetPercentage, tintColor: ringTint)
@@ -1501,14 +1277,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         primaryValueLabel.textColor = NSColor.white
 
         if displayModeIndex == 1 {
-            // View 1: Today total tokens
-            secondaryTagLabel.stringValue = "TODAY"
-            secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
-            secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize - 1.0, weight: .bold)
-            primaryValueLabel.stringValue = formatTokenCount(tokens: summary.totalTokens)
-            primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize - 1.0, weight: .bold)
-        } else if displayModeIndex == 2 {
-            // View 2: Today estimated cost
+            // View 1: Today estimated cost
             secondaryTagLabel.stringValue = "COST"
             secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
             secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize - 1.0, weight: .bold)
@@ -1578,6 +1347,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 // MARK: - Main Entry Point
+
+// Keep the descriptor open for the process lifetime; the kernel releases it on exit.
+let hudLock: Int32
+do {
+    let path = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex-hud.lock").path
+    guard let descriptor = try acquireHudLock(at: path) else { exit(0) }
+    hudLock = descriptor
+} catch {
+    fputs("Unable to acquire HUD instance lock: \(error)\n", stderr)
+    exit(1)
+}
 
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)

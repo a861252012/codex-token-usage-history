@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request } from "node:http";
@@ -11,11 +11,15 @@ test("diagnostics API exposes actual scan scope and remains behind HTTP boundari
   const previousHome = process.env.CODEX_HOME;
   process.env.CODEX_HOME = directory;
   mkdirSync(join(directory, "sessions"));
+  mkdirSync(join(directory, "archived_sessions"));
   writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ updatedAtMs: Date.now(), updatedDate: "test", models: [] }));
   writeFileSync(join(directory, "sessions", "sample.jsonl"), [
     JSON.stringify({ type: "token_usage_record", timestamp: new Date().toISOString(), payload: { usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } }),
     "{broken-json",
   ].join("\n"));
+  const archivedPath = join(directory, "archived_sessions", "old.jsonl");
+  writeFileSync(archivedPath, JSON.stringify({ type: "token_usage_record", timestamp: "2025-01-01T00:00:00Z", payload: { usage: { input_tokens: 20, output_tokens: 5, total_tokens: 25 } } }));
+  utimesSync(archivedPath, new Date("2025-01-01"), new Date("2025-01-01"));
   const database = new HistoryDatabase(join(directory, "history.sqlite"));
   const server = new DashboardServer(database, { port: 0 });
   try {
@@ -32,10 +36,16 @@ test("diagnostics API exposes actual scan scope and remains behind HTTP boundari
     expect(response.cache).toBe("no-store");
     const diagnostics = JSON.parse(response.body);
     expect(diagnostics.dataDirectory).toBe(directory);
-    expect(diagnostics.scope).toBe("recent");
-    expect(diagnostics.recordsParsed).toBe(1);
+    expect(diagnostics.scope).toBe("all");
+    expect(diagnostics.recordsParsed).toBe(2);
     expect(diagnostics.invalidLines).toBe(1);
-    expect(diagnostics.filesRead).toBe(1);
+    expect(diagnostics.filesRead).toBe(2);
+    const history = await (await fetch(`${base}/api/history`)).json();
+    expect(history.total).toBe(2);
+    expect((await fetch(`${base}/app.js`)).headers.get("cache-control")).toBe("no-store");
+    await fetch(`${base}/`);
+    await fetch(`${base}/`);
+    expect(database.queryRecords({ limit: 10 }).total).toBe(2);
     expect((await get({ Origin: "https://attacker.example" })).status).toBe(403);
     expect((await get({ Host: "attacker.example" })).status).toBe(421);
   } finally {

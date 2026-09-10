@@ -27,7 +27,7 @@ describe("native quota UI trust", () => {
 
   test("five-hour quota is rendered whenever the payload contains it", () => {
     expect(menubarSource).toContain("if let fiveHourWindow = quotaSnapshot.fiveHour {");
-    expect(hudSource).toContain("if let fiveHour = snapshot.fiveHour {");
+    expect(hudSource).toContain("let fiveHourRemaining = snapshot.fiveHour.map");
     expect(menubarSource).not.toContain("fiveHourWindow = quotaSnapshot.fiveHour, !isPro");
     expect(hudSource).not.toContain("fiveHour = snapshot.fiveHour, !proActive");
   });
@@ -51,8 +51,9 @@ describe("native quota UI trust", () => {
     expect(hudSource).toContain('secondaryTagLabel.stringValue = "CACHE"');
     expect(hudSource).toContain('secondaryTagLabel.stringValue = "STALE"');
     expect(hudSource).toContain("snapshot: self.asLocalCache(previousStatus.snapshot)");
-    expect(hudSource).toContain('HudLocalization.string(key: "updated_at"');
-    expect(hudSource).toContain('HudLocalization.string(key: "error_reason"');
+    expect(hudSource).toContain('secondaryTagLabel.stringValue = "OFFLINE"');
+    const hudMenu = hudSource.split("private func buildContextMenu()")[1].split("private var hudLoginItem")[0];
+    expect(hudMenu).not.toContain("isEnabled = false");
   });
 
   test("usage count copy describes stored records, not calls or requests", () => {
@@ -67,8 +68,9 @@ describe("native quota UI trust", () => {
     for (const source of [menubarSource, hudSource]) {
       expect(source).toContain("let resetCreditsKnown: Bool?");
       expect(source).toContain("resetCreditsKnown: snapshot.resetCreditsKnown");
-      expect(source).toContain("resetCreditsKnown == true");
     }
+    expect(menubarSource).toContain("resetCreditsKnown == true");
+    expect(hudSource).not.toContain("menu.addItem(creditsItem)");
   });
 
   test("both native entry points typecheck", () => {

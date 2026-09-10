@@ -32,13 +32,14 @@ export class SessionWatcher extends EventEmitter {
   /**
    * 啟動即時檔案監聽與定時配額輪詢
    */
-  public start(pollIntervalMilliseconds = 45_000): void {
+  public start(pollIntervalMilliseconds = 45_000, initialScan: "recent" | "all" = "recent"): void {
     if (this.active) return;
     this.active = true;
 
     // 先執行一次近期增量掃描
     try {
-      this.indexer.indexRecent(3);
+      if (initialScan === "all") this.indexer.indexAll();
+      else this.indexer.indexRecent(3);
     } catch {}
 
     // 建立目錄監聽器

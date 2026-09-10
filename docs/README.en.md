@@ -36,10 +36,9 @@ Open [http://127.0.0.1:10201](http://127.0.0.1:10201) · Ctrl+C
 ### Use your Codex history
 
 ```bash
-./bin/codex-usage doctor
-./bin/codex-usage index --all --json
 ./bin/codex-usage dashboard
 ```
+The service imports full history automatically at startup, then updates incrementally. No manual indexing is needed.
 
 Open [http://127.0.0.1:10200](http://127.0.0.1:10200)
 
@@ -67,6 +66,8 @@ Reads `~/.codex` by default; set `CODEX_HOME` for a different core data director
 ## macOS
 
 Requires Xcode Command Line Tools. Drag the HUD to move it, left-click to switch metrics, and right-click for settings.
+Enable “Launch at Login” in the right-click menu to start the HUD at your next login. Click again to disable it; re-enable it after moving the project.
+Dashboard → HUD settings controls the refresh interval: default 5 seconds, integers from 1 to 300. Changes apply by the next HUD refresh.
 
 ```bash
 bash scripts/build-hud.sh

@@ -64,7 +64,8 @@ describe("dashboard trust semantics", () => {
     const html = readFileSync(join(import.meta.dir, "../src/web/index.html"), "utf8");
     expect(html).toContain("Dashboard last scan");
     expect(html).toContain("Unchanged files are not reread");
-    expect(html).toContain("does not change this service's last-scan scope to all");
+    expect(html).toContain("History is imported automatically");
+    expect(html).not.toContain("codex-usage index --all");
     expect(html).not.toContain(">Data coverage<");
   });
 

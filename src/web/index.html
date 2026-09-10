@@ -35,6 +35,16 @@
     </section>
 
     <!-- Quota Cards Grid -->
+    <section class="card hud-settings" aria-labelledby="label-hud-settings">
+      <h3 id="label-hud-settings">HUD settings</h3>
+      <form id="hud-settings-form" class="card-body">
+        <label id="label-hud-interval" for="hud-interval">HUD refresh interval (seconds)</label>
+        <input id="hud-interval" type="number" min="1" max="300" step="1" required value="5" aria-describedby="hud-interval-help">
+        <button id="btn-save-hud-settings" class="btn btn-primary" type="submit">Save</button>
+        <p id="hud-interval-help">1–300 seconds, default 5. Applies by the next HUD refresh. Dashboard live updates are unchanged.</p>
+      </form>
+    </section>
+
     <section class="quota-cards-grid">
       <!-- 5-Hour Window Card (Adapts to Pro Unlimited or Standard) -->
       <div class="card quota-card" id="card-five-hour">
@@ -170,8 +180,8 @@
         <div><dt id="label-diagnostics-errors">Skipped / failed</dt><dd id="diagnostics-errors">—</dd></div>
       </dl>
       <aside id="first-use-guide" class="first-use-guide">
-        <strong id="label-first-use-title">No completed local-service scan is confirmed yet.</strong>
-        <p id="label-first-use-copy">Run <code>codex-usage index --all</code> to import configured local session history, then refresh the dashboard data. The CLI runs separately and does not change this service's last-scan scope to all.</p>
+        <strong id="label-first-use-title">Loading local history…</strong>
+        <p id="label-first-use-copy">History is imported automatically when the dashboard service starts. No terminal command is needed.</p>
       </aside>
     </section>
 

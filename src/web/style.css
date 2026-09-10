@@ -655,3 +655,18 @@ dialog dd { overflow-wrap: anywhere; }
   .filter-fields { gap: 12px; }
   .filter-fields label { flex-basis: 100%; }
 }
+.hud-settings { margin-bottom: 20px; }
+.hud-settings h3 { margin: 0 0 16px; font-size: 16px; }
+#hud-settings-form { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+#hud-interval {
+  width: 112px;
+  padding: 10px 12px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-highlight);
+  border-radius: 8px;
+  font: inherit;
+  color-scheme: dark;
+}
+#hud-interval:focus { outline: 2px solid #38bdf8; outline-offset: 2px; }
+#hud-interval-help { flex-basis: 100%; margin: 0; color: var(--text-secondary); font-size: 13px; }

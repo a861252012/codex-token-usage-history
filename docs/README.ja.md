@@ -36,10 +36,9 @@ bun run demo
 ### 自分の Codex 履歴を使う
 
 ```bash
-./bin/codex-usage doctor
-./bin/codex-usage index --all --json
 ./bin/codex-usage dashboard
 ```
+起動時に全履歴を自動で取り込み、その後は差分を更新します。手動のインデックス作成は不要です。
 
 開く [http://127.0.0.1:10200](http://127.0.0.1:10200)
 
@@ -67,6 +66,8 @@ bun run demo
 ## macOS
 
 Xcode Command Line Tools が必要です。HUD はドラッグで移動、左クリックで指標を切り替え、右クリックで設定します。
+右クリックで「ログイン時に自動起動」をオンにすると、次回ログイン時から起動します。再度クリックで解除できます。プロジェクトを移動したら、設定し直してください。
+Dashboard の「HUD settings」で更新間隔を設定できます。既定は5秒、1～300の整数のみ。次回更新までに反映されます。
 
 ```bash
 bash scripts/build-hud.sh

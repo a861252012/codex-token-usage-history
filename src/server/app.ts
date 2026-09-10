@@ -3,6 +3,8 @@ import type { AddressInfo } from "node:net";
 import { readFileSync, existsSync, realpathSync, statSync } from "node:fs";
 import { join, extname, resolve, relative, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { isValidHudInterval, readHudSettings, saveHudSettings } from "../core/hud-settings.js";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
 import { SessionIndexer } from "../core/session-indexer.js";
@@ -76,6 +78,7 @@ export interface DashboardServerOptions {
 }
 
 export class DashboardServer {
+  private settingsDirectory = process.env.CODEX_HOME || join(homedir(), ".codex");
   private serverInstance: Server | null = null;
   private portNumber: number;
   private hostAddress: string;
@@ -84,7 +87,6 @@ export class DashboardServer {
   private sessionIndexer: SessionIndexer;
   private sessionWatcher: SessionWatcher;
   private serverSentEventClients: Set<ServerResponse> = new Set();
-  private staticFileCache = new Map<string, { buffer: Buffer; contentType: string }>();
 
   constructor(database: HistoryDatabase, options: DashboardServerOptions = {}) {
     this.portNumber = options.port ?? 10200;
@@ -112,7 +114,7 @@ export class DashboardServer {
 
   public async start(): Promise<string> {
     await this.databaseInstance.init();
-    await this.sessionWatcher.start();
+    await this.sessionWatcher.start(45_000, "all");
     triggerBackgroundPricingSync();
 
     return new Promise((resolve, reject) => {
@@ -221,6 +223,43 @@ export class DashboardServer {
       return;
     }
 
+    if (pathname === "/api/hud-settings" && incomingRequest.method === "POST") {
+      serverResponse.setHeader("Cache-Control", "no-store");
+      serverResponse.setHeader("Content-Type", "application/json; charset=utf-8");
+      // Writes require an exact browser origin and JSON, in addition to the Host checks above.
+      if (requestOrigin !== `http://${requestHost}` || incomingRequest.headers["content-type"]?.split(";")[0].trim() !== "application/json") {
+        serverResponse.writeHead(403);
+        serverResponse.end(JSON.stringify({ error: "Same-origin JSON request required" }));
+        return;
+      }
+      let body = "";
+      let settings: unknown;
+      try {
+        for await (const chunk of incomingRequest) {
+          body += chunk.toString();
+          if (Buffer.byteLength(body) > 1024) {
+            serverResponse.writeHead(413);
+            serverResponse.end(JSON.stringify({ error: "Request too large" }));
+            return;
+          }
+        }
+        settings = JSON.parse(body);
+      } catch {
+        serverResponse.writeHead(400);
+        serverResponse.end(JSON.stringify({ error: "Invalid JSON" }));
+        return;
+      }
+      const interval = (settings as { refreshIntervalSeconds?: unknown } | null)?.refreshIntervalSeconds;
+      if (!isValidHudInterval(interval)) {
+        serverResponse.writeHead(400);
+        serverResponse.end(JSON.stringify({ error: "Interval must be an integer from 1 to 300" }));
+        return;
+      }
+      saveHudSettings(this.settingsDirectory, interval);
+      serverResponse.end(JSON.stringify(readHudSettings(this.settingsDirectory)));
+      return;
+    }
+
     if (incomingRequest.method !== "GET" && incomingRequest.method !== "HEAD") {
       serverResponse.setHeader("Allow", "GET, HEAD, OPTIONS");
       serverResponse.writeHead(405, { "Content-Type": "application/json; charset=utf-8" });
@@ -230,6 +269,12 @@ export class DashboardServer {
 
     if (pathname.startsWith("/api/")) {
       serverResponse.setHeader("Cache-Control", "no-store");
+    }
+
+    if (pathname === "/api/hud-settings") {
+      serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      serverResponse.end(JSON.stringify(readHudSettings(this.settingsDirectory)));
+      return;
     }
 
     if (pathname === "/api/diagnostics") {
@@ -425,12 +470,7 @@ export class DashboardServer {
       return;
     }
 
-    const cachedFile = this.staticFileCache.get(absoluteFilePath);
-    if (cachedFile) {
-      serverResponse.writeHead(200, { "Content-Type": cachedFile.contentType });
-      serverResponse.end(cachedFile.buffer);
-      return;
-    }
+    serverResponse.setHeader("Cache-Control", "no-store");
 
     const fileExtension = extname(absoluteFilePath).toLowerCase();
     const mimeTypeMap: Record<string, string> = {
@@ -444,7 +484,6 @@ export class DashboardServer {
 
     const contentType = mimeTypeMap[fileExtension] || "application/octet-stream";
     const fileBuffer = readFileSync(absoluteFilePath);
-    this.staticFileCache.set(absoluteFilePath, { buffer: fileBuffer, contentType });
 
     serverResponse.writeHead(200, { "Content-Type": contentType });
     serverResponse.end(fileBuffer);
