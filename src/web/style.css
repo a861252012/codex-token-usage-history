@@ -461,10 +461,12 @@ body {
   font-size: 12px;
   color: #fff;
   pointer-events: none;
-  transform: translate(-50%, -115%);
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
   z-index: 100;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* Model Bars */

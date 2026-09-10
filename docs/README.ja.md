@@ -1,5 +1,7 @@
 # Codex Token & Quota Monitor
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../LICENSE)
+
 Codex の利用枠、トークン履歴、推定コストをローカルで確認できます。Web、CLI、macOS HUD／メニューバー、MCP に対応。
 
 [正體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
@@ -128,5 +130,3 @@ bun run build
 ```
 
 撮影は `bun run demo` を起動後、`node scripts/capture-screenshots.cjs` を実行します。Playwright と Chromium が必要です。
-
-[MIT](../LICENSE)

@@ -826,8 +826,17 @@ async function fetchHourlyStats() {
 
         const containerRect = chartContainer.getBoundingClientRect();
         const barRect = bar.getBoundingClientRect();
-        const left = barRect.left - containerRect.left + barRect.width / 2;
-        const top = barRect.top - containerRect.top;
+        const tooltipWidth = tooltip.offsetWidth;
+        const tooltipHeight = tooltip.offsetHeight;
+        const barTop = barRect.top - containerRect.top;
+        const left = Math.max(0, Math.min(
+          barRect.left - containerRect.left + (barRect.width - tooltipWidth) / 2,
+          chartContainer.clientWidth - tooltipWidth,
+        ));
+        const top = Math.max(0, Math.min(
+          barTop >= tooltipHeight + 8 ? barTop - tooltipHeight - 8 : barTop + 8,
+          chartContainer.clientHeight - tooltipHeight,
+        ));
 
         tooltip.style.left = `${left}px`;
         tooltip.style.top = `${top}px`;

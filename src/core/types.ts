@@ -153,7 +153,7 @@ export interface QuotaResetEvent {
   id?: number;
   timestamp: number;
   datetime: string;
-  eventType: "periodic_reset" | "credit_change" | "credit_received" | "credit_consumed" | "manual_reset";
+  eventType: "usage_drop" | "periodic_reset" | "credit_change" | "credit_received" | "credit_consumed" | "manual_reset";
   previousFiveHourUsedPercent: number | null;
   newFiveHourUsedPercent: number | null;
   previousWeeklyUsedPercent: number | null;

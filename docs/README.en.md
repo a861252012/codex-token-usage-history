@@ -1,5 +1,7 @@
 # Codex Token & Quota Monitor
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../LICENSE)
+
 Track Codex quota, token history, and estimated costs locally. Includes a web dashboard, CLI, macOS HUD/menu bar, and MCP server.
 
 [正體中文](../README.md) · [English](README.en.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
@@ -128,5 +130,3 @@ bun run build
 ```
 
 To refresh screenshots, start `bun run demo`, then run `node scripts/capture-screenshots.cjs` with Playwright and Chromium installed.
-
-[MIT](../LICENSE)

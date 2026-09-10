@@ -1,5 +1,7 @@
 # Codex Token & Quota Monitor
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 在本機查看 Codex 配額、Token 歷史與估算成本。支援 Web Dashboard、CLI、macOS 懸浮球／選單列與 MCP。
 
 正體中文 · [English](docs/README.en.md) · [日本語](docs/README.ja.md) · [简体中文](docs/README.zh-CN.md)
@@ -131,5 +133,3 @@ bun run build
 ```
 
 重拍截圖：啟動 `bun run demo`，再執行 `node scripts/capture-screenshots.cjs`（需 Playwright 與 Chromium）。
-
-[MIT](LICENSE)

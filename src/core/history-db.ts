@@ -429,7 +429,9 @@ export class HistoryDatabase {
       SELECT
         id, timestamp, datetime, event_type, previous_five_hour_used_pct,
         new_five_hour_used_pct, previous_weekly_used_pct, new_weekly_used_pct,
-        available_credits, credit_delta, description
+        available_credits, credit_delta, description,
+        EXISTS (SELECT 1 FROM plan_change_events p
+          WHERE p.timestamp BETWEEN quota_reset_events.timestamp - 1000 AND quota_reset_events.timestamp + 1000) AS coincident_plan_change
       FROM quota_reset_events
       ORDER BY timestamp DESC
       LIMIT ?
@@ -439,14 +441,19 @@ export class HistoryDatabase {
       id: row.id,
       timestamp: row.timestamp,
       datetime: row.datetime,
-      eventType: row.event_type,
+      eventType: row.event_type === "periodic_reset" && !row.description?.includes("依重設時間判定")
+        ? "usage_drop" : row.event_type,
       previousFiveHourUsedPercent: row.previous_five_hour_used_pct,
       newFiveHourUsedPercent: row.new_five_hour_used_pct,
       previousWeeklyUsedPercent: row.previous_weekly_used_pct,
       newWeeklyUsedPercent: row.new_weekly_used_pct,
       availableCredits: row.available_credits,
       creditDelta: row.credit_delta,
-      description: row.description || "",
+      description: row.event_type === "periodic_reset" && !row.description?.includes("依重設時間判定")
+        ? (row.coincident_plan_change
+          ? "觀察到額度使用率下降，同時間有方案變更；無法確認下降原因，舊版曾誤標為週期重置。"
+          : "觀察到額度使用率下降；舊紀錄缺少週期到期證據，無法確認重置原因。")
+        : row.description || "",
     }));
   }
 

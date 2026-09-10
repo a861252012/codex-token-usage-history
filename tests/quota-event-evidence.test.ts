@@ -30,6 +30,7 @@ for (const scenario of [
   { name: "unknown credits with elapsed windows", before: undefined, after: undefined, elapsed: true, resets: 2, credits: 0 },
   { name: "unknown credits without elapsed windows", before: undefined, after: undefined, elapsed: false, resets: 0, credits: 0 },
   { name: "credits received alongside a reset", before: 1, after: 2, elapsed: true, resets: 2, credits: 1 },
+  { name: "unchanged credits without elapsed window", before: 1, after: 1, elapsed: false, resets: 0, credits: 0 },
   { name: "consumed credits", before: 2, after: 1, elapsed: true, resets: 0, credits: 1 },
   { name: "plan changed", before: 1, after: 1, elapsed: true, resets: 0, credits: 0, newPlan: "pro" },
 ]) {
@@ -55,3 +56,21 @@ for (const scenario of [
     } finally { database.close(); }
   });
 }
+
+test("legacy usage drops do not claim a periodic reset, including concurrent upgrades", async () => {
+  const database = new HistoryDatabase(":memory:");
+  await database.init();
+  try {
+    const timestamp = Date.now();
+    database.insertResetEvent({ timestamp, datetime: new Date(timestamp).toISOString(),
+      eventType: "periodic_reset", previousFiveHourUsedPercent: 0, newFiveHourUsedPercent: 0,
+      previousWeeklyUsedPercent: 87, newWeeklyUsedPercent: 0, availableCredits: 1,
+      creditDelta: 0, description: "週用量時間視窗滾動重置（使用率自 87.0% 降至 0.0%）" });
+    expect(database.getResetEvents()[0].eventType).toBe("usage_drop");
+    expect(database.getResetEvents()[0].description).toContain("缺少週期到期證據");
+    database.insertPlanChangeEvent({ timestamp: timestamp + 1, datetime: new Date(timestamp).toISOString(),
+      previousPlan: "prolite", newPlan: "pro", changeType: "upgrade", description: "方案升級" });
+    expect(database.getResetEvents()[0].description).toContain("同時間有方案變更");
+    expect(database.getResetEvents()[0].previousWeeklyUsedPercent).toBe(87);
+  } finally { database.close(); }
+});

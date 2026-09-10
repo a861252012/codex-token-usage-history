@@ -283,7 +283,7 @@ export class QuotaClient {
       const elapsedWindow = previousWindow.resetAtMs > 0
         && previousWindow.resetAtMs <= newSnapshot.updatedAt
         && newWindow.resetAtMs > previousWindow.resetAtMs;
-      const resetWithoutCreditConsumption = creditDelta === null ? elapsedWindow : creditDelta >= 0;
+      const resetWithoutCreditConsumption = elapsedWindow && (creditDelta === null || creditDelta >= 0);
       if (!resetWithoutCreditConsumption || previousWindow.usedPercent - newWindow.usedPercent < 20) continue;
       this.databaseInstance.insertResetEvent({
         timestamp: currentTimeMs,
@@ -295,7 +295,7 @@ export class QuotaClient {
         newWeeklyUsedPercent,
         availableCredits: currentCredits,
         creditDelta: 0,
-        description: `${label}時間視窗配額重置（使用率自 ${previousWindow.usedPercent.toFixed(1)}% 降至 ${newWindow.usedPercent.toFixed(1)}%${creditDelta === null ? "；券數未知，依視窗重設時間判定" : ""}）`,
+        description: `${label}配額週期已到期（依重設時間判定；使用率自 ${previousWindow.usedPercent.toFixed(1)}% 降至 ${newWindow.usedPercent.toFixed(1)}%${creditDelta === null ? "；券數未知，依視窗重設時間判定" : ""}）`,
       });
     }
 
