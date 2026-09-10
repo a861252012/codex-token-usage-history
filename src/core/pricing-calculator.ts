@@ -141,6 +141,37 @@ export const DEFAULT_FALLBACK_PRICING: ModelPricingTier = {
 };
 
 const BUILTIN_VERSION = "2026-09-09";
+const MAXIMUM_USER_PRICING_FILE_BYTES = 1024 * 1024;
+const MAXIMUM_USER_PRICING_MODELS = 1_000;
+const MAXIMUM_MODEL_PREFIX_LENGTH = 128;
+const MAXIMUM_PRICE_PER_MILLION = 1_000_000;
+
+function validatePricingTier(value: unknown): ModelPricingTier | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<ModelPricingTier>;
+  if (
+    typeof candidate.modelPrefix !== "string" ||
+    candidate.modelPrefix.length === 0 ||
+    candidate.modelPrefix.length > MAXIMUM_MODEL_PREFIX_LENGTH ||
+    /[\u0000-\u001f\u007f-\u009f]/.test(candidate.modelPrefix)
+  ) return null;
+
+  const isValidPrice = (price: unknown): price is number =>
+    typeof price === "number" && Number.isFinite(price) && price >= 0 && price <= MAXIMUM_PRICE_PER_MILLION;
+  if (!isValidPrice(candidate.inputCostPerMillion) || !isValidPrice(candidate.outputCostPerMillion)) return null;
+
+  const cachedPrice = candidate.cachedInputCostPerMillion ?? candidate.inputCostPerMillion * 0.5;
+  const reasoningPrice = candidate.reasoningOutputCostPerMillion ?? candidate.outputCostPerMillion;
+  if (!isValidPrice(cachedPrice) || !isValidPrice(reasoningPrice)) return null;
+
+  return {
+    modelPrefix: candidate.modelPrefix.toLowerCase(),
+    inputCostPerMillion: candidate.inputCostPerMillion,
+    cachedInputCostPerMillion: cachedPrice,
+    outputCostPerMillion: candidate.outputCostPerMillion,
+    reasoningOutputCostPerMillion: reasoningPrice,
+  };
+}
 
 /**
  * 取得使用者自訂定價設定檔路徑 (~/.codex/pricing.json)
@@ -184,6 +215,11 @@ export function loadUserPricingConfig(): { version: string; models: ModelPricing
     }
 
     const fileStat = statSync(filePath);
+    if (!fileStat.isFile() || fileStat.size > MAXIMUM_USER_PRICING_FILE_BYTES) {
+      cachedUserConfigData = null;
+      cachedUserConfigMtime = fileStat.mtimeMs;
+      return null;
+    }
     if (cachedUserConfigData && fileStat.mtimeMs === cachedUserConfigMtime) {
       return cachedUserConfigData;
     }
@@ -198,20 +234,9 @@ export function loadUserPricingConfig(): { version: string; models: ModelPricing
     }
 
     const validatedModels: ModelPricingTier[] = [];
-    for (const item of parsed.models) {
-      if (
-        typeof item.modelPrefix === "string" &&
-        typeof item.inputCostPerMillion === "number" &&
-        typeof item.outputCostPerMillion === "number"
-      ) {
-        validatedModels.push({
-          modelPrefix: item.modelPrefix.toLowerCase(),
-          inputCostPerMillion: item.inputCostPerMillion,
-          cachedInputCostPerMillion: item.cachedInputCostPerMillion ?? item.inputCostPerMillion * 0.5,
-          outputCostPerMillion: item.outputCostPerMillion,
-          reasoningOutputCostPerMillion: item.reasoningOutputCostPerMillion ?? item.outputCostPerMillion,
-        });
-      }
+    for (const item of parsed.models.slice(0, MAXIMUM_USER_PRICING_MODELS)) {
+      const validatedTier = validatePricingTier(item);
+      if (validatedTier) validatedModels.push(validatedTier);
     }
 
     if (validatedModels.length === 0) {
@@ -220,10 +245,13 @@ export function loadUserPricingConfig(): { version: string; models: ModelPricing
       return null;
     }
 
+    const validatedFallback = validatePricingTier(parsed.fallback);
     cachedUserConfigData = {
-      version: parsed.pricingVersion || "user-custom",
+      version: typeof parsed.pricingVersion === "string"
+        ? parsed.pricingVersion.slice(0, 128)
+        : "user-custom",
       models: validatedModels,
-      fallback: parsed.fallback,
+      fallback: validatedFallback || undefined,
     };
     cachedUserConfigMtime = fileStat.mtimeMs;
     clearPricingResolutionCache();

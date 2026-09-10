@@ -53,3 +53,31 @@ for (const filename of ["pricing.json", "pricing_cache.json"]) {
     }
   });
 }
+
+test("使用者定價拒絕非有限、負數與控制字元欄位", () => {
+  const directory = mkdtempSync(join(tmpdir(), "pricing-validation-"));
+  try {
+    const result = spawnSync(process.execPath, ["--eval", `
+      import { writeFileSync } from "node:fs";
+      import { calculateTokenCost, getActivePricingConfig } from "./src/core/pricing-calculator.ts";
+      import { strict as assert } from "node:assert";
+      writeFileSync(process.env.CODEX_HOME + "/pricing.json", JSON.stringify({ models: [
+        { modelPrefix: "negative", inputCostPerMillion: -1, outputCostPerMillion: 1 },
+        { modelPrefix: "infinite", inputCostPerMillion: 1e309, outputCostPerMillion: 1 },
+        { modelPrefix: "bad\\u001bname", inputCostPerMillion: 1, outputCostPerMillion: 1 },
+        { modelPrefix: "valid", inputCostPerMillion: 1, outputCostPerMillion: 2 }
+      ]}));
+      const config = getActivePricingConfig();
+      assert.equal(config.summary.userConfigCount, 1);
+      assert.equal(calculateTokenCost("valid", 1000000, 0, 0, 0).totalCost, 1);
+    `], {
+      cwd: join(import.meta.dir, ".."),
+      env: { ...process.env, CODEX_HOME: directory },
+      encoding: "utf8",
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
