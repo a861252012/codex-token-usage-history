@@ -6,6 +6,22 @@ import {
   getEffectiveCatalogOverview,
 } from "../core/pricing-calculator.js";
 
+const MAXIMUM_MCP_LINE_LENGTH_BYTES = 1024 * 1024;
+const MAXIMUM_MCP_RESULT_LIMIT = 1_000;
+const MAXIMUM_MCP_FILTER_LENGTH = 128;
+
+export function parseMcpLimit(value: unknown, defaultValue: number): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1
+    ? Math.min(value, MAXIMUM_MCP_RESULT_LIMIT)
+    : defaultValue;
+}
+
+function parseMcpFilter(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0
+    ? value.slice(0, MAXIMUM_MCP_FILTER_LENGTH)
+    : undefined;
+}
+
 /**
  * 輕量級標準 MCP (Model Context Protocol) 伺服器
  * 透過標準輸入輸出 (stdio) 運作，零外部相依套件，提供 Codex APP 與 CLI 即時查詢工具
@@ -27,6 +43,10 @@ export async function runMcpServer(): Promise<void> {
 
   readlineInterface.on("line", async (inputLine: string) => {
     if (!inputLine.trim()) return;
+    if (Buffer.byteLength(inputLine, "utf8") > MAXIMUM_MCP_LINE_LENGTH_BYTES) {
+      sendResponse({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Request exceeds size limit" } });
+      return;
+    }
 
     let jsonRpcRequest: any;
     try {
@@ -191,11 +211,12 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_usage_history") {
         try {
-          const recordLimit = typeof toolArguments.limit === "number" ? toolArguments.limit : 10;
+          const recordLimit = parseMcpLimit(toolArguments.limit, 10);
+          const requestedRole = parseMcpFilter(toolArguments.agent_role);
           const { records, total } = database.queryRecords({
             limit: recordLimit,
-            model: toolArguments.model,
-            agentRole: toolArguments.agent_role,
+            model: parseMcpFilter(toolArguments.model),
+            agentRole: requestedRole === "main" || requestedRole === "subagent" ? requestedRole : undefined,
           });
 
           const todayMidnight = new Date();
@@ -233,7 +254,7 @@ export async function runMcpServer(): Promise<void> {
           const settlementPeriod = toolArguments.period === "weekly" || toolArguments.period === "monthly" || toolArguments.period === "yearly"
             ? toolArguments.period
             : "daily";
-          const periodLimit = typeof toolArguments.limit === "number" ? toolArguments.limit : 14;
+          const periodLimit = parseMcpLimit(toolArguments.limit, 14);
           const settlementRecords = database.getSettlementRecords(settlementPeriod, periodLimit);
           const planChanges = database.getPlanChangeEvents(10);
 
@@ -266,7 +287,7 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_reset_events") {
         try {
-          const eventLimit = typeof toolArguments.limit === "number" ? toolArguments.limit : 20;
+          const eventLimit = parseMcpLimit(toolArguments.limit, 20);
           const resetEvents = database.getResetEvents(eventLimit);
 
           sendResponse({
@@ -296,7 +317,7 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_plan_changes") {
         try {
-          const planLimit = typeof toolArguments.limit === "number" ? toolArguments.limit : 20;
+          const planLimit = parseMcpLimit(toolArguments.limit, 20);
           const planChanges = database.getPlanChangeEvents(planLimit);
 
           sendResponse({

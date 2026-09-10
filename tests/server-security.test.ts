@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { request } from "node:http";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DashboardServer } from "../src/server/app.js";
@@ -20,9 +20,9 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-function sendRequest(port: number, headers: Record<string, string> = {}, method = "GET"): Promise<HttpResult> {
+function sendRequest(port: number, headers: Record<string, string> = {}, method = "GET", path = "/api/history?limit=1"): Promise<HttpResult> {
   return new Promise((resolve, reject) => {
-    const outgoingRequest = request({ hostname: "127.0.0.1", port, path: "/api/history?limit=1", method, headers }, (response) => {
+    const outgoingRequest = request({ hostname: "127.0.0.1", port, path, method, headers }, (response) => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", (chunk) => { body += chunk; });
@@ -71,5 +71,25 @@ describe("dashboard HTTP security", () => {
 
     const post = await sendRequest(port, {}, "POST");
     expect(post.status).toBe(405);
+  });
+
+  test("does not follow static-file symlinks outside the web root", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "codex-dashboard-symlink-"));
+    temporaryDirectories.push(directory);
+    const database = new HistoryDatabase(join(directory, "history.sqlite"));
+    const server = new DashboardServer(database, { port: 0 });
+    runningServers.push(server);
+    const port = Number(new URL(await server.start()).port);
+    const linkName = `.security-test-${process.pid}-${Date.now()}`;
+    const linkPath = join(import.meta.dir, "../src/web", linkName);
+
+    try {
+      symlinkSync("/etc/passwd", linkPath);
+      const response = await sendRequest(port, {}, "GET", `/${linkName}`);
+      expect(response.status).toBe(404);
+      expect(response.body).not.toContain("root:");
+    } finally {
+      try { unlinkSync(linkPath); } catch {}
+    }
   });
 });
