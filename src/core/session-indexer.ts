@@ -246,7 +246,7 @@ export class SessionIndexer {
             payloadData.source?.subagent
           ) {
             currentAgentRole = "subagent";
-          } else if (payloadData.agent_role === "main" || payloadData.agent_type === "main") {
+          } else if (payloadData.agent_role === "main" || payloadData.agent_type === "main" || ["cli", "vscode", "exec", "mcp"].includes(payloadData.source)) {
             currentAgentRole = "main";
           }
         } else if (eventType === "turn_context") {

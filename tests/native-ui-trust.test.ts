@@ -27,7 +27,10 @@ describe("native quota UI trust", () => {
 
   test("five-hour quota is rendered whenever the payload contains it", () => {
     expect(menubarSource).toContain("if let fiveHourWindow = quotaSnapshot.fiveHour {");
-    expect(hudSource).toContain("let fiveHourRemaining = snapshot.fiveHour.map");
+    expect(hudSource).toContain('let fiveHourRemaining = quotaDisplay == "weekly" ? nil : snapshot.fiveHour.map');
+    expect(hudSource).toContain('let weeklyRemaining = quotaDisplay == "five-hour" ? nil : snapshot.weekly.map');
+    expect(hudSource).toContain('quotaDisplay = quotaDisplay == selected ? "both" : selected');
+    expect(hudSource).toContain('item.state = quotaDisplay == key ? .on : .off');
     expect(menubarSource).not.toContain("fiveHourWindow = quotaSnapshot.fiveHour, !isPro");
     expect(hudSource).not.toContain("fiveHour = snapshot.fiveHour, !proActive");
   });
@@ -48,7 +51,8 @@ describe("native quota UI trust", () => {
     expect(menubarSource).toContain("本機快取（非即時）");
     expect(menubarSource).toContain("資料更新:");
     expect(menubarSource).toContain("狀態說明:");
-    expect(hudSource).toContain('secondaryTagLabel.stringValue = "CACHE"');
+    expect(hudSource).not.toContain('secondaryTagLabel.stringValue = "CACHE"');
+    expect(hudSource).toContain('if !isLive && snapshot.source != "cache"');
     expect(hudSource).toContain('secondaryTagLabel.stringValue = "STALE"');
     expect(hudSource).toContain("snapshot: self.asLocalCache(previousStatus.snapshot)");
     expect(hudSource).toContain('secondaryTagLabel.stringValue = "OFFLINE"');
@@ -80,7 +84,7 @@ describe("native quota UI trust", () => {
         encoding: "utf8",
         timeout: 30_000,
       });
-      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(result.status, `${path}: ${result.error?.message || result.signal || ""}\n${result.stderr || result.stdout}`).toBe(0);
     }
-  });
+  }, 70_000);
 });

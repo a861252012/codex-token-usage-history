@@ -41,7 +41,8 @@ struct HudLoginItem {
                 "Label": "com.codex.token-usage-hud",
                 "ProgramArguments": [executableURL.path],
                 "RunAtLoad": true,
-                "LimitLoadToSessionType": "Aqua"
+                "LimitLoadToSessionType": "Aqua",
+                "EnvironmentVariables": ["CODEX_HOME": ProcessInfo.processInfo.environment["CODEX_HOME"] ?? homeDirectory.appendingPathComponent(".codex").path]
             ]
             let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
             try FileManager.default.createDirectory(at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -760,7 +761,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func getConfigurationFilePath() -> String {
-        return "\(homeDirectoryPath)/.codex/hud_config.json"
+        return "\(codexDirectoryPath)/hud_config.json"
     }
 
     private func loadUserConfiguration() {
@@ -1309,9 +1310,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.75)
             secondaryTagLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
 
-            if !isLive {
+            if !isLive && snapshot.source != "cache" {
                 switch snapshot.source {
-                case "cache": secondaryTagLabel.stringValue = "CACHE"
                 case "fallback": secondaryTagLabel.stringValue = "OFFLINE"
                 case "wham": secondaryTagLabel.stringValue = "STALE"
                 default: secondaryTagLabel.stringValue = "UNKNOWN"

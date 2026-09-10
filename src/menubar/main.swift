@@ -48,6 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var updateTimer: Timer?
     let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+    let codexDirectoryPath = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -139,7 +140,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // 2. 若背景伺服器未運行，以 CLI status --json 為備援快速取得完整資料
             if statusData == nil {
-                let cliPath = "\(self.homeDir)/.local/bin/codex-usage"
+                let adjacentCLI = Bundle.main.executableURL?.resolvingSymlinksInPath().deletingLastPathComponent().appendingPathComponent("codex-usage").path
+                let cliPath = [adjacentCLI, "\(self.homeDir)/.local/bin/codex-usage"].compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) } ?? ""
                 if FileManager.default.isExecutableFile(atPath: cliPath) {
                     let pipe = Pipe()
                     let proc = Process()
@@ -158,7 +160,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // 3. 仍失敗時退守本機快照檔案
             if statusData == nil {
-                let cacheFile = URL(fileURLWithPath: "\(self.homeDir)/.codex/codex_quota_snapshot.json")
+                let cacheFile = URL(fileURLWithPath: "\(self.codexDirectoryPath)/codex_quota_snapshot.json")
                 if let d = try? Data(contentsOf: cacheFile),
                    let snap = try? JSONDecoder().decode(QuotaSnapshotDTO.self, from: d) {
                     statusData = StatusOutputDTO(

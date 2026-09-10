@@ -86,7 +86,7 @@ export class HistoryDatabase {
     }
     this.databaseInstance = await createSqliteDb(this.databaseFilePath);
 
-    if (this.databaseInstance.prepare("PRAGMA user_version").get().user_version >= 1) return;
+    if (this.databaseInstance.prepare("PRAGMA user_version").get().user_version >= 2) return;
 
     try {
       // Serialize first-run migrations before reading schema or migration markers.
@@ -207,6 +207,26 @@ export class HistoryDatabase {
         `);
         this.databaseInstance.exec("PRAGMA user_version = 1;");
       }
+      if (this.databaseInstance.prepare("PRAGMA user_version").get().user_version < 2) {
+        this.databaseInstance.exec(`
+          CREATE TABLE IF NOT EXISTS deleted_token_records (
+            session_id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            PRIMARY KEY(session_id, turn_id, model, timestamp)
+          );
+          CREATE TRIGGER IF NOT EXISTS remember_deleted_token_record
+          AFTER DELETE ON token_records BEGIN
+            INSERT OR IGNORE INTO deleted_token_records VALUES (OLD.session_id, OLD.turn_id, OLD.model, OLD.timestamp);
+          END;
+          CREATE TRIGGER IF NOT EXISTS prevent_deleted_token_reimport
+          BEFORE INSERT ON token_records
+          WHEN EXISTS (SELECT 1 FROM deleted_token_records d WHERE d.session_id=NEW.session_id AND d.turn_id=NEW.turn_id AND d.model=NEW.model AND d.timestamp=NEW.timestamp)
+          BEGIN SELECT RAISE(IGNORE); END;
+          PRAGMA user_version = 2;
+        `);
+      }
       this.databaseInstance.exec("COMMIT;");
     } catch (error) {
       this.databaseInstance.close();
@@ -299,7 +319,7 @@ export class HistoryDatabase {
             UPDATE token_records
             SET agent_role = ?
             WHERE session_id = ? AND turn_id = ? AND model = ? AND timestamp = ?
-              AND agent_role = 'unknown'
+              AND agent_role != ?
               AND ? IN ('main', 'subagent')
           `)
         : null;
@@ -344,6 +364,7 @@ export class HistoryDatabase {
             singleRecord.turnId,
             singleRecord.model,
             singleRecord.timestamp,
+            resolvedAgentRole,
             resolvedAgentRole
           );
         }

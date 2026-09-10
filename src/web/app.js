@@ -1,5 +1,6 @@
 // Codex Token & Quota Real-Time Monitor Client
-let currentLanguage = localStorage.getItem("codex_ui_lang") || "en";
+let currentLanguage = "en";
+try { currentLanguage = localStorage.getItem("codex_ui_lang") === "zh-TW" ? "zh-TW" : "en"; } catch {}
 let currentPage = 1;
 const pageSize = 25;
 let totalHistoryRecords = 0;
@@ -48,7 +49,7 @@ function resetFilters() {
   currentFilterAgentRole = "";
   currentPage = 1;
   document.getElementById("filter-model").value = "";
-  document.getElementById("filter-agent-role").value = "";
+  document.querySelectorAll("#filter-agent-role button").forEach((button) => button.setAttribute("aria-pressed", String(button.value === "")));
   return fetchHistory();
 }
 
@@ -72,6 +73,10 @@ function withRequestFeedback(task, { table, columns, buttons = [] } = {}) {
     }
     const renderState = (error) => {
       if (!tbody) return;
+      if (!error && table !== "history") {
+        tbody.innerHTML = `<tr><td colspan="${columns}" class="text-center">${uiText("No records yet", "尚無紀錄")}</td></tr>`;
+        return;
+      }
       tbody.innerHTML = `<tr><td colspan="${columns}"><div class="empty-state"><strong>${error ? uiText("Unable to load records", "無法載入紀錄") : uiText("No records found", "目前沒有符合的紀錄")}</strong><p>${error ? uiText("Check the local service and try again.", "請確認本機服務正常後重試。") : uiText("Try resetting filters. Local history is imported automatically when the service starts.", "可重設篩選；服務啟動時會自動匯入本機歷史。")}</p><button class="btn btn-secondary">${error ? uiText("Retry", "重新載入") : table === "history" ? uiText("Reset filters", "重設條件") : uiText("Refresh records", "重新查詢")}</button></div></td></tr>`;
       tbody.querySelector("button").onclick = () => !error && table === "history" ? resetFilters() : wrappedRetry();
     };
@@ -105,7 +110,6 @@ let weeklyResetTimestamp = 0;
 const i18nDictionary = {
   en: {
     appTitle: "Codex Token & Quota Monitor",
-    appSubtitle: "Real-time Dashboard for macOS & Codex",
     refreshBtn: "Refresh",
     cardFiveHour: "5-Hour Quota",
     tagFiveHour: "5-Hour Window",
@@ -119,13 +123,13 @@ const i18nDictionary = {
     todayCost: "API Cost (USD):",
     todayInput: "Input / Cached:",
     todayOutput: "Output / Reasoning:",
-    todayAgents: "Agents (Main / Sub / Unknown):",
+    todayAgents: "Agent usage:",
     todayRequests: "Token Records:",
     todayBurn: "Hourly Burn Rate:",
     settlementTitle: "Multi-Period Settlement Report",
     chartTitle: "24-Hour Token Burn Activity",
     chartTag: "Hourly Breakdown",
-    modelsTitle: "Token Distribution by Model",
+    modelsTitle: "Today's Usage by Model",
     resetsTitle: "OpenAI Quota Resets & Voucher History",
     plansTitle: "Account Plan Transitions",
     historyTitle: "Token Usage Transaction Log",
@@ -139,19 +143,18 @@ const i18nDictionary = {
     prevPage: "Previous",
     nextPage: "Next",
     allAgents: "All Agents",
-    mainAgentOnly: "Main Agent Only",
-    subAgentOnly: "subAgent Only",
-    unknownAgentOnly: "Unknown Role Only",
+    mainAgentOnly: "Main",
+    subAgentOnly: "Subagent",
+    unknownAgentOnly: "Unclassified",
   },
   "zh-TW": {
     appTitle: "Codex Token 額度與消耗歷史",
-    appSubtitle: "MacBook 即時監控儀表板",
     refreshBtn: "立即重新整理",
-    cardFiveHour: "五小時短週期額度",
+    cardFiveHour: "五小時額度",
     tagFiveHour: "5小時時間視窗",
     resetIn: "重設倒數",
     statusLabel: "狀態評估",
-    cardWeekly: "週用量長週期額度",
+    cardWeekly: "週用量額度",
     tagWeekly: "7天滾動時間視窗",
     resetCountdown: "重設倒數",
     cardToday: "本日 Token 消耗統計",
@@ -159,13 +162,13 @@ const i18nDictionary = {
     todayCost: "等值 API 金額:",
     todayInput: "輸入 / 快取:",
     todayOutput: "輸出 / 推理:",
-    todayAgents: "代理人分佈 (主/子/未知):",
+    todayAgents: "代理人用量占比:",
     todayRequests: "Token 紀錄筆數:",
     todayBurn: "每小時消耗率:",
     settlementTitle: "Token 消耗多週期結算報表",
     chartTitle: "過去 24 小時 Token 燃燒趨勢",
     chartTag: "每小時分布",
-    modelsTitle: "各模型 Token 消耗比例",
+    modelsTitle: "今日各模型用量",
     resetsTitle: "OpenAI 配額重置與重置券變動歷史",
     plansTitle: "帳號方案調整歷程 (升級/降級紀錄)",
     historyTitle: "Token 消耗歷史紀錄流水帳",
@@ -179,15 +182,15 @@ const i18nDictionary = {
     prevPage: "上一頁",
     nextPage: "下一頁",
     allAgents: "全部角色",
-    mainAgentOnly: "僅主程式",
-    subAgentOnly: "僅 subAgent",
-    unknownAgentOnly: "僅未知角色",
+    mainAgentOnly: "主代理人",
+    subAgentOnly: "子代理人",
+    unknownAgentOnly: "未分類",
   },
 };
 
 function setLanguage(targetLanguage) {
   currentLanguage = targetLanguage;
-  localStorage.setItem("codex_ui_lang", targetLanguage);
+  try { localStorage.setItem("codex_ui_lang", targetLanguage); } catch {}
 
   document.querySelectorAll(".btn-lang").forEach((button) => {
     button.classList.toggle("active", button.getAttribute("data-lang") === targetLanguage);
@@ -202,9 +205,26 @@ function setLanguage(targetLanguage) {
   };
 
   updateText("app-title", texts.appTitle);
+  const tableLabels = {
+    "th-period": ["Period", "期間"], "th-total-tokens": ["Total tokens", "總 Token"],
+    "th-cost": ["Estimated cost (USD)", "估算金額（美元）"], "th-in-cached": ["Input / Cached", "輸入／快取"],
+    "th-out-reasoning": ["Output / Reasoning", "輸出／推理"], "th-main-tokens": ["Main agent", "主代理人"],
+    "th-sub-tokens": ["Subagent", "子代理人"], "th-reset-time": ["Time", "時間"],
+    "th-reset-type": ["Event", "事件"], "th-reset-prev": ["Prior usage 5h / 7d", "原用量 5h／7d"],
+    "th-reset-new": ["New usage 5h / 7d", "新用量 5h／7d"], "th-reset-delta": ["Credit change", "重置券變動"],
+    "th-reset-desc": ["Description", "說明"], "th-plan-time": ["Time", "時間"],
+    "th-plan-type": ["Transition", "異動"], "th-plan-prev": ["Previous plan", "原方案"],
+    "th-plan-new": ["New plan", "新方案"], "th-plan-desc": ["Description", "說明"],
+    "th-hist-time": ["Time", "時間"], "th-hist-role": ["Role", "角色"], "th-hist-model": ["Model", "模型"],
+    "th-hist-total": ["Total tokens", "總 Token"], "th-hist-cost": ["Estimated cost (USD)", "估算金額（美元）"],
+    "th-hist-input": ["Input", "輸入"], "th-hist-cached": ["Cached", "快取"],
+    "th-hist-output": ["Output", "輸出"], "th-hist-reasoning": ["Reasoning", "推理"],
+    "th-hist-quota": ["Weekly used", "週已用額度"],
+  };
+  for (const [id, labels] of Object.entries(tableLabels)) updateText(id, uiText(...labels));
+  updateText("label-additional-limits", uiText("Additional quotas", "其他模型額度"));
   updateText("label-hud-settings", targetLanguage === "zh-TW" ? "懸浮球設定" : "HUD settings");
   updateText("label-hud-interval", targetLanguage === "zh-TW" ? "懸浮球更新間隔（秒）" : "HUD refresh interval (seconds)");
-  updateText("hud-interval-help", targetLanguage === "zh-TW" ? "限 1～300 的整數，預設 5 秒。最晚於懸浮球下一輪更新套用；後台即時推播不變。" : "1–300 seconds, default 5. Applies by the next HUD refresh. Dashboard live updates are unchanged.");
   updateText("btn-save-hud-settings", targetLanguage === "zh-TW" ? "儲存" : "Save");
   updateText("breadcrumb-current", uiText("Usage overview", "用量總覽"));
   updateText("link-top-history", uiText("History", "歷史紀錄"));
@@ -218,7 +238,6 @@ function setLanguage(targetLanguage) {
   updateText("btn-reset-filters", uiText("Reset filters", "重設條件"));
   updateText("link-history", uiText("View history", "查看歷史結果"));
   updateText("th-hist-session", uiText("Actions", "操作"));
-  updateText("app-subtitle", texts.appSubtitle);
   updateText("btn-refresh", texts.refreshBtn);
   updateText("label-card-five-hour", texts.cardFiveHour);
   updateText("tag-card-five-hour", texts.tagFiveHour);
@@ -268,7 +287,7 @@ function setLanguage(targetLanguage) {
   updateText("btn-next-page", texts.nextPage);
   updateText("desc-pro-unlimited", texts.proUnlimitedDesc);
   updateText("title-pro-window", texts.proUnlimitedTitle);
-  document.querySelectorAll("#filter-agent-role option").forEach((option) => {
+  document.querySelectorAll("#filter-agent-role button").forEach((option) => {
     option.textContent = option.value === "subagent"
       ? texts.subAgentOnly
       : option.value === "main"
@@ -278,8 +297,8 @@ function setLanguage(targetLanguage) {
       : texts.allAgents;
   });
   const connectionStatus = document.getElementById("connection-status");
-  if (connectionStatus?.classList.contains("connected")) {
-    connectionStatus.textContent = targetLanguage === "zh-TW" ? "本機服務已連線" : "Local service connected";
+  if (connectionStatus && !connectionStatus.hidden) {
+    connectionStatus.textContent = targetLanguage === "zh-TW" ? "本機服務重新連線中..." : "Reconnecting local service...";
   }
   if (lastQuotaSnapshot) renderQuotaSnapshot(lastQuotaSnapshot);
   if (lastDiagnostics) renderDiagnostics(lastDiagnostics);
@@ -295,6 +314,10 @@ function setLanguage(targetLanguage) {
 
   fetchSettlementReport(currentSettlementPeriod);
   fetchHistory();
+  fetchSummary();
+  fetchHourlyStats();
+  fetchResetEvents();
+  fetchPlanChangeEvents();
 }
 
 function formatNumber(numericValue) {
@@ -433,6 +456,12 @@ function formatCountdown(totalSeconds) {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
 
+  if (totalSeconds > 86400) {
+    const days = Math.floor(hours / 24);
+    return currentLanguage === "zh-TW"
+      ? `${days} 天 ${hours % 24} 時 ${minutes} 分 ${seconds} 秒`
+      : `${days}d ${hours % 24}h ${minutes}m ${seconds}s`;
+  }
   if (hours > 0) {
     return `${hours}h ${minutes}m ${seconds}s`;
   }
@@ -491,7 +520,7 @@ function updateWindowCard(windowPrefix, quotaWindow, trustState = lastQuotaTrust
   const remainingPercent = Math.max(0, 100 - usedPercent);
 
   if (progressBar) {
-    progressBar.style.width = `${usedPercent}%`;
+    progressBar.style.width = `${remainingPercent}%`;
     progressBar.style.backgroundColor = getColorForPercent(usedPercent);
   }
   if (textUsed) {
@@ -605,8 +634,13 @@ function renderQuotaSnapshot(quotaSnapshot) {
   const accountBadge = document.getElementById("account-badge");
   if (accountBadge) {
     const emailLabel = quotaSnapshot.email || "Local User";
+    accountBadge.textContent = emailLabel;
+  }
+  const planBadge = document.getElementById("plan-badge");
+  if (planBadge) {
     const planLabel = getPlanLabel(quotaSnapshot);
-    accountBadge.textContent = `${emailLabel} (${planLabel})`;
+    planBadge.hidden = planLabel === "—";
+    planBadge.textContent = planLabel === "—" ? "" : planLabel.toUpperCase();
   }
 
   const voucherBadge = document.getElementById("voucher-badge");
@@ -626,14 +660,21 @@ function renderQuotaSnapshot(quotaSnapshot) {
     if (quotaSnapshot.additionalLimits && quotaSnapshot.additionalLimits.length > 0) {
       additionalLimitsSection.style.display = "block";
       additionalLimitsList.innerHTML = quotaSnapshot.additionalLimits.map((additionalLimit) => {
-        const primaryText = additionalLimit.primaryWindow ? `${additionalLimit.primaryWindow.usedPercent}% (${additionalLimit.primaryWindow.remainingPercent}% left)` : "N/A";
-        const secondaryText = additionalLimit.secondaryWindow ? `${additionalLimit.secondaryWindow.usedPercent}% (${additionalLimit.secondaryWindow.remainingPercent}% left)` : "N/A";
+        const windows = [
+          [uiText("5-Hour Quota", "五小時額度"), additionalLimit.primaryWindow],
+          [uiText("Weekly Quota", "週用量額度"), additionalLimit.secondaryWindow],
+        ].map(([label, quotaWindow]) => {
+          const used = quotaWindow?.usedPercent;
+          const valid = typeof used === "number" && Number.isFinite(used) && used >= 0 && used <= 100;
+          const remaining = valid ? 100 - Math.round(used) : 0;
+          const value = valid ? uiText(`${remaining}% left`, `剩餘 ${remaining}%`) : uiText("Unavailable", "尚無資料");
+          const color = valid ? getColorForPercent(used) : "var(--text-muted)";
+          return `<div class="additional-quota-window"><div class="additional-quota-label"><span>${label}</span><strong>${value}</strong></div><div class="additional-quota-track" role="progressbar" aria-label="${escapeHtml(additionalLimit.limitName)} ${label}" aria-valuemin="0" aria-valuemax="100" ${valid ? `aria-valuenow="${remaining}"` : 'aria-valuetext="尚無資料"'}><div style="width: ${remaining}%; background-color: ${color}"></div></div></div>`;
+        }).join("");
         return `
           <div class="card" style="padding: 14px; margin-bottom: 0;">
-            <div style="font-weight: 600; margin-bottom: 6px; color: #fff;">${escapeHtml(additionalLimit.limitName)}</div>
-            <div style="font-size: 12px; color: var(--text-secondary);">
-              5h: <strong>${primaryText}</strong> | 7d: <strong>${secondaryText}</strong>
-            </div>
+            <div style="font-weight: 600; margin-bottom: 6px; color: var(--text-primary);">${escapeHtml(additionalLimit.limitName)}</div>
+            <div class="additional-quota-windows">${windows}</div>
           </div>
         `;
       }).join("");
@@ -683,8 +724,10 @@ async function fetchSummary() {
     const totalAgentTokens = mainAgentTokens + subAgentTokens + unknownAgentTokens;
     const mainPercent = totalAgentTokens > 0 ? Math.round((mainAgentTokens / totalAgentTokens) * 100) : 0;
     const subPercent = totalAgentTokens > 0 ? Math.round((subAgentTokens / totalAgentTokens) * 100) : 0;
-    const unknownPercent = Math.max(0, 100 - mainPercent - subPercent);
-    document.getElementById("text-today-agents").textContent = `Main ${mainPercent}% · Sub ${subPercent}% · ${uiText("Unknown", "未知")} ${unknownPercent}% (${formatNumber(unknownAgentTokens)} tokens)`;
+    const unknownPercent = totalAgentTokens > 0 ? Math.round(unknownAgentTokens / totalAgentTokens * 100) : 0;
+    document.getElementById("text-today-agents").textContent = totalAgentTokens === 0 ? "—" :
+      `${uiText("Main", "主")} ${mainPercent}% · ${uiText("Sub", "子")} ${subPercent}%` +
+      (unknownAgentTokens > 0 ? ` · ${uiText("Unclassified", "未分類")} ${unknownPercent}%` : "");
 
     document.getElementById("text-today-requests").textContent = `${formatNumber(summary.requests)} ${uiText("records", "筆")}`;
     document.getElementById("text-today-burn-rate").textContent = `${formatNumber(summary.hourlyBurnRate)} / hr`;
@@ -693,9 +736,9 @@ async function fetchSummary() {
     const container = document.getElementById("model-bars-container");
     if (container && summary.byModel) {
       if (summary.byModel.length === 0) {
-        container.innerHTML = `<div style="color: var(--text-secondary); font-size: 13px;">No token usage recorded today</div>`;
+        container.innerHTML = `<div class="empty-state">${uiText("No token usage recorded today", "今日尚無 Token 用量")}</div>`;
       } else {
-        const maxTokens = Math.max(...summary.byModel.map((modelStats) => modelStats.totalTokens), 1);
+        const maxTokens = Math.max(summary.byModel.reduce((total, model) => total + model.totalTokens, 0), 1);
         container.innerHTML = summary.byModel.map((modelStats) => {
           const barPercent = Math.round((modelStats.totalTokens / maxTokens) * 100);
           return `
@@ -736,7 +779,8 @@ async function fetchHourlyStats() {
 
     let total24hTokens = 0;
 
-    for (let index = 23; index >= 0; index -= 1) {
+    // A rolling 24-hour range spans partial hours at both ends.
+    for (let index = 24; index >= 0; index -= 1) {
       const slotDate = new Date(now.getTime() - index * 3600 * 1000);
       const year = slotDate.getFullYear();
       const month = String(slotDate.getMonth() + 1).padStart(2, "0");
@@ -760,7 +804,7 @@ async function fetchHourlyStats() {
 
     const totalLabel = document.getElementById("chart-total-tokens");
     if (totalLabel) {
-      totalLabel.textContent = `24h Total: ${formatNumber(total24hTokens)} tokens`;
+      totalLabel.textContent = `${uiText("24h total", "24 小時合計")}: ${formatNumber(total24hTokens)} tokens`;
     }
 
     const width = 1000;
@@ -860,7 +904,7 @@ async function fetchSettlementReport(period = "daily") {
 
     const infoTag = document.getElementById("settlement-info-tag");
     if (infoTag) {
-      infoTag.textContent = `${period.toUpperCase()} (${(data.settlements || data.records || []).length} ${uiText("entries", "筆")})`;
+      infoTag.textContent = `${(data.settlements || data.records || []).length} ${uiText("periods", "個期間")}`;
     }
 
     const tbody = document.getElementById("settlement-table-body");
@@ -868,7 +912,7 @@ async function fetchSettlementReport(period = "daily") {
 
     const settlementRecords = data.settlements || data.records || [];
     if (!settlementRecords.length) {
-      tbody.innerHTML = `<tr><td colspan="10" class="text-center">${uiText("No settlement records found", "尚無結算紀錄")}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center">${uiText("No settlement records found", "尚無結算紀錄")}</td></tr>`;
       return;
     }
 
@@ -884,7 +928,6 @@ async function fetchSettlementReport(period = "daily") {
           <td>${formatNumber(record.subAgentTokens)}</td>
           <td>${formatNumber(record.unknownAgentTokens)}</td>
           <td>${formatNumber(record.requests)}</td>
-          <td><span class="pricing-source" title="${escapeHtml(describePricingProvenance(record))}">${escapeHtml(describePricingProvenance(record))}</span></td>
         </tr>
       `;
     }).join("");
@@ -904,7 +947,7 @@ async function fetchResetEvents() {
 
     const countTag = document.getElementById("resets-count-tag");
     if (countTag) {
-      countTag.textContent = `${count} events`;
+      countTag.textContent = `${count} ${uiText("events", "筆")}`;
     }
 
     const tbody = document.getElementById("resets-table-body");
@@ -916,17 +959,23 @@ async function fetchResetEvents() {
     }
 
     tbody.innerHTML = events.map((event) => {
-      const timeString = event.datetime ? event.datetime.replace("T", " ").slice(0, 19) : "—";
+      const timeString = formatTimestamp(event.timestamp ?? Date.parse(event.datetime));
       const deltaText = event.creditDelta > 0 ? `+${event.creditDelta}` : `${event.creditDelta}`;
       const deltaClass = event.creditDelta > 0 ? "style=\"color: var(--color-green); font-weight: bold;\"" : "";
+      const eventLabels = {
+        periodic_reset: uiText("Quota period reset", "配額週期重置"),
+        usage_drop: uiText("Usage percentage decreased", "額度使用率下降"),
+        credit_received: uiText("Credit received", "收到重置券"),
+        credit_consumed: uiText("Credit consumed", "使用重置券"),
+      };
 
       return `
         <tr>
           <td>${timeString}</td>
-          <td><span class="badge">${escapeHtml(event.eventType)}</span></td>
+          <td><span class="badge">${escapeHtml(eventLabels[event.eventType] || event.eventType)}</span></td>
           <td>5h: ${formatPercentDisplay(event.previousFiveHourUsedPercent)} | 7d: ${formatPercentDisplay(event.previousWeeklyUsedPercent)}</td>
           <td>5h: ${formatPercentDisplay(event.newFiveHourUsedPercent)} | 7d: ${formatPercentDisplay(event.newWeeklyUsedPercent)}</td>
-          <td ${deltaClass}>${deltaText} (Bal: ${event.availableCredits})</td>
+          <td ${deltaClass}>${deltaText} (${uiText("Balance", "剩餘")}: ${event.availableCredits ?? "—"})</td>
           <td>${escapeHtml(event.description)}</td>
         </tr>
       `;
@@ -944,7 +993,7 @@ async function fetchPlanChangeEvents() {
 
     const countTag = document.getElementById("plans-count-tag");
     if (countTag) {
-      countTag.textContent = `${planChanges.length} events`;
+      countTag.textContent = `${planChanges.length} ${uiText("events", "筆")}`;
     }
 
     const tbody = document.getElementById("plans-table-body");
@@ -959,14 +1008,14 @@ async function fetchPlanChangeEvents() {
     }
 
     tbody.innerHTML = planChanges.map((event) => {
-      const timeString = event.datetime ? event.datetime.replace("T", " ").slice(0, 19) : "—";
-      let badgeStyle = "background: rgba(59, 130, 246, 0.15); color: #60a5fa;";
-      let typeLabel = "Change";
+      const timeString = formatTimestamp(event.timestamp ?? Date.parse(event.datetime));
+      let badgeStyle = "background: rgba(59, 130, 246, 0.15); color: var(--color-blue);";
+      let typeLabel = uiText("Change", "方案異動");
       if (event.changeType === "upgrade") {
-        badgeStyle = "background: rgba(34, 197, 94, 0.15); color: #4ade80;";
+        badgeStyle = "background: rgba(34, 197, 94, 0.15); color: var(--color-green);";
         typeLabel = currentLanguage === "zh-TW" ? "方案升級" : "Upgrade";
       } else if (event.changeType === "downgrade") {
-        badgeStyle = "background: rgba(239, 68, 68, 0.15); color: #f87171;";
+        badgeStyle = "background: rgba(239, 68, 68, 0.15); color: var(--color-red);";
         typeLabel = currentLanguage === "zh-TW" ? "方案降級" : "Downgrade";
       }
 
@@ -1093,7 +1142,7 @@ async function fetchHistory() {
     }
 
     tbody.innerHTML = data.records.map((record, index) => {
-      const timeString = record.datetime ? record.datetime.replace("T", " ").slice(0, 19) : "—";
+      const timeString = formatTimestamp(record.timestamp ?? Date.parse(record.datetime));
       const weeklyQuota = record.weeklyUsedPercent !== null && record.weeklyUsedPercent !== undefined
         ? `${record.weeklyUsedPercent}%`
         : record.weeklyUsedPct !== null && record.weeklyUsedPct !== undefined
@@ -1104,9 +1153,9 @@ async function fetchHistory() {
       const costText = Number.isFinite(costValue) ? `$${costValue.toFixed(3)}` : "$0.000";
       const agentRole = normalizeAgentRole(record.agentRole);
       const roleBadge = agentRole === "subagent"
-        ? "<span class=\"badge role-subagent\">subAgent</span>"
+        ? `<span class="badge role-subagent">${uiText("Subagent", "子代理人")}</span>`
         : agentRole === "main"
-        ? "<span class=\"badge role-main\">Main</span>"
+        ? `<span class="badge role-main">${uiText("Main", "主代理人")}</span>`
         : `<span class="badge role-unknown">${uiText("Unknown", "未知")}</span>`;
 
       return `
@@ -1147,8 +1196,8 @@ function setupSse() {
 
   eventSource.onopen = () => {
     if (statusElement) {
-      statusElement.textContent = currentLanguage === "zh-TW" ? "本機服務已連線" : "Local service connected";
-      statusElement.className = "status-badge connected";
+      statusElement.hidden = true;
+      statusElement.textContent = "";
     }
   };
 
@@ -1164,7 +1213,6 @@ function setupSse() {
     fetchHourlyStats();
     fetchSettlementReport(currentSettlementPeriod);
     fetchResetEvents();
-    fetchDiagnostics();
 
     if (currentPage === 1) {
       fetchHistory();
@@ -1178,6 +1226,7 @@ function setupSse() {
 
   eventSource.onerror = () => {
     if (statusElement) {
+      statusElement.hidden = false;
       statusElement.textContent = currentLanguage === "zh-TW" ? "本機服務重新連線中..." : "Reconnecting local service...";
       statusElement.className = "status-badge connecting";
     }
@@ -1261,7 +1310,7 @@ async function exportCsv() {
 fetchQuota = withRequestFeedback(fetchQuota);
 fetchSummary = withRequestFeedback(fetchSummary);
 fetchHourlyStats = withRequestFeedback(fetchHourlyStats);
-fetchSettlementReport = withRequestFeedback(fetchSettlementReport, { table: "settlement", columns: 10, buttons: [".btn-period"] });
+fetchSettlementReport = withRequestFeedback(fetchSettlementReport, { table: "settlement", columns: 9, buttons: [".btn-period"] });
 fetchResetEvents = withRequestFeedback(fetchResetEvents, { table: "resets", columns: 6 });
 fetchPlanChangeEvents = withRequestFeedback(fetchPlanChangeEvents, { table: "plans", columns: 5 });
 fetchHistory = withRequestFeedback(fetchHistory, { table: "history", columns: 11, buttons: ["#btn-prev-page", "#btn-next-page", "#btn-load-new-records", "#btn-reset-filters"] });
@@ -1283,7 +1332,20 @@ document.addEventListener("DOMContentLoaded", () => {
   setLanguage(currentLanguage);
   loadHudSettings();
   const intervalInput = document.getElementById("hud-interval");
+  intervalInput.addEventListener("beforeinput", (event) => {
+    if (event.data && /[^0-9]/.test(event.data)) event.preventDefault();
+  });
+  intervalInput.addEventListener("paste", (event) => {
+    const value = event.clipboardData.getData("text").trim();
+    event.preventDefault();
+    if (!/^\d+$/.test(value)) return;
+    intervalInput.value = String(Math.max(1, Math.min(300, Number(value))));
+    intervalInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   intervalInput.addEventListener("input", () => {
+    if (intervalInput.value !== "") {
+      intervalInput.value = String(Math.max(1, Math.min(300, Math.trunc(Number(intervalInput.value)))));
+    }
     intervalInput.dataset.edited = "true";
     intervalInput.setCustomValidity("");
   });
@@ -1309,7 +1371,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       intervalInput.value = (await response.json()).refreshIntervalSeconds;
-      showFeedback(uiText("Saved. Applies by the next HUD refresh.", "已儲存，最晚於懸浮球下一輪更新套用。"));
+      showFeedback(uiText("Saved successfully", "儲存成功"));
     } catch {
       showFeedback(uiText("Save was not confirmed. Your input is kept; you can save again.", "未確認儲存成功，已保留輸入內容，可再次儲存。"), "danger");
     } finally {
@@ -1332,7 +1394,6 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchResetEvents();
   fetchPlanChangeEvents();
   fetchHistory();
-  fetchDiagnostics();
   setupSse();
 
   setInterval(tickCountdown, 1000);
@@ -1340,12 +1401,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (lastQuotaSnapshot) renderQuotaSnapshot(lastQuotaSnapshot);
   }, 15_000);
 
-  document.getElementById("btn-refresh").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
+  async function refreshDashboard() {
+    const button = document.getElementById("btn-refresh");
     if (button.disabled) return;
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
-    const results = await Promise.all([fetchQuota(true), fetchSummary(), fetchHourlyStats(), fetchSettlementReport(currentSettlementPeriod), fetchResetEvents(), fetchPlanChangeEvents(), fetchHistory(), fetchDiagnostics()]);
+    const results = await Promise.all([fetchQuota(true), fetchSummary(), fetchHourlyStats(), fetchSettlementReport(currentSettlementPeriod), fetchResetEvents(), fetchPlanChangeEvents(), fetchHistory()]);
     const requestsSucceeded = results.every(Boolean);
     const quotaIsFresh = lastQuotaTrust?.level === "fresh";
     if (requestsSucceeded && quotaIsFresh) {
@@ -1358,7 +1419,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     button.disabled = false;
     button.removeAttribute("aria-busy");
-  });
+  }
+  document.getElementById("btn-refresh").addEventListener("click", () => refreshDashboard());
+
 
   document.getElementById("btn-export-csv").addEventListener("click", exportCsv);
 
@@ -1370,7 +1433,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!record) return;
     document.getElementById("record-dialog-title").textContent = uiText("Record details", "紀錄明細");
     document.getElementById("btn-close-details").textContent = uiText("Close", "關閉");
-    const fields = [["Session ID", record.sessionId], ["Thread ID", record.threadId], ["Turn ID", record.turnId], [uiText("Time", "時間"), record.datetime], [uiText("Model", "模型"), record.model], [uiText("Agent role", "代理人角色"), normalizeAgentRole(record.agentRole)], ["Tokens", formatNumber(record.totalTokens)], [uiText("Estimated cost (USD)", "估算費用（美元）"), formatUsdDisplay(record.costUsd)], [uiText("Stored pricing source", "已儲存定價來源"), record.pricingSource || "unknown"], [uiText("Stored pricing version", "已儲存定價版本"), record.pricingVersion || "unknown"]];
+    const fields = [["Session ID", record.sessionId], ["Thread ID", record.threadId], ["Turn ID", record.turnId], [uiText("Time", "時間"), formatTimestamp(record.timestamp ?? Date.parse(record.datetime))], [uiText("Model", "模型"), record.model], [uiText("Agent role", "代理人角色"), normalizeAgentRole(record.agentRole)], ["Tokens", formatNumber(record.totalTokens)], [uiText("Estimated cost (USD)", "估算費用（美元）"), formatUsdDisplay(record.costUsd)], [uiText("Stored pricing source", "已儲存定價來源"), record.pricingSource || "unknown"], [uiText("Stored pricing version", "已儲存定價版本"), record.pricingVersion || "unknown"]];
     document.getElementById("record-details").innerHTML = fields.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd>`).join("");
     document.getElementById("record-dialog").showModal();
   });
@@ -1386,14 +1449,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 300);
   });
 
-  const agentRoleSelect = document.getElementById("filter-agent-role");
-  if (agentRoleSelect) {
-    agentRoleSelect.addEventListener("change", (event) => {
-      currentFilterAgentRole = event.target.value;
+  document.querySelectorAll("#filter-agent-role button").forEach((button) => {
+    button.addEventListener("click", () => {
+      currentFilterAgentRole = button.value;
+      document.querySelectorAll("#filter-agent-role button").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
       currentPage = 1;
       fetchHistory();
     });
-  }
+  });
 
   const periodButtons = document.querySelectorAll(".btn-period");
   periodButtons.forEach((button) => {

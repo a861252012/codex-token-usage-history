@@ -110,6 +110,9 @@ export class DashboardServer {
     this.sessionWatcher.on("newRecords", (records: TokenRecord[]) => {
       this.broadcastServerSentEvent("records", records);
     });
+    this.sessionWatcher.on("error", (error: Error) => {
+      console.error("[dashboard] History update failed:", error.message);
+    });
   }
 
   public async start(): Promise<string> {

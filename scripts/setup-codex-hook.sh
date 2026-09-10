@@ -3,7 +3,7 @@ set -e
 
 SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_PATH="$SCRIPT_DIRECTORY/bin/codex-usage"
-CODEX_CONFIG="$HOME/.codex/config.toml"
+CODEX_CONFIG="${CODEX_HOME:-$HOME/.codex}/config.toml"
 
 echo "[設定] 開始配置 Codex APP 與 CLI 整合..."
 
@@ -20,11 +20,13 @@ if [ -f "$CODEX_CONFIG" ]; then
     echo "[備份] 備份現有設定至 $CODEX_CONFIG.bak-token-usage"
     cp "$CODEX_CONFIG" "$CODEX_CONFIG.bak-token-usage"
 
+    TOML_BIN_PATH="${BIN_PATH//\\/\\\\}"
+    TOML_BIN_PATH="${TOML_BIN_PATH//\"/\\\"}"
     cat << TOML_BLOCK >> "$CODEX_CONFIG"
 
 # --- Codex Token Usage & Quota Monitor MCP Server ---
 [mcp_servers.codex_token_usage]
-command = "$BIN_PATH"
+command = "$TOML_BIN_PATH"
 args = ["mcp"]
 enabled = true
 # --- end Codex Token Usage MCP server ---

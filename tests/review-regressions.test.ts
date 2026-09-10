@@ -63,7 +63,7 @@ for (const runtime of ["bun", "node"]) {
     let holder: ReturnType<typeof spawn> | undefined;
     try {
       const before = connection.prepare("PRAGMA schema_version").get().schema_version;
-      expect(connection.prepare("PRAGMA user_version").get().user_version).toBe(1);
+      expect(connection.prepare("PRAGMA user_version").get().user_version).toBe(2);
       database.close();
       await database.init();
       expect(connection.prepare("PRAGMA schema_version").get().schema_version).toBe(before);

@@ -36,6 +36,9 @@ export async function runLiveMonitor(): Promise<void> {
   sessionWatcher.on("newRecords", () => {
     renderMonitorDashboard(true);
   });
+  sessionWatcher.on("error", (error: Error) => {
+    console.error("[monitor] History update failed:", error.message);
+  });
 
   sessionWatcher.start(30_000);
 

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Codex Token & Quota Monitor</title>
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,17 +13,21 @@
       <div class="header-left">
         <nav class="breadcrumbs" aria-label="Breadcrumb"><span>Codex</span><span aria-hidden="true">/</span><span id="breadcrumb-current" aria-current="page">Usage overview</span></nav>
         <h1 id="app-title">Codex Token & Quota Monitor</h1>
-        <span class="sub-title" id="app-subtitle">Real-time Dashboard for macOS & Codex</span>
       </div>
       <div class="header-right">
+        <div id="theme-switch" class="theme-switch" role="group" aria-label="Theme">
+          <button type="button" class="btn" data-theme="light" aria-pressed="false">☀ Light</button>
+          <button type="button" class="btn" data-theme="dark" aria-pressed="false">☾ Dark</button>
+          <button type="button" class="btn" data-theme="system" aria-pressed="true">◐ System</button>
+        </div>
         <a href="#history" id="link-top-history" class="btn btn-secondary">History</a>
         <div class="lang-switch">
           <button class="btn-lang active" data-lang="en">EN</button>
           <button class="btn-lang" data-lang="zh-TW">繁中</button>
         </div>
-        <span id="connection-status" class="status-badge connecting">Connecting local service...</span>
+        <span id="connection-status" class="status-badge connecting" hidden></span>
         <span id="voucher-badge" class="badge">Reset Credits: —</span>
-        <span id="account-badge" class="badge">Loading...</span>
+        <span class="account-summary"><span id="account-badge">Loading...</span><span id="plan-badge" class="plan-badge" hidden></span></span>
         <button id="btn-refresh" class="btn btn-primary">Refresh</button>
       </div>
     </header>
@@ -39,9 +44,8 @@
       <h3 id="label-hud-settings">HUD settings</h3>
       <form id="hud-settings-form" class="card-body">
         <label id="label-hud-interval" for="hud-interval">HUD refresh interval (seconds)</label>
-        <input id="hud-interval" type="number" min="1" max="300" step="1" required value="5" aria-describedby="hud-interval-help">
+        <input id="hud-interval" type="number" min="1" max="300" step="1" inputmode="numeric" required value="5">
         <button id="btn-save-hud-settings" class="btn btn-primary" type="submit">Save</button>
-        <p id="hud-interval-help">1–300 seconds, default 5. Applies by the next HUD refresh. Dashboard live updates are unchanged.</p>
       </form>
     </section>
 
@@ -50,7 +54,6 @@
       <div class="card quota-card" id="card-five-hour">
         <div class="card-header">
           <h3 id="label-card-five-hour">5-Hour Quota</h3>
-          <span class="window-tag" id="tag-card-five-hour">5-Hour Window</span>
         </div>
         <div class="card-body">
           <!-- Standard Mode Content -->
@@ -69,10 +72,6 @@
                 <span class="meta-label" id="label-five-hour-reset">Reset In</span>
                 <span id="text-five-hour-reset" class="meta-value">—</span>
               </div>
-              <div class="meta-item">
-                <span class="meta-label" id="label-five-hour-status">Status</span>
-                <span id="text-five-hour-status" class="meta-value">—</span>
-              </div>
             </div>
           </div>
           <!-- Pro Unlimited Mode Content (Shown for Pro users who have no 5h limit) -->
@@ -89,7 +88,6 @@
       <div class="card quota-card" id="card-weekly">
         <div class="card-header">
           <h3 id="label-card-weekly">Weekly Quota</h3>
-          <span class="window-tag" id="tag-weekly">7-Day Rolling Window</span>
         </div>
         <div class="card-body">
           <div class="progress-container">
@@ -106,10 +104,6 @@
               <span class="meta-label" id="label-weekly-reset">Reset Countdown</span>
               <span id="text-weekly-reset" class="meta-value">—</span>
             </div>
-            <div class="meta-item">
-              <span class="meta-label" id="label-weekly-status">Status</span>
-              <span id="text-weekly-status" class="meta-value">—</span>
-            </div>
           </div>
         </div>
       </div>
@@ -118,7 +112,6 @@
       <div class="card summary-card">
         <div class="card-header">
           <h3 id="label-card-today">Today's Token Usage</h3>
-          <span class="window-tag" id="tag-card-today">Since 00:00</span>
         </div>
         <div class="card-body">
           <div class="summary-total">
@@ -127,7 +120,7 @@
           </div>
           <div class="summary-breakdown">
             <div class="breakdown-row">
-              <span id="label-today-cost">~API Cost (USD): <span id="pricing-meta" style="font-size: 0.75em; opacity: 0.5; cursor: help;" title="Pricing data source info"></span></span>
+              <span id="label-today-cost">Estimated cost (USD):</span>
               <strong id="text-today-cost" style="color: var(--color-cyan);" title="Estimated cost based on published API pricing">—</strong>
             </div>
             <div class="breakdown-row">
@@ -161,29 +154,6 @@
       <div id="additional-limits-list" class="additional-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-bottom: 24px;"></div>
     </section>
 
-    <section class="diagnostics-section card" aria-labelledby="label-diagnostics-title">
-      <div class="card-header">
-        <div class="header-titles">
-          <h3 id="label-diagnostics-title">Dashboard last scan</h3>
-          <span id="diagnostics-scope" class="count-tag">unknown</span>
-        </div>
-        <span id="diagnostics-status" class="status-badge quota-status warn">Last scan unknown</span>
-      </div>
-      <p id="diagnostics-note" class="diagnostics-note">unknown: the local service's latest scan could not be verified.</p>
-      <p id="diagnostics-limit-note" class="diagnostics-note">These values describe only this local service process's latest scan. Unchanged files are not reread, so the parsed range is not the database's full history range.</p>
-      <dl class="diagnostics-grid">
-        <div><dt id="label-diagnostics-directory">Data directory</dt><dd id="diagnostics-directory">—</dd></div>
-        <div><dt id="label-diagnostics-scan">Last successful scan</dt><dd id="diagnostics-scan">—</dd></div>
-        <div><dt id="label-diagnostics-files">Files</dt><dd id="diagnostics-files">—</dd></div>
-        <div><dt id="label-diagnostics-records">Records</dt><dd id="diagnostics-records">—</dd></div>
-        <div><dt id="label-diagnostics-range">Range parsed this scan</dt><dd id="diagnostics-range">—</dd></div>
-        <div><dt id="label-diagnostics-errors">Skipped / failed</dt><dd id="diagnostics-errors">—</dd></div>
-      </dl>
-      <aside id="first-use-guide" class="first-use-guide">
-        <strong id="label-first-use-title">Loading local history…</strong>
-        <p id="label-first-use-copy">History is imported automatically when the dashboard service starts. No terminal command is needed.</p>
-      </aside>
-    </section>
 
     <!-- Multi-Period Settlement Report -->
     <section class="settlement-section card">
@@ -212,12 +182,11 @@
               <th id="th-sub-tokens">subAgent</th>
               <th id="th-unknown-tokens">Unknown Role</th>
               <th id="th-requests">Records</th>
-              <th id="th-pricing-source">Stored Pricing</th>
             </tr>
           </thead>
           <tbody id="settlement-table-body">
             <tr>
-              <td colspan="10" class="text-center">Loading settlement data...</td>
+              <td colspan="9" class="text-center">Loading settlement data...</td>
             </tr>
           </tbody>
         </table>
@@ -251,13 +220,13 @@
     </section>
 
     <!-- Quota Reset & Voucher History -->
-    <details class="resets-section card low-frequency-section">
-      <summary class="card-header">
+    <section class="resets-section card" aria-labelledby="label-resets-title">
+      <div class="card-header">
         <div class="header-titles">
           <h3 id="label-resets-title">OpenAI Quota Resets & Voucher History</h3>
           <span class="count-tag" id="resets-count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">—</span>
         </div>
-      </summary>
+      </div>
       <div class="table-responsive">
         <table class="data-table">
           <thead>
@@ -277,16 +246,16 @@
           </tbody>
         </table>
       </div>
-    </details>
+    </section>
 
     <!-- Account Plan Transitions (Upgrades / Downgrades) -->
-    <details class="plans-section card low-frequency-section">
-      <summary class="card-header">
+    <section class="plans-section card" aria-labelledby="label-plans-title">
+      <div class="card-header">
         <div class="header-titles">
           <h3 id="label-plans-title">Account Plan Transitions</h3>
           <span class="count-tag" id="plans-count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">—</span>
         </div>
-      </summary>
+      </div>
       <div class="table-responsive">
         <table class="data-table">
           <thead>
@@ -305,7 +274,7 @@
           </tbody>
         </table>
       </div>
-    </details>
+    </section>
 
     <!-- Token Usage History Stream Table -->
     <section class="history-section card" id="history">
@@ -326,7 +295,7 @@
         <div><h2 id="filter-title">History filters</h2><p id="filter-help">Applies to transaction history and CSV export. Overview cards remain unchanged.</p></div>
         <div class="filter-fields">
           <label><span id="label-filter-model">Search model</span><input type="search" id="filter-model" placeholder="e.g. gpt-6" class="input-filter" aria-describedby="filter-help"></label>
-          <label><span id="label-filter-role">Agent role</span><select id="filter-agent-role" class="input-filter"><option value="">All Agents</option><option value="main">Main Agent Only</option><option value="subagent">subAgent Only</option><option value="unknown">Unknown Role Only</option></select></label>
+          <div><span id="label-filter-role">Agent role</span><div id="filter-agent-role" role="group" aria-labelledby="label-filter-role"><button type="button" class="btn btn-secondary" value="" aria-pressed="true">All Agents</button><button type="button" class="btn btn-secondary" value="main" aria-pressed="false">Main Agent Only</button><button type="button" class="btn btn-secondary" value="subagent" aria-pressed="false">subAgent Only</button><button type="button" class="btn btn-secondary" value="unknown" aria-pressed="false">Unknown Role Only</button></div></div>
           <button id="btn-reset-filters" class="btn btn-secondary">Reset filters</button>
         </div>
       </section>

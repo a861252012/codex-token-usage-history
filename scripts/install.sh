@@ -71,7 +71,9 @@ else
 fi
 
 ESCAPED_BIN="$(xml_escape "$SCRIPT_DIRECTORY/bin/codex-usage")"
-ESCAPED_LOG="$(xml_escape "$HOME/.codex/token-usage-server.log")"
+DATA_DIRECTORY="${CODEX_HOME:-$HOME/.codex}"
+ESCAPED_DATA_DIRECTORY="$(xml_escape "$DATA_DIRECTORY")"
+ESCAPED_LOG="$(xml_escape "$DATA_DIRECTORY/token-usage-server.log")"
 ESCAPED_PATH="$(xml_escape "$COMBINED_PATH")"
 
 cat << PLIST_EOF > "$PLIST_PATH"
@@ -85,6 +87,8 @@ cat << PLIST_EOF > "$PLIST_PATH"
   <dict>
     <key>PATH</key>
     <string>$ESCAPED_PATH</string>
+    <key>CODEX_HOME</key>
+    <string>$ESCAPED_DATA_DIRECTORY</string>
   </dict>
   <key>ProgramArguments</key>
   <array>
