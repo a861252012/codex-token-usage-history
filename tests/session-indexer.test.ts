@@ -117,6 +117,39 @@ describe("SessionIndexer", () => {
     expect(result2.newRecords.length).toBe(0);
   });
 
+  test("拒絕無效 token 數值並移除終端控制字元", () => {
+    writeFileSync(tempJsonlFile, [
+      {
+        type: "session_meta",
+        payload: { id: "safe\u001b[31m-session", provenance: { model: "gpt-safe\u202emodel" } },
+      },
+      {
+        type: "token_usage_record",
+        timestamp: "2026-09-09T10:00:00.000Z",
+        payload: {
+          thread_id: "thread\n-id",
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        },
+      },
+      {
+        type: "token_usage_record",
+        timestamp: "not-a-date",
+        payload: { usage: { input_tokens: -1, output_tokens: 1, total_tokens: 0 } },
+      },
+      {
+        type: "token_usage_record",
+        timestamp: "2026-09-09T10:01:00.000Z",
+        payload: { usage: { input_tokens: -1, output_tokens: 1, total_tokens: 0 } },
+      },
+    ].map((event) => JSON.stringify(event)).join("\n"));
+
+    const { records } = new SessionIndexer(db).parseFile(tempJsonlFile);
+    expect(records).toHaveLength(1);
+    expect(records[0].sessionId).not.toContain("\u001b");
+    expect(records[0].model).toBe("gpt-safemodel");
+    expect(records[0].threadId).toBe("thread-id");
+  });
+
   test("incremental events contain only inserted records even when duplicates are interleaved", () => {
     const event = (turn: string) => JSON.stringify({
       type: "token_usage_record", timestamp: "2026-09-09T12:00:00.000Z",

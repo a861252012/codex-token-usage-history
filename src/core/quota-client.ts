@@ -6,6 +6,18 @@ import type { QuotaSnapshot, QuotaWindow, AdditionalQuotaLimit } from "./types.j
 const DEFAULT_TIMEOUT_MS = 6000;
 const CACHE_TTL_MS = 30_000; // 快取 30 秒，避免頻繁請求打滿 API
 const MAXIMUM_QUOTA_RESPONSE_BYTES = 1024 * 1024;
+const MAXIMUM_ADDITIONAL_LIMITS = 100;
+const MAXIMUM_ACCOUNT_TEXT_LENGTH = 320;
+
+function boundedText(value: unknown): string | null {
+  return typeof value === "string" ? value.slice(0, MAXIMUM_ACCOUNT_TEXT_LENGTH) : null;
+}
+
+function finiteNumber(value: unknown, minimum: number, maximum: number, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum
+    ? value
+    : fallback;
+}
 
 export interface RawWhamResponse {
   user_id?: string;
@@ -123,10 +135,17 @@ export class QuotaClient {
       const rawFileContent = readFileSync(authPath, "utf-8");
       const authPayload = JSON.parse(rawFileContent);
       const tokenCollection = authPayload.tokens;
-      if (!tokenCollection || !tokenCollection.access_token) return null;
+      if (
+        !tokenCollection ||
+        typeof tokenCollection.access_token !== "string" ||
+        tokenCollection.access_token.length === 0 ||
+        tokenCollection.access_token.length > 16_384
+      ) return null;
       return {
         accessToken: tokenCollection.access_token,
-        accountId: tokenCollection.account_id || "",
+        accountId: typeof tokenCollection.account_id === "string"
+          ? tokenCollection.account_id.slice(0, 1024)
+          : "",
       };
     } catch {
       return null;
@@ -348,11 +367,14 @@ export class QuotaClient {
 
     const inspectWindow = (rawWindow?: RawWhamWindow | null): QuotaWindow | null => {
       if (!rawWindow) return null;
-      const usedPercent = typeof rawWindow.used_percent === "number" ? Math.max(0, Math.min(100, rawWindow.used_percent)) : 0;
+      const usedPercent = finiteNumber(rawWindow.used_percent, 0, 100);
       const remainingPercent = Math.max(0, 100 - usedPercent);
-      const limitWindowSeconds = rawWindow.limit_window_seconds || 0;
-      const resetAfterSeconds = rawWindow.reset_after_seconds || 0;
-      const resetAtMs = rawWindow.reset_at ? (rawWindow.reset_at > 1e11 ? rawWindow.reset_at : rawWindow.reset_at * 1000) : (currentTimeMs + resetAfterSeconds * 1000);
+      const limitWindowSeconds = finiteNumber(rawWindow.limit_window_seconds, 0, 366 * 86400);
+      const resetAfterSeconds = finiteNumber(rawWindow.reset_after_seconds, 0, 366 * 86400);
+      const rawResetAt = finiteNumber(rawWindow.reset_at, 0, 10_000_000_000_000);
+      const resetAtMs = rawResetAt > 0
+        ? (rawResetAt > 1e11 ? rawResetAt : rawResetAt * 1000)
+        : currentTimeMs + resetAfterSeconds * 1000;
 
       return {
         usedPercent,
@@ -389,25 +411,26 @@ export class QuotaClient {
     // 檢查附加模型配額 (如 Spark)
     const additionalLimits: AdditionalQuotaLimit[] = [];
     if (Array.isArray(responsePayload.additional_rate_limits)) {
-      for (const limitEntry of responsePayload.additional_rate_limits) {
+      for (const limitEntry of responsePayload.additional_rate_limits.slice(0, MAXIMUM_ADDITIONAL_LIMITS)) {
+        if (!limitEntry || typeof limitEntry !== "object") continue;
         const primaryWindowLimit = inspectWindow(limitEntry.rate_limit?.primary_window);
         const secondaryWindowLimit = inspectWindow(limitEntry.rate_limit?.secondary_window);
 
         additionalLimits.push({
-          limitName: limitEntry.limit_name || "附加配額",
-          meteredFeature: limitEntry.metered_feature || "",
+          limitName: boundedText(limitEntry.limit_name) || "附加配額",
+          meteredFeature: boundedText(limitEntry.metered_feature) || "",
           primaryWindow: primaryWindowLimit,
           secondaryWindow: secondaryWindowLimit,
         });
       }
     }
 
-    const resetCredits = responsePayload.rate_limit_reset_credits?.available_count ?? 0;
-    const planType = responsePayload.plan_type || null;
+    const resetCredits = finiteNumber(responsePayload.rate_limit_reset_credits?.available_count, 0, 1_000_000);
+    const planType = boundedText(responsePayload.plan_type);
 
     return {
       updatedAt: currentTimeMs,
-      email: responsePayload.email || null,
+      email: boundedText(responsePayload.email),
       planType,
       proTier: computeProTier(planType, fiveHourWindow, weeklyWindow, "wham"),
       fiveHour: fiveHourWindow,

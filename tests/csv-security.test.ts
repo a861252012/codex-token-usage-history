@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { Transpiler } from "bun";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 describe("CSV export security", () => {
-  test("CLI neutralizes formula strings without rewriting negative numbers", () => {
+  test("CLI neutralizes formula strings in valid usage records", () => {
     const directory = mkdtempSync(join(tmpdir(), "codex-csv-security-"));
     const now = new Date();
     const sessionDirectory = join(
@@ -31,7 +32,7 @@ describe("CSV export security", () => {
           session_id: "@danger",
           thread_id: "main",
           turn_id: "formula-test",
-          usage: { input_tokens: -42, output_tokens: 0, total_tokens: -42 },
+          usage: { input_tokens: 42, output_tokens: 0, total_tokens: 42 },
         },
       }),
     ].join("\n"));
@@ -46,7 +47,7 @@ describe("CSV export security", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       const recordRow = result.stdout.trim().split("\n")[1];
-      expect(recordRow).toContain(",'=1+1,main,-42,-42,");
+      expect(recordRow).toContain(",'=1+1,main,42,42,");
       expect(recordRow).toEndWith(",'@danger");
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -62,5 +63,16 @@ describe("CSV export security", () => {
     expect(escapeCsvField(" \t=1+1")).toBe("' \t=1+1");
     expect(escapeCsvField("@danger")).toBe("'@danger");
     expect(escapeCsvField(-42)).toBe("-42");
+  });
+
+  test("CLI CSV formatter preserves numeric negatives independently of token validation", () => {
+    const source = readFileSync(join(import.meta.dir, "../src/cli/index.ts"), "utf8");
+    const functionSource = source.match(/function escapeCsvField\([\s\S]*?\n\}/)?.[0];
+    expect(functionSource).toBeDefined();
+    const javascript = new Transpiler({ loader: "ts" }).transformSync(functionSource!);
+    const escapeCsvField = Function(`${javascript}; return escapeCsvField;`)();
+    expect(escapeCsvField(-42)).toBe("-42");
+    expect(escapeCsvField("-42")).toBe("'-42");
+    expect(escapeCsvField("=1+1")).toBe("'=1+1");
   });
 });

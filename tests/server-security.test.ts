@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { request } from "node:http";
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DashboardServer } from "../src/server/app.js";
@@ -130,6 +130,30 @@ describe("dashboard HTTP security", () => {
       const post = await sendRequest(port, {}, "POST");
       expect(post.status).toBe(405);
     } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+    }
+  });
+  test("does not follow static-file symlinks outside the web root", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "codex-dashboard-symlink-"));
+    temporaryDirectories.push(directory);
+    writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ updatedAtMs: Date.now(), updatedDate: "test", models: [] }));
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = directory;
+    const linkName = `.security-test-${process.pid}-${Date.now()}`;
+    const linkPath = join(import.meta.dir, "../src/web", linkName);
+
+    try {
+      const database = new HistoryDatabase(join(directory, "history.sqlite"));
+      const server = new DashboardServer(database, { port: 0 });
+      runningServers.push(server);
+      const port = Number(new URL(await server.start()).port);
+      symlinkSync("/etc/passwd", linkPath);
+      const response = await sendRequest(port, {}, "GET", `/${linkName}`);
+      expect(response.status).toBe(404);
+      expect(response.body).not.toContain("root:");
+    } finally {
+      try { unlinkSync(linkPath); } catch {}
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previousCodexHome;
     }
