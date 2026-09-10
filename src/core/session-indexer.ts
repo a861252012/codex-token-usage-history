@@ -5,6 +5,27 @@ import { HistoryDatabase } from "./history-db.js";
 import { calculateTokenCost } from "./pricing-calculator.js";
 import type { TokenRecord } from "./types.js";
 
+const MAXIMUM_IDENTIFIER_LENGTH = 256;
+const MAXIMUM_MODEL_LENGTH = 128;
+
+function sanitizeDisplayString(value: unknown, fallback: string, maximumLength = MAXIMUM_IDENTIFIER_LENGTH): string {
+  if (typeof value !== "string") return fallback;
+  const sanitized = value
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "")
+    .slice(0, maximumLength);
+  return sanitized || fallback;
+}
+
+function parseTokenCount(value: unknown, fallback = 0): number | null {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
+  return value;
+}
+
+function parseQuotaPercent(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+}
+
 export class SessionIndexer {
   private codexHome: string;
   private database: HistoryDatabase;
@@ -95,16 +116,16 @@ export class SessionIndexer {
 
       // 提取 session 資訊、預設模型與代理人角色
       if (eventType === "session_meta") {
-        defaultSessionId = payloadData.session_id || payloadData.id || defaultSessionId;
+        defaultSessionId = sanitizeDisplayString(payloadData.session_id || payloadData.id, defaultSessionId);
         if (payloadData.provenance?.model) {
-          currentModel = payloadData.provenance.model;
+          currentModel = sanitizeDisplayString(payloadData.provenance.model, currentModel, MAXIMUM_MODEL_LENGTH);
         }
         if (payloadData.agent_role === "subagent" || payloadData.agent_type === "subagent") {
           currentAgentRole = "subagent";
         }
       } else if (eventType === "turn_context") {
         if (payloadData.model) {
-          currentModel = payloadData.model;
+          currentModel = sanitizeDisplayString(payloadData.model, currentModel, MAXIMUM_MODEL_LENGTH);
         }
         if (payloadData.role === "subagent" || payloadData.agent_role === "subagent" || payloadData.subagent_id) {
           currentAgentRole = "subagent";
@@ -113,7 +134,7 @@ export class SessionIndexer {
         }
       } else if (eventType === "event_msg") {
         if (payloadData.thread_settings?.model) {
-          currentModel = payloadData.thread_settings.model;
+          currentModel = sanitizeDisplayString(payloadData.thread_settings.model, currentModel, MAXIMUM_MODEL_LENGTH);
         }
         if (payloadData.thread_id) {
           const threadIdText = String(payloadData.thread_id);
@@ -132,19 +153,21 @@ export class SessionIndexer {
             const primaryWindow = rateLimits.primary;
             const secondaryWindow = rateLimits.secondary;
 
-            if (primaryWindow && typeof primaryWindow.used_percent === "number") {
-              if (primaryWindow.window_minutes === 300) {
-                lastFiveHourUsedPercent = primaryWindow.used_percent;
-              } else if (primaryWindow.window_minutes === 10080) {
-                lastWeeklyUsedPercent = primaryWindow.used_percent;
+            if (primaryWindow) {
+              const usedPercent = parseQuotaPercent(primaryWindow.used_percent);
+              if (usedPercent !== null && primaryWindow.window_minutes === 300) {
+                lastFiveHourUsedPercent = usedPercent;
+              } else if (usedPercent !== null && primaryWindow.window_minutes === 10080) {
+                lastWeeklyUsedPercent = usedPercent;
               }
             }
 
-            if (secondaryWindow && typeof secondaryWindow.used_percent === "number") {
-              if (secondaryWindow.window_minutes === 300) {
-                lastFiveHourUsedPercent = secondaryWindow.used_percent;
-              } else if (secondaryWindow.window_minutes === 10080) {
-                lastWeeklyUsedPercent = secondaryWindow.used_percent;
+            if (secondaryWindow) {
+              const usedPercent = parseQuotaPercent(secondaryWindow.used_percent);
+              if (usedPercent !== null && secondaryWindow.window_minutes === 300) {
+                lastFiveHourUsedPercent = usedPercent;
+              } else if (usedPercent !== null && secondaryWindow.window_minutes === 10080) {
+                lastWeeklyUsedPercent = usedPercent;
               }
             }
           }
@@ -154,18 +177,24 @@ export class SessionIndexer {
       // 提取 token 消耗紀錄
       if (eventType === "token_usage_record" && payloadData.usage) {
         const usageData = payloadData.usage;
-        const timestampString = parsedPayload.timestamp;
-        const timestampMilliseconds = timestampString ? new Date(timestampString).getTime() : Date.now();
+        const timestampMilliseconds = parsedPayload.timestamp === undefined
+          ? Date.now()
+          : new Date(parsedPayload.timestamp).getTime();
+        if (!Number.isFinite(timestampMilliseconds)) continue;
 
-        const inputTokens = usageData.input_tokens || 0;
-        const cachedInputTokens = usageData.cached_input_tokens || 0;
-        const outputTokens = usageData.output_tokens || 0;
-        const reasoningOutputTokens = usageData.reasoning_output_tokens || 0;
-        const totalTokens = usageData.total_tokens || (inputTokens + outputTokens);
+        const inputTokens = parseTokenCount(usageData.input_tokens);
+        const cachedInputTokens = parseTokenCount(usageData.cached_input_tokens);
+        const outputTokens = parseTokenCount(usageData.output_tokens);
+        const reasoningOutputTokens = parseTokenCount(usageData.reasoning_output_tokens);
+        if (inputTokens === null || cachedInputTokens === null || outputTokens === null || reasoningOutputTokens === null) {
+          continue;
+        }
+        const totalTokens = parseTokenCount(usageData.total_tokens, inputTokens + outputTokens);
+        if (totalTokens === null) continue;
 
         // 判斷此請求是否屬於 subAgent
         let recordAgentRole: "main" | "subagent" = currentAgentRole;
-        if (payloadData.agent_role === "subagent" || payloadData.subagent || (payloadData.thread_id && payloadData.thread_id.includes("subagent"))) {
+        if (payloadData.agent_role === "subagent" || payloadData.subagent || String(payloadData.thread_id || "").includes("subagent")) {
           recordAgentRole = "subagent";
         }
 
@@ -181,11 +210,13 @@ export class SessionIndexer {
 
         records.push({
           timestamp: timestampMilliseconds,
-          datetime: timestampString || new Date(timestampMilliseconds).toISOString(),
-          sessionId: payloadData.session_id || defaultSessionId || "unknown",
-          threadId: payloadData.thread_id || payloadData.session_id || "unknown",
-          turnId: payloadData.turn_id || `turn-${timestampMilliseconds}-${records.length}`,
-          responseId: payloadData.response_id || undefined,
+          datetime: new Date(timestampMilliseconds).toISOString(),
+          sessionId: sanitizeDisplayString(payloadData.session_id, defaultSessionId || "unknown"),
+          threadId: sanitizeDisplayString(payloadData.thread_id || payloadData.session_id, "unknown"),
+          turnId: sanitizeDisplayString(payloadData.turn_id, `turn-${timestampMilliseconds}-${records.length}`),
+          responseId: payloadData.response_id
+            ? sanitizeDisplayString(payloadData.response_id, "") || undefined
+            : undefined,
           model: currentModel,
           inputTokens,
           cachedInputTokens,
