@@ -174,6 +174,10 @@ export function renderUsageSummary(summary: UsageSummary, title = "近期 Token 
   return lines.join("\n");
 }
 
+function formatLocalTimestamp(timestamp: number): string {
+  return new Date(timestamp).toLocaleString("sv-SE", { hour12: false });
+}
+
 export function renderRecentRecords(records: TokenRecord[], maxRows = 15): string {
   const lines: string[] = [];
   const divider = "-".repeat(114);
@@ -182,7 +186,7 @@ export function renderRecentRecords(records: TokenRecord[], maxRows = 15): strin
   lines.push(divider);
 
   const header = [
-    "本地時間 (UTC+8)".padEnd(20),
+    "本機時間".padEnd(20),
     "模型".padEnd(18),
     "角色".padEnd(8),
     "總 Token".padStart(11),
@@ -194,15 +198,7 @@ export function renderRecentRecords(records: TokenRecord[], maxRows = 15): strin
   lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
 
   for (const record of records.slice(0, maxRows)) {
-    const localTimeString = new Date(record.timestamp).toLocaleString("zh-TW", {
-      hour12: false,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
+    const localTimeString = formatLocalTimestamp(record.timestamp);
 
     const inOutText = `${formatNumber(record.inputTokens)}/${formatNumber(record.outputTokens)}`;
     const quotaText = record.weeklyUsedPercent !== null && record.weeklyUsedPercent !== undefined
@@ -306,7 +302,7 @@ export function renderResetEventsTable(events: QuotaResetEvent[]): string {
   }
 
   const header = [
-    "發生時間 (UTC+8)".padEnd(20),
+    "發生時間 (本機)".padEnd(20),
     "事件類型".padEnd(16),
     "可用券數".padStart(8),
     "券數變動".padStart(8),
@@ -317,7 +313,7 @@ export function renderResetEventsTable(events: QuotaResetEvent[]): string {
   for (const event of events) {
     const deltaText = event.creditDelta > 0 ? `+${event.creditDelta}` : `${event.creditDelta}`;
     const row = [
-      event.datetime.replace("T", " ").slice(0, 19).padEnd(20),
+      formatLocalTimestamp(event.timestamp).padEnd(20),
       event.eventType.slice(0, 16).padEnd(16),
       formatNumber(event.availableCredits).padStart(8),
       deltaText.padStart(8),
@@ -346,7 +342,7 @@ export function renderPlanChangeEventsTable(events: PlanChangeEvent[]): string {
   }
 
   const header = [
-    "異動時間 (UTC+8)".padEnd(20),
+    "異動時間 (本機)".padEnd(20),
     "變更前方案".padEnd(14),
     "變更後方案".padEnd(14),
     "異動類型".padEnd(12),
@@ -365,7 +361,7 @@ export function renderPlanChangeEventsTable(events: PlanChangeEvent[]): string {
     }
 
     const row = [
-      event.datetime.replace("T", " ").slice(0, 19).padEnd(20),
+      formatLocalTimestamp(event.timestamp).padEnd(20),
       event.previousPlan.padEnd(14),
       event.newPlan.padEnd(14),
       typeColored.padEnd(21),

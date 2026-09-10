@@ -10,10 +10,10 @@ test.skipIf(process.platform !== "darwin")("HUD schedules default, bounded inter
     input: `import Foundation
 import CoreFoundation
 class Scheduler {
-    let homeDirectoryPath: String
+    let codexDirectoryPath: String
     var refreshTimer: Timer?
     var refreshIntervalSeconds: TimeInterval = 5
-    init(_ directory: String) { homeDirectoryPath = directory }
+    init(_ directory: String) { codexDirectoryPath = directory }
     func loadLatestData() {}
 ${method}
 }

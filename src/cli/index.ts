@@ -449,8 +449,8 @@ async function main(): Promise<void> {
 
   // 7. Shell Prompt 狀態字串 (供 zsh / bash 整合)
   if (commandName === "prompt") {
-    const quotaClient = new QuotaClient();
-    const quotaSnapshot = await quotaClient.getQuotaSnapshot(false);
+    const quotaClient = new QuotaClient(undefined, undefined, { readOnly: true });
+    const quotaSnapshot = quotaClient.getCachedQuotaSnapshot();
     console.log(renderPromptString(quotaSnapshot));
     return;
   }

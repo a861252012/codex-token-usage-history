@@ -1,4 +1,5 @@
 import Cocoa
+import SQLite3
 import Foundation
 import QuartzCore
 import Darwin
@@ -705,6 +706,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var refreshTimer: Timer?
     private var refreshIntervalSeconds: TimeInterval = 5
     private let homeDirectoryPath = FileManager.default.homeDirectoryForCurrentUser.path
+    private let codexDirectoryPath = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
     private var previousTotalTokens: Int = 0
     private var feedingCountdownRounds: Int = 0
     private var latestIncrementTokens: Int = 0
@@ -727,8 +729,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadUserConfiguration()
         setupFloatingWindow()
+        NotificationCenter.default.addObserver(self, selector: #selector(screenParametersChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         loadLatestData()
         startPeriodicTimer()
+    }
+
+    @objc private func screenParametersChanged() {
+        guard let panel = floatingPanel else { return }
+        let visibleFrames = NSScreen.screens.map { $0.visibleFrame }
+        guard !visibleFrames.contains(where: { $0.contains(panel.frame) }),
+              let screenFrame = visibleFrames.max(by: {
+                  let left = $0.intersection(panel.frame)
+                  let right = $1.intersection(panel.frame)
+                  return (left.isNull ? 0 : left.width * left.height) < (right.isNull ? 0 : right.width * right.height)
+              }) else { return }
+        panel.setFrameOrigin(NSPoint(
+            x: max(screenFrame.minX, min(panel.frame.minX, screenFrame.maxX - panel.frame.width)),
+            y: max(screenFrame.minY, min(panel.frame.minY, screenFrame.maxY - panel.frame.height))
+        ))
     }
 
     private func getConfigurationFilePath() -> String {
@@ -1087,7 +1105,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startPeriodicTimer() {
-        let directory = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? "\(homeDirectoryPath)/.codex"
+        let directory = codexDirectoryPath
         var interval: TimeInterval = 5
         if let data = try? Data(contentsOf: URL(fileURLWithPath: directory).appendingPathComponent("hud-settings.json")),
            let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1129,7 +1147,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             if fetchedStatus == nil {
-                let cacheFilePath = "\(self.homeDirectoryPath)/.codex/codex_quota_snapshot.json"
+                let cacheFilePath = "\(self.codexDirectoryPath)/codex_quota_snapshot.json"
                 if let rawData = try? Data(contentsOf: URL(fileURLWithPath: cacheFilePath)),
                    let snapshot = try? JSONDecoder().decode(QuotaSnapshotDTO.self, from: rawData) {
                     let sqliteTodaySummary = self.queryTodaySummaryFromDatabase()
@@ -1168,79 +1186,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func queryRecentPlanChangeFromDatabase() -> PlanChangeEventDTO? {
-        let databasePath = "\(homeDirectoryPath)/.codex/token_usage_history.sqlite"
-        guard FileManager.default.fileExists(atPath: databasePath) else { return nil }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = [
-            databasePath,
-            "SELECT timestamp, datetime, previous_plan, new_plan, change_type, description FROM plan_change_events ORDER BY timestamp DESC LIMIT 1;"
-        ]
-
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        try? process.run()
-        process.waitUntilExit()
-
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        if let outputString = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !outputString.isEmpty {
-            let components = outputString.components(separatedBy: "|")
-            if components.count >= 6 {
-                return PlanChangeEventDTO(
-                    timestamp: Int64(components[0]) ?? 0,
-                    datetime: components[1],
-                    previousPlan: components[2],
-                    newPlan: components[3],
-                    changeType: components[4],
-                    description: components[5]
-                )
-            }
+    private func queryDatabaseRow(_ sql: String) -> [String]? {
+        let databasePath = "\(codexDirectoryPath)/token_usage_history.sqlite"
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(databasePath, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(database)
+            return nil
         }
-        return nil
+        defer { sqlite3_close(database) }
+        sqlite3_busy_timeout(database, 250)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return (0..<sqlite3_column_count(statement)).map { column in
+            sqlite3_column_text(statement, column).map { String(cString: $0) } ?? ""
+        }
+    }
+
+    private func queryRecentPlanChangeFromDatabase() -> PlanChangeEventDTO? {
+        guard let columns = queryDatabaseRow("SELECT timestamp, datetime, previous_plan, new_plan, change_type, description FROM plan_change_events ORDER BY timestamp DESC LIMIT 1;") else { return nil }
+        return PlanChangeEventDTO(
+            timestamp: Int64(columns[0]) ?? 0,
+            datetime: columns[1],
+            previousPlan: columns[2],
+            newPlan: columns[3],
+            changeType: columns[4],
+            description: columns[5]
+        )
     }
 
     private func queryTodaySummaryFromDatabase() -> TodaySummaryDTO {
-        let databasePath = "\(homeDirectoryPath)/.codex/token_usage_history.sqlite"
-        guard FileManager.default.fileExists(atPath: databasePath) else {
+        let startOfDayTimestamp = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000)
+        guard let columns = queryDatabaseRow("SELECT COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cost_usd), 0.0) FROM token_records WHERE timestamp >= \(startOfDayTimestamp);") else {
             return TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0, formattedCostUsd: "$0.00")
         }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        let startOfDayTimestamp = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000)
-        process.arguments = [
-            databasePath,
-            "SELECT COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cost_usd), 0.0) FROM token_records WHERE timestamp >= \(startOfDayTimestamp);"
-        ]
-
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        try? process.run()
-        process.waitUntilExit()
-
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        if let outputString = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-            let components = outputString.components(separatedBy: "|")
-            if components.count >= 5 {
-                let totalRequests = Int(components[0]) ?? 0
-                let totalTokens = Int(components[1]) ?? 0
-                let inputTokens = Int(components[2]) ?? 0
-                let outputTokens = Int(components[3]) ?? 0
-                let costDouble = Double(components[4]) ?? 0.0
-                return TodaySummaryDTO(
-                    requests: totalRequests,
-                    totalTokens: totalTokens,
-                    inputTokens: inputTokens,
-                    outputTokens: outputTokens,
-                    hourlyBurnRate: 0,
-                    formattedCostUsd: String(format: "$%.2f", costDouble)
-                )
-            }
-        }
-
-        return TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0, formattedCostUsd: "$0.00")
+        return TodaySummaryDTO(
+            requests: Int(columns[0]) ?? 0,
+            totalTokens: Int(columns[1]) ?? 0,
+            inputTokens: Int(columns[2]) ?? 0,
+            outputTokens: Int(columns[3]) ?? 0,
+            hourlyBurnRate: 0,
+            formattedCostUsd: String(format: "$%.2f", Double(columns[4]) ?? 0)
+        )
     }
 
     private func updateUserInterface(with statusData: FullStatusDTO) {

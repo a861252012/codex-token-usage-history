@@ -86,136 +86,133 @@ export class HistoryDatabase {
     }
     this.databaseInstance = await createSqliteDb(this.databaseFilePath);
 
-    // 1. Token 消耗紀錄表
-    this.databaseInstance.exec(`
-      CREATE TABLE IF NOT EXISTS token_records (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp INTEGER NOT NULL,
-        datetime TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        thread_id TEXT NOT NULL,
-        turn_id TEXT NOT NULL,
-        response_id TEXT,
-        model TEXT NOT NULL,
-        input_tokens INTEGER NOT NULL DEFAULT 0,
-        cached_input_tokens INTEGER NOT NULL DEFAULT 0,
-        output_tokens INTEGER NOT NULL DEFAULT 0,
-        reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
-        total_tokens INTEGER NOT NULL DEFAULT 0,
-        agent_role TEXT NOT NULL DEFAULT 'unknown',
-        cost_usd REAL NOT NULL DEFAULT 0.0,
-        pricing_source TEXT NOT NULL DEFAULT 'unknown',
-        pricing_version TEXT NOT NULL DEFAULT 'unknown',
-        five_hour_used_pct REAL,
-        weekly_used_pct REAL,
-        source_file TEXT,
-        UNIQUE(session_id, turn_id, model, timestamp)
-      );
+    if (this.databaseInstance.prepare("PRAGMA user_version").get().user_version >= 1) return;
 
-      CREATE INDEX IF NOT EXISTS idx_token_records_timestamp ON token_records(timestamp);
-      CREATE INDEX IF NOT EXISTS idx_token_records_model ON token_records(model);
-      CREATE INDEX IF NOT EXISTS idx_token_records_session_id ON token_records(session_id);
-    `);
+    try {
+      // Serialize first-run migrations before reading schema or migration markers.
+      this.databaseInstance.exec("BEGIN IMMEDIATE;");
+      if (this.databaseInstance.prepare("PRAGMA user_version").get().user_version < 1) {
+        // 1. Token 消耗紀錄表
+        this.databaseInstance.exec(`
+          CREATE TABLE IF NOT EXISTS token_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            datetime TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            response_id TEXT,
+            model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL DEFAULT 0,
+            agent_role TEXT NOT NULL DEFAULT 'unknown',
+            cost_usd REAL NOT NULL DEFAULT 0.0,
+            pricing_source TEXT NOT NULL DEFAULT 'unknown',
+            pricing_version TEXT NOT NULL DEFAULT 'unknown',
+            five_hour_used_pct REAL,
+            weekly_used_pct REAL,
+            source_file TEXT,
+            UNIQUE(session_id, turn_id, model, timestamp)
+          );
 
-    // 2. 自動平滑移轉：舊資料無法證明角色或當時計價來源時，一律保守標為 unknown
-    try {
-      this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN agent_role TEXT NOT NULL DEFAULT 'unknown';`);
-    } catch {
-      // 欄位已存在
-    }
-    try {
-      this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0.0;`);
-    } catch {
-      // 欄位已存在
-    }
-    try {
-      this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN pricing_source TEXT NOT NULL DEFAULT 'unknown';`);
-    } catch {
-      // 欄位已存在
-    }
-    try {
-      this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN pricing_version TEXT NOT NULL DEFAULT 'unknown';`);
-    } catch {
-      // 欄位已存在
-    }
-
-    this.databaseInstance.exec(`
-      CREATE TABLE IF NOT EXISTS history_schema_migrations (
-        migration_name TEXT PRIMARY KEY,
-        applied_at INTEGER NOT NULL
-      );
-    `);
-    const roleMigrationName = "agent-role-unknown-v1";
-    const roleMigration = this.databaseInstance.prepare(
-      "SELECT migration_name FROM history_schema_migrations WHERE migration_name = ?"
-    ).get(roleMigrationName);
-    if (!roleMigration) {
-      this.databaseInstance.runTransaction(() => {
-        // 舊版 indexer 會把缺少角色證據的資料預設成 main，無法安全區分，先降級為 unknown。
-        this.databaseInstance!.exec(`
-          UPDATE token_records
-          SET agent_role = 'unknown'
-          WHERE agent_role = 'main'
-             OR agent_role IS NULL
-             OR agent_role NOT IN ('main', 'subagent', 'unknown');
+          CREATE INDEX IF NOT EXISTS idx_token_records_timestamp ON token_records(timestamp);
+          CREATE INDEX IF NOT EXISTS idx_token_records_model ON token_records(model);
+          CREATE INDEX IF NOT EXISTS idx_token_records_session_id ON token_records(session_id);
         `);
-        this.databaseInstance!.prepare(
-          "INSERT INTO history_schema_migrations (migration_name, applied_at) VALUES (?, ?)"
-        ).run(roleMigrationName, Date.now());
-      });
+
+        // Legacy databases may predate these columns. Only migrate missing columns.
+        const columns = new Set(this.databaseInstance.prepare("PRAGMA table_info(token_records)").all().map((column) => column.name));
+        for (const [name, definition] of [
+          ["agent_role", "TEXT NOT NULL DEFAULT 'unknown'"],
+          ["cost_usd", "REAL NOT NULL DEFAULT 0.0"],
+          ["pricing_source", "TEXT NOT NULL DEFAULT 'unknown'"],
+          ["pricing_version", "TEXT NOT NULL DEFAULT 'unknown'"],
+        ]) {
+          if (!columns.has(name)) this.databaseInstance.exec(`ALTER TABLE token_records ADD COLUMN ${name} ${definition};`);
+        }
+
+        this.databaseInstance.exec(`
+          CREATE TABLE IF NOT EXISTS history_schema_migrations (
+            migration_name TEXT PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+          );
+        `);
+        const roleMigrationName = "agent-role-unknown-v1";
+        const roleMigration = this.databaseInstance.prepare(
+          "SELECT migration_name FROM history_schema_migrations WHERE migration_name = ?"
+        ).get(roleMigrationName);
+        if (!roleMigration) {
+          // 舊版 indexer 會把缺少角色證據的資料預設成 main，無法安全區分，先降級為 unknown。
+          this.databaseInstance!.exec(`
+            UPDATE token_records
+            SET agent_role = 'unknown'
+            WHERE agent_role = 'main'
+               OR agent_role IS NULL
+               OR agent_role NOT IN ('main', 'subagent', 'unknown');
+          `);
+          this.databaseInstance!.prepare(
+            "INSERT INTO history_schema_migrations (migration_name, applied_at) VALUES (?, ?)"
+          ).run(roleMigrationName, Date.now());
+        }
+
+        // 建立 agent_role 索引 (確保欄位已存在)
+        this.databaseInstance.exec(`CREATE INDEX IF NOT EXISTS idx_token_records_agent_role ON token_records(agent_role);`);
+
+        // 3. OpenAI 配額重置與重置券變更事件表
+        this.databaseInstance.exec(`
+          CREATE TABLE IF NOT EXISTS quota_reset_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            datetime TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            previous_five_hour_used_pct REAL,
+            new_five_hour_used_pct REAL,
+            previous_weekly_used_pct REAL,
+            new_weekly_used_pct REAL,
+            available_credits INTEGER NOT NULL DEFAULT 0,
+            credit_delta INTEGER NOT NULL DEFAULT 0,
+            description TEXT
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_quota_reset_events_timestamp ON quota_reset_events(timestamp);
+        `);
+
+        // 4. OpenAI 方案異動歷史紀錄表 (升級、降級、切換)
+        this.databaseInstance.exec(`
+          CREATE TABLE IF NOT EXISTS plan_change_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            datetime TEXT NOT NULL,
+            previous_plan TEXT NOT NULL,
+            new_plan TEXT NOT NULL,
+            change_type TEXT NOT NULL,
+            description TEXT
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_plan_change_events_timestamp ON plan_change_events(timestamp);
+        `);
+
+        // 5. 檔案掃描游標紀錄表 (用於增量掃描跳過未異動檔案)
+        this.databaseInstance.exec(`
+          CREATE TABLE IF NOT EXISTS file_scan_cursor (
+            file_path TEXT PRIMARY KEY,
+            mtime REAL NOT NULL,
+            size INTEGER NOT NULL,
+            last_scanned_at INTEGER NOT NULL,
+            records_count INTEGER NOT NULL DEFAULT 0
+          );
+        `);
+        this.databaseInstance.exec("PRAGMA user_version = 1;");
+      }
+      this.databaseInstance.exec("COMMIT;");
+    } catch (error) {
+      this.databaseInstance.close();
+      this.databaseInstance = null;
+      throw error;
     }
-
-    // 建立 agent_role 索引 (確保欄位已存在)
-    try {
-      this.databaseInstance.exec(`CREATE INDEX IF NOT EXISTS idx_token_records_agent_role ON token_records(agent_role);`);
-    } catch {
-      // 忽略
-    }
-
-    // 3. OpenAI 配額重置與重置券變更事件表
-    this.databaseInstance.exec(`
-      CREATE TABLE IF NOT EXISTS quota_reset_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp INTEGER NOT NULL,
-        datetime TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        previous_five_hour_used_pct REAL,
-        new_five_hour_used_pct REAL,
-        previous_weekly_used_pct REAL,
-        new_weekly_used_pct REAL,
-        available_credits INTEGER NOT NULL DEFAULT 0,
-        credit_delta INTEGER NOT NULL DEFAULT 0,
-        description TEXT
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_quota_reset_events_timestamp ON quota_reset_events(timestamp);
-    `);
-
-    // 4. OpenAI 方案異動歷史紀錄表 (升級、降級、切換)
-    this.databaseInstance.exec(`
-      CREATE TABLE IF NOT EXISTS plan_change_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp INTEGER NOT NULL,
-        datetime TEXT NOT NULL,
-        previous_plan TEXT NOT NULL,
-        new_plan TEXT NOT NULL,
-        change_type TEXT NOT NULL,
-        description TEXT
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_plan_change_events_timestamp ON plan_change_events(timestamp);
-    `);
-
-    // 5. 檔案掃描游標紀錄表 (用於增量掃描跳過未異動檔案)
-    this.databaseInstance.exec(`
-      CREATE TABLE IF NOT EXISTS file_scan_cursor (
-        file_path TEXT PRIMARY KEY,
-        mtime REAL NOT NULL,
-        size INTEGER NOT NULL,
-        last_scanned_at INTEGER NOT NULL,
-        records_count INTEGER NOT NULL DEFAULT 0
-      );
-    `);
   }
 
   private ensureDatabase(): SqliteDb {
@@ -230,25 +227,13 @@ export class HistoryDatabase {
    */
   public insertRecord(record: TokenRecord): boolean {
     const database = this.ensureDatabase();
-    const costResult = calculateTokenCost(
-      record.model,
-      record.inputTokens,
-      record.cachedInputTokens,
-      record.outputTokens,
-      record.reasoningOutputTokens
-    );
-
-    const calculatedCostUsd =
-      record.costUsd == null || !Number.isFinite(record.costUsd)
-        ? costResult.totalCost
-        : record.costUsd;
+    const costResult = record.costUsd == null || !Number.isFinite(record.costUsd)
+      ? calculateTokenCost(record.model, record.inputTokens, record.cachedInputTokens, record.outputTokens, record.reasoningOutputTokens)
+      : null;
+    const calculatedCostUsd = costResult ? costResult.totalCost : record.costUsd!;
     const resolvedAgentRole = normalizeAgentRole(record.agentRole);
-    const pricingSource = record.costUsd == null || !Number.isFinite(record.costUsd)
-      ? costResult.pricingSource
-      : normalizePricingSource(record.pricingSource);
-    const pricingVersion = record.costUsd == null || !Number.isFinite(record.costUsd)
-      ? costResult.pricingVersion
-      : normalizePricingVersion(record.pricingVersion);
+    const pricingSource = costResult ? costResult.pricingSource : normalizePricingSource(record.pricingSource);
+    const pricingVersion = costResult ? costResult.pricingVersion : normalizePricingVersion(record.pricingVersion);
 
     try {
       const statement = database.prepare(`
@@ -320,26 +305,13 @@ export class HistoryDatabase {
         : null;
 
       for (const singleRecord of records) {
-        const costResult = calculateTokenCost(
-          singleRecord.model,
-          singleRecord.inputTokens,
-          singleRecord.cachedInputTokens,
-          singleRecord.outputTokens,
-          singleRecord.reasoningOutputTokens
-        );
-
-        const calculatedCostUsd =
-          singleRecord.costUsd == null || !Number.isFinite(singleRecord.costUsd)
-            ? costResult.totalCost
-            : singleRecord.costUsd;
+        const costResult = singleRecord.costUsd == null || !Number.isFinite(singleRecord.costUsd)
+          ? calculateTokenCost(singleRecord.model, singleRecord.inputTokens, singleRecord.cachedInputTokens, singleRecord.outputTokens, singleRecord.reasoningOutputTokens)
+          : null;
+        const calculatedCostUsd = costResult ? costResult.totalCost : singleRecord.costUsd!;
         const resolvedAgentRole = normalizeAgentRole(singleRecord.agentRole);
-        const pricingSource = singleRecord.costUsd == null || !Number.isFinite(singleRecord.costUsd)
-          ? costResult.pricingSource
-          : normalizePricingSource(singleRecord.pricingSource);
-        const pricingVersion = singleRecord.costUsd == null || !Number.isFinite(singleRecord.costUsd)
-          ? costResult.pricingVersion
-          : normalizePricingVersion(singleRecord.pricingVersion);
-
+        const pricingSource = costResult ? costResult.pricingSource : normalizePricingSource(singleRecord.pricingSource);
+        const pricingVersion = costResult ? costResult.pricingVersion : normalizePricingVersion(singleRecord.pricingVersion);
         const executionResult = statement.run(
           singleRecord.timestamp,
           singleRecord.datetime,

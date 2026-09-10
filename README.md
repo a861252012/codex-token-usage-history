@@ -132,4 +132,4 @@ bun run build
 
 重拍截圖：啟動 `bun run demo`，再執行 `node scripts/capture-screenshots.cjs`（需 Playwright 與 Chromium）。
 
-[測試紀錄](docs/verification.md) · [安全政策](SECURITY.md) · [MIT](LICENSE)
+[MIT](LICENSE)

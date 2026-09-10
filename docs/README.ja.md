@@ -129,4 +129,4 @@ bun run build
 
 撮影は `bun run demo` を起動後、`node scripts/capture-screenshots.cjs` を実行します。Playwright と Chromium が必要です。
 
-[検証記録](verification.md) · [セキュリティポリシー](../SECURITY.md) · [MIT](../LICENSE)
+[MIT](../LICENSE)

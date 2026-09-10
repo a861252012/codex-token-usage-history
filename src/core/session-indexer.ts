@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, type Stats } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { HistoryDatabase } from "./history-db.js";
@@ -24,6 +25,37 @@ function parseTokenCount(value: unknown, fallback = 0): number | null {
 
 function parseQuotaPercent(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+}
+
+function* readJsonlLines(filePath: string, fileSize: number): Generator<string> {
+  const descriptor = openSync(filePath, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    const decoder = new StringDecoder("utf8");
+    let position = 0;
+    const lineParts: string[] = [];
+    while (position < fileSize) {
+      const bytesRead = readSync(descriptor, buffer, 0, Math.min(buffer.length, fileSize - position), position);
+      if (bytesRead === 0) break;
+      position += bytesRead;
+      const chunk = decoder.write(buffer.subarray(0, bytesRead));
+      let start = 0;
+      let newline = chunk.indexOf("\n", start);
+      while (newline !== -1) {
+        lineParts.push(chunk.slice(start, newline));
+        yield lineParts.join("");
+        lineParts.length = 0;
+        start = newline + 1;
+        newline = chunk.indexOf("\n", start);
+      }
+      if (start < chunk.length) lineParts.push(chunk.slice(start));
+    }
+    const tail = decoder.end();
+    if (tail) lineParts.push(tail);
+    if (lineParts.length > 0) yield lineParts.join("");
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 export class SessionIndexer {
@@ -95,20 +127,20 @@ export class SessionIndexer {
    * 遞迴尋找指定目錄下的所有 .jsonl 檔案
    */
   public findJsonlFiles(targetDirectory: string, sinceMilliseconds?: number): string[] {
-    return this.discoverJsonlFiles(targetDirectory, sinceMilliseconds);
+    return this.discoverJsonlFiles(targetDirectory, sinceMilliseconds).map((file) => file.filePath);
   }
 
   private discoverJsonlFiles(
     targetDirectory: string,
     sinceMilliseconds: number | undefined,
     diagnostics?: MutableSessionIndexDiagnostics
-  ): string[] {
+  ): { filePath: string; status: Stats }[] {
     if (!existsSync(targetDirectory)) {
       diagnostics?.missingDirectories.push(targetDirectory);
       return [];
     }
 
-    const results: string[] = [];
+    const results: { filePath: string; status: Stats }[] = [];
     const walkDirectory = (currentDirectory: string): void => {
       let directoryEntries;
       try {
@@ -123,12 +155,9 @@ export class SessionIndexer {
         if (entry.isDirectory()) {
           walkDirectory(fullPath);
         } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-          if (sinceMilliseconds === undefined) {
-            results.push(fullPath);
-            continue;
-          }
           try {
-            if (statSync(fullPath).mtimeMs >= sinceMilliseconds) results.push(fullPath);
+            const status = statSync(fullPath);
+            if (sinceMilliseconds === undefined || status.mtimeMs >= sinceMilliseconds) results.push({ filePath: fullPath, status });
           } catch {
             if (diagnostics) diagnostics.filesFailed += 1;
           }
@@ -158,22 +187,14 @@ export class SessionIndexer {
     };
   }
 
-  private parseFileDetailed(filePath: string): ParsedFileResult {
+  private parseFileDetailed(filePath: string, knownStatus?: Stats): ParsedFileResult {
     let fileStatus;
     try {
-      fileStatus = statSync(filePath);
+      fileStatus = knownStatus ?? statSync(filePath);
     } catch {
       return createFailedParsedFile();
     }
 
-    let fileContent: string;
-    try {
-      fileContent = readFileSync(filePath, "utf-8");
-    } catch {
-      return createFailedParsedFile(fileStatus.mtimeMs, fileStatus.size);
-    }
-
-    const lines = fileContent.split("\n");
     const records: TokenRecord[] = [];
 
     let currentModel = "codex-default";
@@ -189,170 +210,174 @@ export class SessionIndexer {
 
     const supportedEventTypes = new Set(["session_meta", "turn_context", "event_msg", "token_usage_record"]);
 
-    for (const singleLine of lines) {
-      if (!singleLine.trim()) continue;
+    try {
+      for (const singleLine of readJsonlLines(filePath, fileStatus.size)) {
+        if (!singleLine.trim()) continue;
 
-      let parsedPayload: any;
-      try {
-        parsedPayload = JSON.parse(singleLine);
-      } catch {
-        invalidLines += 1;
-        continue;
-      }
+        let parsedPayload: any;
+        try {
+          parsedPayload = JSON.parse(singleLine);
+        } catch {
+          invalidLines += 1;
+          continue;
+        }
 
-      const eventType = parsedPayload.type;
-      const payloadData = parsedPayload.payload;
-      if (!supportedEventTypes.has(eventType)) {
-        unsupportedEvents += 1;
-        continue;
-      }
-      if (!payloadData || typeof payloadData !== "object") {
-        invalidRecords += 1;
-        continue;
-      }
+        const eventType = parsedPayload.type;
+        const payloadData = parsedPayload.payload;
+        if (!supportedEventTypes.has(eventType)) {
+          unsupportedEvents += 1;
+          continue;
+        }
+        if (!payloadData || typeof payloadData !== "object") {
+          invalidRecords += 1;
+          continue;
+        }
 
-      // 提取 session 資訊、預設模型與代理人角色
-      if (eventType === "session_meta") {
-        defaultSessionId = sanitizeDisplayString(payloadData.session_id || payloadData.id, defaultSessionId);
-        if (payloadData.provenance?.model) {
-          currentModel = sanitizeDisplayString(payloadData.provenance.model, currentModel, MAXIMUM_MODEL_LENGTH);
-        }
-        if (
-          payloadData.agent_role === "subagent" ||
-          payloadData.agent_type === "subagent" ||
-          payloadData.parent_thread_id ||
-          payloadData.source?.subagent
-        ) {
-          currentAgentRole = "subagent";
-        } else if (payloadData.agent_role === "main" || payloadData.agent_type === "main") {
-          currentAgentRole = "main";
-        }
-      } else if (eventType === "turn_context") {
-        if (payloadData.model) {
-          currentModel = sanitizeDisplayString(payloadData.model, currentModel, MAXIMUM_MODEL_LENGTH);
-        }
-        if (payloadData.role === "subagent" || payloadData.agent_role === "subagent" || payloadData.subagent_id) {
-          currentAgentRole = "subagent";
-        } else if (payloadData.role === "main" || payloadData.agent_role === "main") {
-          currentAgentRole = "main";
-        }
-      } else if (eventType === "event_msg") {
-        if (payloadData.thread_settings?.model) {
-          currentModel = sanitizeDisplayString(payloadData.thread_settings.model, currentModel, MAXIMUM_MODEL_LENGTH);
-        }
-        // 提取 rate_limits 配額快照 (嚴格檢查主配額，避免 Spark 0% 覆寫真實週用量)
-        if (payloadData.type === "token_count" && payloadData.rate_limits) {
-          const rateLimits = payloadData.rate_limits;
-          const limitId = rateLimits.limit_id;
+        // 提取 session 資訊、預設模型與代理人角色
+        if (eventType === "session_meta") {
+          defaultSessionId = sanitizeDisplayString(payloadData.session_id || payloadData.id, defaultSessionId);
+          if (payloadData.provenance?.model) {
+            currentModel = sanitizeDisplayString(payloadData.provenance.model, currentModel, MAXIMUM_MODEL_LENGTH);
+          }
+          if (
+            payloadData.agent_role === "subagent" ||
+            payloadData.agent_type === "subagent" ||
+            payloadData.parent_thread_id ||
+            payloadData.source?.subagent
+          ) {
+            currentAgentRole = "subagent";
+          } else if (payloadData.agent_role === "main" || payloadData.agent_type === "main") {
+            currentAgentRole = "main";
+          }
+        } else if (eventType === "turn_context") {
+          if (payloadData.model) {
+            currentModel = sanitizeDisplayString(payloadData.model, currentModel, MAXIMUM_MODEL_LENGTH);
+          }
+          if (payloadData.role === "subagent" || payloadData.agent_role === "subagent" || payloadData.subagent_id) {
+            currentAgentRole = "subagent";
+          } else if (payloadData.role === "main" || payloadData.agent_role === "main") {
+            currentAgentRole = "main";
+          }
+        } else if (eventType === "event_msg") {
+          if (payloadData.thread_settings?.model) {
+            currentModel = sanitizeDisplayString(payloadData.thread_settings.model, currentModel, MAXIMUM_MODEL_LENGTH);
+          }
+          // 提取 rate_limits 配額快照 (嚴格檢查主配額，避免 Spark 0% 覆寫真實週用量)
+          if (payloadData.type === "token_count" && payloadData.rate_limits) {
+            const rateLimits = payloadData.rate_limits;
+            const limitId = rateLimits.limit_id;
 
-          // 僅接受主帳號配額 (limit_id === "codex" 或非附加模型)
-          if (limitId === "codex" || !limitId || limitId === "default") {
-            const primaryWindow = rateLimits.primary;
-            const secondaryWindow = rateLimits.secondary;
+            // 僅接受主帳號配額 (limit_id === "codex" 或非附加模型)
+            if (limitId === "codex" || !limitId || limitId === "default") {
+              const primaryWindow = rateLimits.primary;
+              const secondaryWindow = rateLimits.secondary;
 
-            if (primaryWindow) {
-              const usedPercent = parseQuotaPercent(primaryWindow.used_percent);
-              if (usedPercent !== null && primaryWindow.window_minutes === 300) {
-                lastFiveHourUsedPercent = usedPercent;
-              } else if (usedPercent !== null && primaryWindow.window_minutes === 10080) {
-                lastWeeklyUsedPercent = usedPercent;
+              if (primaryWindow) {
+                const usedPercent = parseQuotaPercent(primaryWindow.used_percent);
+                if (usedPercent !== null && primaryWindow.window_minutes === 300) {
+                  lastFiveHourUsedPercent = usedPercent;
+                } else if (usedPercent !== null && primaryWindow.window_minutes === 10080) {
+                  lastWeeklyUsedPercent = usedPercent;
+                }
               }
-            }
 
-            if (secondaryWindow) {
-              const usedPercent = parseQuotaPercent(secondaryWindow.used_percent);
-              if (usedPercent !== null && secondaryWindow.window_minutes === 300) {
-                lastFiveHourUsedPercent = usedPercent;
-              } else if (usedPercent !== null && secondaryWindow.window_minutes === 10080) {
-                lastWeeklyUsedPercent = usedPercent;
+              if (secondaryWindow) {
+                const usedPercent = parseQuotaPercent(secondaryWindow.used_percent);
+                if (usedPercent !== null && secondaryWindow.window_minutes === 300) {
+                  lastFiveHourUsedPercent = usedPercent;
+                } else if (usedPercent !== null && secondaryWindow.window_minutes === 10080) {
+                  lastWeeklyUsedPercent = usedPercent;
+                }
               }
             }
           }
         }
+
+        // 提取 token 消耗紀錄
+        if (
+          eventType === "token_usage_record" &&
+          payloadData.usage &&
+          typeof payloadData.usage === "object" &&
+          [
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+            "total_tokens",
+          ].some((fieldName) => payloadData.usage[fieldName] !== undefined)
+        ) {
+          const usageData = payloadData.usage;
+          const timestampMilliseconds = parsedPayload.timestamp === undefined
+            ? Date.now()
+            : new Date(parsedPayload.timestamp).getTime();
+          if (!Number.isFinite(timestampMilliseconds)) {
+            invalidRecords += 1;
+            continue;
+          }
+
+          const inputTokens = parseTokenCount(usageData.input_tokens);
+          const cachedInputTokens = parseTokenCount(usageData.cached_input_tokens);
+          const outputTokens = parseTokenCount(usageData.output_tokens);
+          const reasoningOutputTokens = parseTokenCount(usageData.reasoning_output_tokens);
+          if (inputTokens === null || cachedInputTokens === null || outputTokens === null || reasoningOutputTokens === null) {
+            invalidRecords += 1;
+            continue;
+          }
+          const totalTokens = parseTokenCount(usageData.total_tokens, inputTokens + outputTokens);
+          if (totalTokens === null) {
+            invalidRecords += 1;
+            continue;
+          }
+
+          // 判斷此請求是否屬於 subAgent
+          let recordAgentRole: "main" | "subagent" | "unknown" = currentAgentRole;
+          if (payloadData.agent_role === "subagent" || payloadData.agent_type === "subagent") {
+            recordAgentRole = "subagent";
+          } else if (payloadData.agent_role === "main" || payloadData.agent_type === "main") {
+            recordAgentRole = "main";
+          }
+
+          // 計算官方 API 等值美金金額
+          const costResult = calculateTokenCost(
+            currentModel,
+            inputTokens,
+            cachedInputTokens,
+            outputTokens,
+            reasoningOutputTokens
+          );
+          const costUsd = costResult.totalCost;
+
+          records.push({
+            timestamp: timestampMilliseconds,
+            datetime: new Date(timestampMilliseconds).toISOString(),
+            sessionId: sanitizeDisplayString(payloadData.session_id, defaultSessionId || "unknown"),
+            threadId: sanitizeDisplayString(payloadData.thread_id || payloadData.session_id, "unknown"),
+            turnId: sanitizeDisplayString(payloadData.turn_id, `turn-${timestampMilliseconds}-${records.length}`),
+            responseId: payloadData.response_id
+              ? sanitizeDisplayString(payloadData.response_id, "") || undefined
+              : undefined,
+            model: currentModel,
+            inputTokens,
+            cachedInputTokens,
+            outputTokens,
+            reasoningOutputTokens,
+            totalTokens,
+            costUsd,
+            pricingSource: costResult.pricingSource,
+            pricingVersion: costResult.pricingVersion,
+            agentRole: recordAgentRole,
+            fiveHourUsedPercent: lastFiveHourUsedPercent,
+            weeklyUsedPercent: lastWeeklyUsedPercent,
+            sourceFile: filePath,
+          });
+          dataStartMs = dataStartMs === null ? timestampMilliseconds : Math.min(dataStartMs, timestampMilliseconds);
+          dataEndMs = dataEndMs === null ? timestampMilliseconds : Math.max(dataEndMs, timestampMilliseconds);
+        } else if (eventType === "token_usage_record") {
+          invalidRecords += 1;
+        }
       }
-
-      // 提取 token 消耗紀錄
-      if (
-        eventType === "token_usage_record" &&
-        payloadData.usage &&
-        typeof payloadData.usage === "object" &&
-        [
-          "input_tokens",
-          "cached_input_tokens",
-          "output_tokens",
-          "reasoning_output_tokens",
-          "total_tokens",
-        ].some((fieldName) => payloadData.usage[fieldName] !== undefined)
-      ) {
-        const usageData = payloadData.usage;
-        const timestampMilliseconds = parsedPayload.timestamp === undefined
-          ? Date.now()
-          : new Date(parsedPayload.timestamp).getTime();
-        if (!Number.isFinite(timestampMilliseconds)) {
-          invalidRecords += 1;
-          continue;
-        }
-
-        const inputTokens = parseTokenCount(usageData.input_tokens);
-        const cachedInputTokens = parseTokenCount(usageData.cached_input_tokens);
-        const outputTokens = parseTokenCount(usageData.output_tokens);
-        const reasoningOutputTokens = parseTokenCount(usageData.reasoning_output_tokens);
-        if (inputTokens === null || cachedInputTokens === null || outputTokens === null || reasoningOutputTokens === null) {
-          invalidRecords += 1;
-          continue;
-        }
-        const totalTokens = parseTokenCount(usageData.total_tokens, inputTokens + outputTokens);
-        if (totalTokens === null) {
-          invalidRecords += 1;
-          continue;
-        }
-
-        // 判斷此請求是否屬於 subAgent
-        let recordAgentRole: "main" | "subagent" | "unknown" = currentAgentRole;
-        if (payloadData.agent_role === "subagent" || payloadData.agent_type === "subagent") {
-          recordAgentRole = "subagent";
-        } else if (payloadData.agent_role === "main" || payloadData.agent_type === "main") {
-          recordAgentRole = "main";
-        }
-
-        // 計算官方 API 等值美金金額
-        const costResult = calculateTokenCost(
-          currentModel,
-          inputTokens,
-          cachedInputTokens,
-          outputTokens,
-          reasoningOutputTokens
-        );
-        const costUsd = costResult.totalCost;
-
-        records.push({
-          timestamp: timestampMilliseconds,
-          datetime: new Date(timestampMilliseconds).toISOString(),
-          sessionId: sanitizeDisplayString(payloadData.session_id, defaultSessionId || "unknown"),
-          threadId: sanitizeDisplayString(payloadData.thread_id || payloadData.session_id, "unknown"),
-          turnId: sanitizeDisplayString(payloadData.turn_id, `turn-${timestampMilliseconds}-${records.length}`),
-          responseId: payloadData.response_id
-            ? sanitizeDisplayString(payloadData.response_id, "") || undefined
-            : undefined,
-          model: currentModel,
-          inputTokens,
-          cachedInputTokens,
-          outputTokens,
-          reasoningOutputTokens,
-          totalTokens,
-          costUsd,
-          pricingSource: costResult.pricingSource,
-          pricingVersion: costResult.pricingVersion,
-          agentRole: recordAgentRole,
-          fiveHourUsedPercent: lastFiveHourUsedPercent,
-          weeklyUsedPercent: lastWeeklyUsedPercent,
-          sourceFile: filePath,
-        });
-        dataStartMs = dataStartMs === null ? timestampMilliseconds : Math.min(dataStartMs, timestampMilliseconds);
-        dataEndMs = dataEndMs === null ? timestampMilliseconds : Math.max(dataEndMs, timestampMilliseconds);
-      } else if (eventType === "token_usage_record") {
-        invalidRecords += 1;
-      }
+    } catch {
+      return createFailedParsedFile(fileStatus.mtimeMs, fileStatus.size);
     }
 
     return {
@@ -382,10 +407,11 @@ export class SessionIndexer {
   private indexFileDetailed(
     filePath: string,
     force: boolean,
-    diagnostics: MutableSessionIndexDiagnostics
+    diagnostics: MutableSessionIndexDiagnostics,
+    knownStatus?: Stats
   ): { insertedCount: number; newRecords: TokenRecord[] } {
     try {
-      const fileStatus = statSync(filePath);
+      const fileStatus = knownStatus ?? statSync(filePath);
       const cursor = this.database.getCursor(filePath);
 
       if (!force && cursor && cursor.mtime === fileStatus.mtimeMs && cursor.size === fileStatus.size) {
@@ -393,7 +419,7 @@ export class SessionIndexer {
         return { insertedCount: 0, newRecords: [] };
       }
 
-      const parsedFile = this.parseFileDetailed(filePath);
+      const parsedFile = this.parseFileDetailed(filePath, fileStatus);
       this.mergeParseDiagnostics(diagnostics, parsedFile);
       if (!parsedFile.readSucceeded) {
         diagnostics.filesFailed += 1;
@@ -431,8 +457,8 @@ export class SessionIndexer {
     let recordsInsertedCount = 0;
     const allNewRecords: TokenRecord[] = [];
 
-    for (const singleFilePath of candidateFiles) {
-      const { insertedCount, newRecords } = this.indexFileDetailed(singleFilePath, false, diagnostics);
+    for (const file of candidateFiles) {
+      const { insertedCount, newRecords } = this.indexFileDetailed(file.filePath, false, diagnostics, file.status);
       recordsInsertedCount += insertedCount;
       for (const record of newRecords) allNewRecords.push(record);
     }
@@ -462,8 +488,8 @@ export class SessionIndexer {
     diagnostics.filesDiscovered = allFiles.length + diagnostics.filesFailed;
 
     let recordsInsertedCount = 0;
-    for (const singleFilePath of allFiles) {
-      const { insertedCount } = this.indexFileDetailed(singleFilePath, force, diagnostics);
+    for (const file of allFiles) {
+      const { insertedCount } = this.indexFileDetailed(file.filePath, force, diagnostics, file.status);
       recordsInsertedCount += insertedCount;
     }
 

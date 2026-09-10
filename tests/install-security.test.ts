@@ -15,6 +15,7 @@ test("LaunchAgent values are XML-escaped before plist generation", () => {
       ...process.env,
       SCRIPT_DIRECTORY: "/tmp/project & <danger> \"quoted\" 'single'",
       HOME: "/tmp/home & <danger>",
+      CODEX_HOME: "",
     },
     encoding: "utf8",
   });

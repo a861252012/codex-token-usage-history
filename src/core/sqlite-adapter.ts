@@ -24,6 +24,7 @@ export async function createSqliteDb(filePath: string): Promise<SqliteDb> {
     // @ts-ignore
     const { Database } = await import("bun:sqlite");
     const database = new Database(filePath);
+    database.run("PRAGMA busy_timeout = 5000;");
     database.run("PRAGMA journal_mode = WAL;");
     database.run("PRAGMA synchronous = NORMAL;");
     database.run("PRAGMA temp_store = MEMORY;");
@@ -63,6 +64,7 @@ export async function createSqliteDb(filePath: string): Promise<SqliteDb> {
     // Node.js 22+ 內建 node:sqlite
     const { DatabaseSync } = await import("node:sqlite");
     const database = new DatabaseSync(filePath);
+    database.exec("PRAGMA busy_timeout = 5000;");
     database.exec("PRAGMA journal_mode = WAL;");
     database.exec("PRAGMA synchronous = NORMAL;");
     database.exec("PRAGMA temp_store = MEMORY;");

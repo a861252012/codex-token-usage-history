@@ -129,4 +129,4 @@ bun run build
 
 To refresh screenshots, start `bun run demo`, then run `node scripts/capture-screenshots.cjs` with Playwright and Chromium installed.
 
-[Test results](verification.md) · [Security policy](../SECURITY.md) · [MIT](../LICENSE)
+[MIT](../LICENSE)

@@ -81,7 +81,7 @@ describe("Watcher, MCP, Pricing, and Subprocess regression tests", () => {
     rmSync(scratchDir, { recursive: true, force: true });
   });
 
-  test("MCP 查詢前執行 indexAll 能涵蓋 7 天前 mtime 與 archived_sessions 舊記錄", async () => {
+  test("MCP 初次索引能涵蓋 7 天前 mtime 與 archived_sessions 舊記錄", async () => {
     const scratchDir = join(tmpdir(), `test_mcp_all_${Date.now()}_${Math.random().toString(36).slice(2)}`);
     const sessionsDir = join(scratchDir, "sessions", "2026", "08", "01");
     const archivedDir = join(scratchDir, "archived_sessions");
@@ -136,6 +136,8 @@ describe("Watcher, MCP, Pricing, and Subprocess regression tests", () => {
 
     const fetchMarker = join(scratchDir, "fetch-called");
     const preload = join(scratchDir, "offline.ts");
+    writeFileSync(join(scratchDir, "auth.json"), JSON.stringify({ tokens: { access_token: "test-token", account_id: "test-account" } }));
+    writeFileSync(join(scratchDir, "codex_quota_snapshot.json"), JSON.stringify({ updatedAt: Date.now() - 300_000, source: "cache", planType: "plus" }));
     writeFileSync(preload, `import { writeFileSync } from "node:fs";
       globalThis.fetch = async () => { writeFileSync(${JSON.stringify(fetchMarker)}, "called"); throw new Error("offline"); };`);
     const proc = spawnSync(process.execPath, ["--preload", preload, "src/cli/index.ts", "prompt"], {

@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
+import { writePrivateFileAtomic } from "./atomic-file.js";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { QuotaSnapshot, QuotaWindow, AdditionalQuotaLimit } from "./types.js";
@@ -84,11 +85,11 @@ export class QuotaClient {
 
   private databaseInstance: import("./history-db.js").HistoryDatabase | null = null;
 
-  constructor(codexHomeDirectory?: string, databaseInstance?: import("./history-db.js").HistoryDatabase) {
+  constructor(codexHomeDirectory?: string, databaseInstance?: import("./history-db.js").HistoryDatabase, options: { readOnly?: boolean } = {}) {
     this.codexHome = codexHomeDirectory || process.env.CODEX_HOME || join(homedir(), ".codex");
     this.cachePath = join(this.codexHome, "codex_quota_snapshot.json");
     this.databaseInstance = databaseInstance || null;
-    this.loadPersistedCache();
+    this.loadPersistedCache(options.readOnly === true);
   }
 
   /**
@@ -152,9 +153,12 @@ export class QuotaClient {
     }
   }
 
-  /**
-   * 取得即時配額快照 (支援記憶體快取與即時強制重整)
-   */
+  /** 只讀取已載入的本機快照，不觸發認證或網路存取。 */
+  public getCachedQuotaSnapshot(): QuotaSnapshot {
+    return this.cachedSnapshot ?? this.getEmptyFallback("尚無本機配額快取");
+  }
+
+  /** 取得即時配額快照 (支援記憶體快取與即時強制重整)。 */
   public async getQuotaSnapshot(forceRefresh = false): Promise<QuotaSnapshot> {
     const currentTimeMs = Date.now();
     if (!forceRefresh && this.cachedSnapshot && (currentTimeMs - this.cachedSnapshot.updatedAt < CACHE_TTL_MS)) {
@@ -269,8 +273,18 @@ export class QuotaClient {
       });
     }
 
-    // 2. 偵測五小時週期或不定期歸零重置事件（使用率下降超過 20% 且非重置券扣除所致）
-    if (creditDelta === 0 && previousFiveHourUsedPercent !== null && newFiveHourUsedPercent !== null && previousFiveHourUsedPercent >= 20 && newFiveHourUsedPercent < previousFiveHourUsedPercent && (previousFiveHourUsedPercent - newFiveHourUsedPercent) >= 20) {
+    // With unknown credit counts, a usage drop alone cannot identify the reset cause.
+    const unchangedPlan = this.cachedSnapshot.planType === newSnapshot.planType;
+    for (const [label, previousWindow, newWindow] of [
+      ["五小時", this.cachedSnapshot.fiveHour, newSnapshot.fiveHour],
+      ["週用量", this.cachedSnapshot.weekly, newSnapshot.weekly],
+    ] as const) {
+      if (!unchangedPlan || !previousWindow || !newWindow || previousWindow.limitWindowSeconds !== newWindow.limitWindowSeconds) continue;
+      const elapsedWindow = previousWindow.resetAtMs > 0
+        && previousWindow.resetAtMs <= newSnapshot.updatedAt
+        && newWindow.resetAtMs > previousWindow.resetAtMs;
+      const resetWithoutCreditConsumption = creditDelta === null ? elapsedWindow : creditDelta >= 0;
+      if (!resetWithoutCreditConsumption || previousWindow.usedPercent - newWindow.usedPercent < 20) continue;
       this.databaseInstance.insertResetEvent({
         timestamp: currentTimeMs,
         datetime: currentIsoString,
@@ -281,23 +295,7 @@ export class QuotaClient {
         newWeeklyUsedPercent,
         availableCredits: currentCredits,
         creditDelta: 0,
-        description: `五小時時間視窗配額重置（使用率自 ${previousFiveHourUsedPercent.toFixed(1)}% 降至 ${newFiveHourUsedPercent.toFixed(1)}%）`,
-      });
-    }
-
-    // 3. 偵測週用量時間視窗重置事件
-    if (creditDelta === 0 && previousWeeklyUsedPercent !== null && newWeeklyUsedPercent !== null && previousWeeklyUsedPercent >= 20 && newWeeklyUsedPercent < previousWeeklyUsedPercent && (previousWeeklyUsedPercent - newWeeklyUsedPercent) >= 20) {
-      this.databaseInstance.insertResetEvent({
-        timestamp: currentTimeMs,
-        datetime: currentIsoString,
-        eventType: "periodic_reset",
-        previousFiveHourUsedPercent,
-        newFiveHourUsedPercent,
-        previousWeeklyUsedPercent,
-        newWeeklyUsedPercent,
-        availableCredits: currentCredits,
-        creditDelta: 0,
-        description: `週用量時間視窗滾動重置（使用率自 ${previousWeeklyUsedPercent.toFixed(1)}% 降至 ${newWeeklyUsedPercent.toFixed(1)}%）`,
+        description: `${label}時間視窗配額重置（使用率自 ${previousWindow.usedPercent.toFixed(1)}% 降至 ${newWindow.usedPercent.toFixed(1)}%${creditDelta === null ? "；券數未知，依視窗重設時間判定" : ""}）`,
       });
     }
 
@@ -462,17 +460,16 @@ export class QuotaClient {
   private persistCache(snapshot: QuotaSnapshot): void {
     try {
       // The snapshot contains account identity and quota details; never create it world-readable.
-      writeFileSync(this.cachePath, JSON.stringify(snapshot, null, 2), { encoding: "utf-8", mode: 0o600 });
-      chmodSync(this.cachePath, 0o600);
+      writePrivateFileAtomic(this.cachePath, JSON.stringify(snapshot, null, 2));
     } catch {
       // 寫入失敗不阻擋主流程
     }
   }
 
-  private loadPersistedCache(): void {
+  private loadPersistedCache(readOnly = false): void {
     try {
       if (existsSync(this.cachePath)) {
-        chmodSync(this.cachePath, 0o600);
+        if (!readOnly) chmodSync(this.cachePath, 0o600);
         const rawFileContent = readFileSync(this.cachePath, "utf-8");
         const parsedSnapshot = JSON.parse(rawFileContent) as QuotaSnapshot;
         if (parsedSnapshot && typeof parsedSnapshot.updatedAt === "number") {

@@ -38,6 +38,18 @@ export async function runMcpServer(): Promise<void> {
   await database.init();
   const sessionIndexer = new SessionIndexer(database);
   const quotaClient = new QuotaClient(undefined, database);
+  let lastIndexTime: number | null = null;
+  const refreshHistory = () => {
+    if (lastIndexTime === null) {
+      // Preserve first-query coverage of archived history without delaying the MCP handshake.
+      sessionIndexer.indexAll();
+    } else if (Date.now() - lastIndexTime >= 30_000) {
+      sessionIndexer.indexRecent(1);
+    } else {
+      return;
+    }
+    lastIndexTime = Date.now();
+  };
 
   const readlineInterface = readline.createInterface({
     input: process.stdin,
@@ -220,7 +232,7 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_usage_history") {
         try {
-          sessionIndexer.indexAll();
+          refreshHistory();
           const recordLimit = parseMcpLimit(toolArguments.limit, 10);
           const requestedRole = parseMcpAgentRole(toolArguments.agent_role);
           const { records, total } = database.queryRecords({
@@ -261,7 +273,7 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_settlement_report") {
         try {
-          sessionIndexer.indexAll();
+          refreshHistory();
           const settlementPeriod = toolArguments.period === "weekly" || toolArguments.period === "monthly" || toolArguments.period === "yearly"
             ? toolArguments.period
             : "daily";
