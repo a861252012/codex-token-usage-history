@@ -104,6 +104,8 @@ struct HudLocalization {
         case .zhHant:
             switch key {
             case "header_title": return "Codex 用量懸浮球"
+            case "show_five_hour": return "只顯示五小時剩餘額度"
+            case "show_weekly": return "只顯示週剩餘額度"
             case "weekly_quota": return "週配額剩餘"
             case "five_hour_quota": return "5小時配額剩餘"
             case "quota_unavailable": return "無資料"
@@ -133,6 +135,8 @@ struct HudLocalization {
         case .en:
             switch key {
             case "header_title": return "Codex Usage Orb"
+            case "show_five_hour": return "Show only 5-hour remaining quota"
+            case "show_weekly": return "Show only weekly remaining quota"
             case "weekly_quota": return "Weekly Quota"
             case "five_hour_quota": return "5-Hour Quota"
             case "quota_unavailable": return "Unavailable"
@@ -162,6 +166,8 @@ struct HudLocalization {
         case .ja:
             switch key {
             case "header_title": return "Codex 使用量オーブ"
+            case "show_five_hour": return "5時間の残りクォータのみ表示"
+            case "show_weekly": return "週間の残りクォータのみ表示"
             case "weekly_quota": return "週間クォータ残り"
             case "five_hour_quota": return "5時間クォータ残り"
             case "quota_unavailable": return "データなし"
@@ -191,6 +197,8 @@ struct HudLocalization {
         case .zhHans:
             switch key {
             case "header_title": return "Codex 用量悬浮球"
+            case "show_five_hour": return "仅显示五小时剩余额度"
+            case "show_weekly": return "仅显示周剩余额度"
             case "weekly_quota": return "周配额剩余"
             case "five_hour_quota": return "5小时配额剩余"
             case "quota_unavailable": return "无数据"
@@ -337,6 +345,7 @@ let availableSizePresets: [WidgetSizePreset] = [
 ]
 
 struct HudUserConfiguration: Codable {
+    var quotaDisplay: String?
     var widgetSizePresetKey: String?
     var languageKey: String?
 }
@@ -723,6 +732,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // 0: Quota view
     // 1: Today cost view
     private var displayModeIndex: Int = 0
+    private var quotaDisplay = "both"
 
     private var cachedStatusData: FullStatusDTO?
 
@@ -764,6 +774,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
            availableSizePresets.contains(where: { $0.key == savedSize }) {
             activeSizePresetKey = savedSize
         }
+        if let savedDisplay = userConfig.quotaDisplay, ["both", "five-hour", "weekly"].contains(savedDisplay) {
+            quotaDisplay = savedDisplay
+        }
         if let savedLang = userConfig.languageKey,
            let lang = AppLanguage(rawValue: savedLang) {
             currentLanguage = lang
@@ -773,6 +786,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func saveUserConfiguration() {
         let configurationFilePath = getConfigurationFilePath()
         let configRecord = HudUserConfiguration(
+            quotaDisplay: quotaDisplay,
             widgetSizePresetKey: activeSizePresetKey,
             languageKey: currentLanguage.rawValue
         )
@@ -965,6 +979,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildContextMenu() -> NSMenu {
         let menu = NSMenu(title: "Codex Orb")
 
+        for (key, titleKey) in [("five-hour", "show_five_hour"), ("weekly", "show_weekly")] {
+            let title = HudLocalization.string(key: titleKey, language: currentLanguage)
+            let item = NSMenuItem(title: title, action: #selector(handleQuotaDisplaySelected(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = key
+            item.state = quotaDisplay == key ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(NSMenuItem.separator())
+
         // Widget Size Submenu
         let sizeSubmenuTitle = HudLocalization.string(key: "widget_size", language: currentLanguage)
         let sizeSubmenu = NSMenu(title: sizeSubmenuTitle)
@@ -1063,6 +1087,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         currentLanguage = selectedLang
         saveUserConfiguration()
+    }
+
+    @objc private func handleQuotaDisplaySelected(_ sender: NSMenuItem) {
+        guard let selected = sender.representedObject as? String, ["five-hour", "weekly"].contains(selected) else { return }
+        quotaDisplay = quotaDisplay == selected ? "both" : selected
+        displayModeIndex = 0
+        saveUserConfiguration()
+        if let status = cachedStatusData { updateUserInterface(with: status) }
     }
 
     @objc private func handleSizePresetSelected(_ sender: NSMenuItem) {
@@ -1236,9 +1268,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let summary = statusData.todaySummary
         let sizePreset = getCurrentSizePreset()
 
-        let weeklyRemaining = snapshot.weekly.map { Int($0.remainingPercent) }
-        let fiveHourRemaining = snapshot.fiveHour.map { Int($0.remainingPercent) }
-        let availablePercentages = [snapshot.fiveHour?.remainingPercent, snapshot.weekly?.remainingPercent].compactMap { $0 }
+        let weeklyRemaining = quotaDisplay == "five-hour" ? nil : snapshot.weekly.map { Int($0.remainingPercent) }
+        let fiveHourRemaining = quotaDisplay == "weekly" ? nil : snapshot.fiveHour.map { Int($0.remainingPercent) }
+        let availablePercentages = [fiveHourRemaining, weeklyRemaining].compactMap { $0 }.map { Double($0) }
         let targetPercentage = availablePercentages.min() ?? 0
         let hasQuotaData = !availablePercentages.isEmpty
 

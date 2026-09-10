@@ -10,6 +10,16 @@
 
 以下使用演示数据。界面支持英文和繁体中文。
 
+### macOS 悬浮窗（HUD）
+
+左键切换配额与今日估算成本；右键选择显示配额、尺寸与语言。
+
+<img src="screenshots/hud.png" alt="macOS HUD" width="112">
+
+<img src="screenshots/hud-menu-zh-tw.png" alt="HUD context menu" width="340">
+
+### Web Dashboard
+
 ![Dashboard](screenshots/dashboard-zh-tw.png)
 
 <details>

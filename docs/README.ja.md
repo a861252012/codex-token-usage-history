@@ -10,6 +10,16 @@ Codex の利用枠、トークン履歴、推定コストをローカルで確�
 
 デモデータを使用しています。画面は英語と繁体字中国語に対応。
 
+### macOS HUD
+
+左クリックでクォータと本日の推定コストを切り替え。右クリックで表示するクォータ、サイズ、言語を選択できます。
+
+<img src="screenshots/hud.png" alt="macOS HUD" width="112">
+
+<img src="screenshots/hud-menu-en.png" alt="HUD context menu" width="340">
+
+### Web Dashboard
+
 ![Dashboard](screenshots/dashboard-en.png)
 
 <details>

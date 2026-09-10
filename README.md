@@ -10,6 +10,16 @@
 
 以下使用 Demo 資料。介面支援英文與正體中文。
 
+### macOS 懸浮球（HUD）
+
+左鍵切換配額與今日估算成本；右鍵選擇顯示額度、尺寸與語言。
+
+<img src="docs/screenshots/hud.png" alt="macOS HUD" width="112">
+
+<img src="docs/screenshots/hud-menu-zh-tw.png" alt="HUD context menu" width="340">
+
+### Web Dashboard
+
 ![Dashboard](docs/screenshots/dashboard-zh-tw.png)
 
 <details>

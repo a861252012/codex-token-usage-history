@@ -10,6 +10,16 @@ Track Codex quota, token history, and estimated costs locally. Includes a web da
 
 Shown with demo data. The UI supports English and Traditional Chinese.
 
+### macOS HUD
+
+Left-click to switch between quota and today’s estimated cost. Right-click to choose the quota display, size, and language.
+
+<img src="screenshots/hud.png" alt="macOS HUD" width="112">
+
+<img src="screenshots/hud-menu-en.png" alt="HUD context menu" width="340">
+
+### Web Dashboard
+
 ![Dashboard](screenshots/dashboard-en.png)
 
 <details>
