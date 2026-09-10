@@ -113,7 +113,7 @@ async function main(): Promise<void> {
   }
 
   // 背景靜默檢查遠端開源定價庫 (非阻塞，不影響前景效能)
-  if (commandName !== "mcp" && commandName !== "pricing") {
+  if (commandName !== "mcp" && commandName !== "pricing" && commandName !== "prompt") {
     triggerBackgroundPricingSync();
   }
 
@@ -376,7 +376,12 @@ async function main(): Promise<void> {
     }
 
     // 模式 C (預設): 現代化即時 Web 儀表板 (支援 SSE、即時額度、圖表與歷程)
-    const port = parseIntegerOrDefault(values.port, 10200);
+    const port = Number(values.port);
+    if (!/^\d+$/.test(values.port ?? "") || !Number.isInteger(port) || port < 0 || port > 65_535) {
+      console.error("[錯誤] port 必須為 0 至 65535 的整數。");
+      process.exitCode = 1;
+      return;
+    }
     const host = values.host || "127.0.0.1";
     const database = new HistoryDatabase();
     const server = new DashboardServer(database, { port, host });

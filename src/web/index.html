@@ -10,6 +10,7 @@
   <div class="app-container">
     <header class="app-header">
       <div class="header-left">
+        <nav class="breadcrumbs" aria-label="Breadcrumb"><span>Codex</span><span aria-hidden="true">/</span><span id="breadcrumb-current" aria-current="page">Usage overview</span></nav>
         <h1 id="app-title">Codex Token & Quota Monitor</h1>
         <span class="sub-title" id="app-subtitle">Real-time Dashboard for macOS & Codex</span>
       </div>
@@ -21,9 +22,19 @@
         <span id="connection-status" class="status-badge connecting">Connecting...</span>
         <span id="voucher-badge" class="badge">Reset Credits: 0</span>
         <span id="account-badge" class="badge">Loading...</span>
-        <button id="btn-refresh" class="btn btn-secondary">Refresh</button>
+        <button id="btn-refresh" class="btn btn-primary">Refresh</button>
       </div>
     </header>
+    <div id="request-feedback" class="request-feedback" role="status" aria-live="polite" hidden></div>
+    <section class="card filter-card" aria-labelledby="filter-title">
+      <div><h2 id="filter-title">History filters</h2><p id="filter-help">Applies to transaction history and CSV export. Overview cards remain unchanged.</p></div>
+      <div class="filter-fields">
+        <label><span id="label-filter-model">Search model</span><input type="search" id="filter-model" placeholder="e.g. gpt-6" class="input-filter" aria-describedby="filter-help"></label>
+        <label><span id="label-filter-role">Agent role</span><select id="filter-agent-role" class="input-filter"><option value="">All Agents</option><option value="main">Main Agent Only</option><option value="subagent">subAgent Only</option></select></label>
+        <button id="btn-reset-filters" class="btn btn-secondary">Reset filters</button>
+        <a href="#history" id="link-history" class="btn btn-secondary">View history</a>
+      </div>
+    </section>
 
     <!-- Quota Cards Grid -->
     <section class="quota-cards-grid">
@@ -59,18 +70,8 @@
           <!-- Pro Unlimited Mode Content (Shown for Pro users who have no 5h limit) -->
           <div id="pro-five-hour-content" style="display: none;">
             <div class="pro-unlimited-box">
-              <div class="pro-badge-title">Pro Unlimited</div>
-              <div class="pro-badge-desc" id="desc-pro-unlimited">No 5-hour quota restriction on Pro tier. Only weekly cap applies.</div>
-            </div>
-            <div class="quota-meta">
-              <div class="meta-item">
-                <span class="meta-label">Tier Status</span>
-                <span class="meta-value ok">Pro Active</span>
-              </div>
-              <div class="meta-item">
-                <span class="meta-label">Window Cap</span>
-                <span class="meta-value ok">Unlimited</span>
-              </div>
+              <div class="pro-badge-title" id="title-pro-window">Weekly Window</div>
+              <div class="pro-badge-desc" id="desc-pro-unlimited">No 5-hour window was returned in this snapshot. Check the weekly quota below.</div>
             </div>
           </div>
         </div>
@@ -80,7 +81,7 @@
       <div class="card quota-card" id="card-weekly">
         <div class="card-header">
           <h3 id="label-card-weekly">Weekly Quota</h3>
-          <span class="window-tag">7-Day Rolling Window</span>
+          <span class="window-tag" id="tag-weekly">7-Day Rolling Window</span>
         </div>
         <div class="card-body">
           <div class="progress-container">
@@ -273,7 +274,7 @@
     </section>
 
     <!-- Token Usage History Stream Table -->
-    <section class="history-section card">
+    <section class="history-section card" id="history">
       <div id="new-records-notification" class="new-records-banner" style="display: none;">
         <span id="text-new-records">New token records indexed</span>
         <button id="btn-load-new-records" class="btn btn-sm">Reload Page 1</button>
@@ -284,12 +285,6 @@
           <span id="history-total-count" class="count-tag" style="font-size: 12px; color: var(--text-secondary); margin-left: 8px;">0 records</span>
         </div>
         <div class="history-controls">
-          <select id="filter-agent-role" class="input-filter" style="width: auto;">
-            <option value="">All Agents</option>
-            <option value="main">Main Agent Only</option>
-            <option value="subagent">subAgent Only</option>
-          </select>
-          <input type="text" id="filter-model" placeholder="Filter by model (e.g. gpt-6)..." class="input-filter">
           <button id="btn-export-csv" class="btn btn-secondary">Export CSV</button>
         </div>
       </div>
@@ -325,6 +320,10 @@
     </section>
   </div>
 
+  <dialog id="record-dialog" aria-labelledby="record-dialog-title">
+    <form method="dialog"><div class="card-header"><h2 id="record-dialog-title">Record details</h2><button class="btn btn-secondary" id="btn-close-details">Close</button></div></form>
+    <dl id="record-details"></dl>
+  </dialog>
   <script src="app.js"></script>
 </body>
 </html>

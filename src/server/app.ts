@@ -59,8 +59,8 @@ function formatHostForUrl(hostAddress: string): string {
 function parseBoundedInteger(rawValue: string | null, defaultValue: number, minimum: number, maximum: number): number {
   if (rawValue === null || !/^\d+$/.test(rawValue)) return defaultValue;
   const parsedValue = Number(rawValue);
-  return Number.isSafeInteger(parsedValue) && parsedValue >= minimum && parsedValue <= maximum
-    ? parsedValue
+  return Number.isSafeInteger(parsedValue) && parsedValue >= minimum
+    ? Math.min(parsedValue, maximum)
     : defaultValue;
 }
 
@@ -182,8 +182,10 @@ export class DashboardServer {
     // A browser can otherwise use DNS rebinding or permissive CORS to read local
     // account and usage data. The dashboard is intentionally same-origin only.
     const requestHost = incomingRequest.headers.host;
-    const expectedHost = new URL(serverOrigin).host.toLowerCase();
-    if (!requestHost || requestHost.toLowerCase() !== expectedHost) {
+    const allowedHosts = ["127.0.0.1", "localhost", "[::1]"].map(
+      (host) => new URL(`http://${host}:${this.portNumber}`).host,
+    );
+    if (!requestHost || !allowedHosts.includes(requestHost.toLowerCase())) {
       serverResponse.writeHead(421, { "Content-Type": "application/json; charset=utf-8" });
       serverResponse.end(JSON.stringify({ error: "Misdirected request" }));
       return;
@@ -198,7 +200,7 @@ export class DashboardServer {
       } catch {
         originHost = null;
       }
-      if (originHost !== expectedHost) {
+      if (originHost !== requestHost.toLowerCase()) {
         serverResponse.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
         serverResponse.end(JSON.stringify({ error: "Cross-origin requests are not allowed" }));
         return;
@@ -365,7 +367,7 @@ export class DashboardServer {
     if (pathname === "/api/stream") {
       serverResponse.writeHead(200, {
         "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-store",
         Connection: "keep-alive",
       });
       serverResponse.write("\n");

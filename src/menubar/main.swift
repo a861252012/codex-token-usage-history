@@ -138,8 +138,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let quotaSnapshot = data.snapshot
         var titleParts: [String] = []
         var alertActive = false
+        let isPro = (quotaSnapshot.planType?.lowercased() ?? "").contains("pro")
 
-        if let fiveHourWindow = quotaSnapshot.fiveHour {
+        if let fiveHourWindow = quotaSnapshot.fiveHour, !isPro {
             let remainingPercent = Int(fiveHourWindow.remainingPercent)
             titleParts.append("5h: \(remainingPercent)%")
             if remainingPercent <= 20 {
@@ -175,7 +176,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // 5小時時間視窗
-        if let fiveHourWindow = quotaSnapshot.fiveHour {
+        if let fiveHourWindow = quotaSnapshot.fiveHour, !isPro {
             let item = NSMenuItem(title: "五小時額度: 剩餘 \(Int(fiveHourWindow.remainingPercent))% (已用 \(Int(fiveHourWindow.usedPercent))% · 重設: \(fiveHourWindow.resetCountdown))", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)

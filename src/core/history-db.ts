@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, closeSync, fchmodSync, mkdirSync, openSync } from "node:fs";
 import { createSqliteDb, type SqliteDb } from "./sqlite-adapter.js";
 import { calculateTokenCost } from "./pricing-calculator.js";
 import type {
@@ -32,10 +32,23 @@ export class HistoryDatabase {
    */
   public async init(): Promise<void> {
     if (this.databaseInstance) return;
-    this.databaseInstance = await createSqliteDb(this.databaseFilePath);
     if (this.databaseFilePath !== ":memory:") {
-      chmodSync(this.databaseFilePath, 0o600);
+      const descriptor = openSync(this.databaseFilePath, "a", 0o600);
+      try {
+        fchmodSync(descriptor, 0o600);
+      } finally {
+        closeSync(descriptor);
+      }
+      // Older processes may still hold sidecars created with broader permissions.
+      for (const suffix of ["-wal", "-shm"]) {
+        try {
+          chmodSync(`${this.databaseFilePath}${suffix}`, 0o600);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
     }
+    this.databaseInstance = await createSqliteDb(this.databaseFilePath);
 
     // 1. Token 消耗紀錄表
     this.databaseInstance.exec(`
@@ -196,7 +209,7 @@ export class HistoryDatabase {
   /**
    * 批次寫入消耗紀錄 (使用交易保證效能)
    */
-  public insertBatch(records: TokenRecord[]): number {
+  public insertBatch(records: TokenRecord[], onInserted?: (record: TokenRecord) => void): number {
     if (records.length === 0) return 0;
     const database = this.ensureDatabase();
     let insertedRecordCount = 0;
@@ -248,6 +261,7 @@ export class HistoryDatabase {
 
         if (executionResult.changes > 0) {
           insertedRecordCount += 1;
+          onInserted?.(singleRecord);
         }
       }
     });
