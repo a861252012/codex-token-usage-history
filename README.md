@@ -118,12 +118,6 @@ enabled = true
 - 配額會標示來源、更新時間與錯誤；掃描診斷僅代表該程序最近一輪結果。
 - Dashboard 僅供本機存取。原生 UI 與安裝腳本部分路徑固定為 `~/.codex`。
 
-## 疑難排解
-
-- 沒有歷史：執行 `doctor`，再用 `index --all --json` 查看診斷。
-- 連接埠被占用：加上 `--port 10202 --no-open`。
-- 更新後仍是舊畫面：重啟 Dashboard，再重新整理瀏覽器。
-
 ## 開發
 
 ```bash
@@ -131,5 +125,3 @@ bun test
 bun run typecheck
 bun run build
 ```
-
-重拍截圖：啟動 `bun run demo`，再執行 `node scripts/capture-screenshots.cjs`（需 Playwright 與 Chromium）。

@@ -115,12 +115,6 @@ enabled = true
 - Quota displays its source, update time, and errors. Scan diagnostics cover only that process’s latest scan.
 - The dashboard is local-only. Some native UI and installer paths remain fixed to `~/.codex`.
 
-## Troubleshooting
-
-- No history: run `doctor`, then inspect `index --all --json`.
-- Port in use: add `--port 10202 --no-open`.
-- Old UI after updating: restart the dashboard and reload the browser.
-
 ## Development
 
 ```bash
@@ -128,5 +122,3 @@ bun test
 bun run typecheck
 bun run build
 ```
-
-To refresh screenshots, start `bun run demo`, then run `node scripts/capture-screenshots.cjs` with Playwright and Chromium installed.

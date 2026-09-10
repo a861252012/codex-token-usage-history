@@ -115,12 +115,6 @@ enabled = true
 - 配额标示来源、更新时间与错误；扫描诊断仅代表该进程最近一轮结果。
 - 仪表盘仅供本机访问。原生界面与安装脚本的部分路径固定为 `~/.codex`。
 
-## 常见问题
-
-- 没有历史：运行 `doctor`，再用 `index --all --json` 查看诊断。
-- 端口被占用：加上 `--port 10202 --no-open`。
-- 更新后仍是旧画面：重启 Dashboard，再刷新浏览器。
-
 ## 开发
 
 ```bash
@@ -128,5 +122,3 @@ bun test
 bun run typecheck
 bun run build
 ```
-
-重拍截图：启动 `bun run demo`，再运行 `node scripts/capture-screenshots.cjs`（需要 Playwright 和 Chromium）。

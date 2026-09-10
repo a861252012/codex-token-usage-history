@@ -115,12 +115,6 @@ enabled = true
 - 利用枠にはソース、更新時刻、エラーを表示します。スキャン診断はそのプロセスの直近の処理だけを対象とします。
 - 画面への接続はローカル限定です。ネイティブ UI とインストーラーの一部パスは `~/.codex` 固定です。
 
-## トラブルシューティング
-
-- 履歴が空：`doctor` と `index --all --json` で診断します。
-- ポート使用中：`--port 10202 --no-open` を追加します。
-- 更新前の画面が残る：Dashboard を再起動してブラウザーを再読み込みします。
-
 ## 開発
 
 ```bash
@@ -128,5 +122,3 @@ bun test
 bun run typecheck
 bun run build
 ```
-
-撮影は `bun run demo` を起動後、`node scripts/capture-screenshots.cjs` を実行します。Playwright と Chromium が必要です。
