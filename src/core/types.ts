@@ -28,6 +28,8 @@ export interface AdditionalQuotaLimit {
 export interface QuotaSnapshot {
   /** 抓取或更新時間戳記 (毫秒) */
   updatedAt: number;
+  /** 取得此快照的帳號；舊快取或來源未提供時無法確認。 */
+  accountId?: string | null;
   /** 帳號 Email */
   email: string | null;
   /** 方案類型 (例: prolite, plus, pro, team) */

@@ -310,6 +310,7 @@ export class DashboardServer {
 
       serverResponse.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       serverResponse.end(JSON.stringify({
+        dataDirectory: realpathSync(this.settingsDirectory),
         snapshot: quotaSnapshot,
         todaySummary,
         recentRecords,

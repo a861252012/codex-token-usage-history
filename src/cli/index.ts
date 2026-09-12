@@ -110,6 +110,15 @@ async function main(): Promise<void> {
   const argumentList = process.argv.slice(2);
   const commandName = argumentList[0] && !argumentList[0].startsWith("-") ? argumentList[0] : "status";
 
+  if (!["help", "doctor", "status", "live", "watch", "hud", "bar", "pet", "mcp",
+    "report", "settle", "settlement", "resets", "credits", "plans", "tiers",
+    "reprice", "recalculate-costs", "pricing", "price", "dashboard", "board", "web",
+    "ui", "serve", "prompt", "index", "history"].includes(commandName)) {
+    console.error(`[錯誤] 未知命令: ${commandName}。請使用 --help 查看可用命令。`);
+    process.exitCode = 1;
+    return;
+  }
+
   if (shouldPrintHelp(argumentList, commandName)) {
     printHelpText();
     return;
@@ -138,7 +147,7 @@ async function main(): Promise<void> {
       runtime: process.versions.bun ? `Bun ${process.versions.bun}` : `Node ${process.version}`,
       platform: process.platform, architecture: process.arch, sqliteAvailable, dataDirectory, paths,
       authenticationVerified: false,
-      notes: ["僅檢查路徑與讀取權限；不讀取認證內容、不驗證登入、不連網。", "缺少 archived_sessions 或尚未建立資料庫，不一定是錯誤。", "目前僅索引支援的 token_usage_record 事件；可執行 index --all --json 查看解析診斷。", "原生 UI 需 macOS 與 Swift 編譯；本指令不安裝或啟動服務。"],
+      notes: ["僅檢查路徑與讀取權限；不讀取認證內容、不驗證登入、不連網。", "缺少 archived_sessions 或尚未建立資料庫，不一定是錯誤。", "支援 token_usage_record 與舊版累計 token_count；可執行 index --all --json 查看解析診斷，舊版已掃描檔案需加 --force 補匯入。", "原生 UI 需 macOS 與 Swift 編譯；本指令不安裝或啟動服務。"],
     };
     if (values.json) console.log(JSON.stringify(diagnostic, null, 2));
     else {
@@ -311,6 +320,7 @@ async function main(): Promise<void> {
         console.log(`[提示] 執行 'codex-usage reprice' 可依最新費率批次更新歷史資料庫。`);
       } else {
         console.error(`[失敗] ${result.message}`);
+        process.exitCode = 1;
       }
       return;
     }

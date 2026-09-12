@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 
 test.skipIf(process.platform !== "darwin")("HUD lock rejects another process and recovers after exit", () => {
   const source = readFileSync(new URL("../src/floating-hud/main.swift", import.meta.url), "utf8");
-  const implementation = source.slice(source.indexOf("func acquireHudLock"), source.indexOf("struct HudLoginItem"));
+  const implementation = source.slice(source.indexOf("func acquireHudLock"), source.indexOf("func makeDashboardProcess"));
   const result = spawnSync("swift", ["-"], {
     input: `import Foundation
 import Darwin

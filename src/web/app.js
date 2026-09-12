@@ -56,6 +56,7 @@ function resetFilters() {
 // Shared by all data panels: local skeletons, retry actions and request coalescing.
 function withRequestFeedback(task, { table, columns, buttons = [] } = {}) {
   let pending;
+  let latestRequest;
   let signature;
   let version = 0;
   return (...args) => {
@@ -82,11 +83,12 @@ function withRequestFeedback(task, { table, columns, buttons = [] } = {}) {
     };
     const wrappedRetry = () => table === "history" ? fetchHistory() : table === "settlement" ? fetchSettlementReport(currentSettlementPeriod) : table === "resets" ? fetchResetEvents() : fetchPlanChangeEvents();
     pending = task(...args).then(() => {
-      if (ticket !== version) return;
+      if (ticket !== version) return latestRequest;
       if (tbody?.rows.length === 1 && tbody.rows[0].cells.length === 1) renderState(false);
       return true;
     }).catch((error) => {
-      if (ticket !== version || error.name === "AbortError") return false;
+      if (ticket !== version) return latestRequest;
+      if (error.name === "AbortError") return false;
       renderState(true);
       showFeedback(uiText("Some data could not be loaded. Please retry.", "部分資料載入失敗，請重新載入。"), "danger");
       return false;
@@ -98,6 +100,7 @@ function withRequestFeedback(task, { table, columns, buttons = [] } = {}) {
       tbody?.removeAttribute("aria-label");
       if (table === "history") updatePagination();
     });
+    latestRequest = pending;
     return pending;
   };
 }
@@ -774,28 +777,30 @@ async function fetchHourlyStats() {
     const statsMap = new Map();
 
     for (const item of hourlyData) {
-      statsMap.set(item.hour, item);
+      statsMap.set(item.hourStartMs, item);
     }
 
     let total24hTokens = 0;
 
     // A rolling 24-hour range spans partial hours at both ends.
     for (let index = 24; index >= 0; index -= 1) {
-      const slotDate = new Date(now.getTime() - index * 3600 * 1000);
+      const hourStartMs = Math.floor(now.getTime() / 3600000) * 3600000 - index * 3600000;
+      const slotDate = new Date(hourStartMs);
       const year = slotDate.getFullYear();
       const month = String(slotDate.getMonth() + 1).padStart(2, "0");
       const day = String(slotDate.getDate()).padStart(2, "0");
       const hour = String(slotDate.getHours()).padStart(2, "0");
-      const key = `${year}-${month}-${day} ${hour}:00`;
+      const minute = String(slotDate.getMinutes()).padStart(2, "0");
+      const key = `${year}-${month}-${day} ${hour}:${minute}`;
 
-      const found = statsMap.get(key);
+      const found = statsMap.get(hourStartMs);
       const tokens = found ? found.tokens : 0;
       const requests = found ? found.requests : 0;
       total24hTokens += tokens;
 
       hourlySlots.push({
         key,
-        displayHour: `${hour}:00`,
+        displayHour: `${hour}:${minute}`,
         tokens,
         requests,
         current: index === 0,
@@ -1193,8 +1198,19 @@ function updatePagination() {
 function setupSse() {
   const statusElement = document.getElementById("connection-status");
   const eventSource = new EventSource("/api/stream");
+  let disconnected = false;
+  let reconnectVersion = 0;
 
   eventSource.onopen = () => {
+    if (disconnected) {
+      disconnected = false;
+      // Supersede requests that may still be pending from before the disconnection.
+      const refreshVersion = `reconnect:${++reconnectVersion}`;
+      fetchSummary(refreshVersion);
+      fetchHourlyStats(refreshVersion);
+      fetchSettlementReport(currentSettlementPeriod, refreshVersion);
+      fetchHistory(refreshVersion);
+    }
     if (statusElement) {
       statusElement.hidden = true;
       statusElement.textContent = "";
@@ -1205,6 +1221,8 @@ function setupSse() {
     try {
       const quotaSnapshot = JSON.parse(event.data);
       renderQuotaSnapshot(quotaSnapshot);
+      fetchResetEvents(quotaSnapshot.updatedAt);
+      fetchPlanChangeEvents(quotaSnapshot.updatedAt);
     } catch {}
   });
 
@@ -1212,7 +1230,6 @@ function setupSse() {
     fetchSummary();
     fetchHourlyStats();
     fetchSettlementReport(currentSettlementPeriod);
-    fetchResetEvents();
 
     if (currentPage === 1) {
       fetchHistory();
@@ -1225,6 +1242,7 @@ function setupSse() {
   });
 
   eventSource.onerror = () => {
+    disconnected = true;
     if (statusElement) {
       statusElement.hidden = false;
       statusElement.textContent = currentLanguage === "zh-TW" ? "本機服務重新連線中..." : "Reconnecting local service...";
@@ -1387,12 +1405,13 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  fetchQuota();
+  fetchQuota().then(() => {
+    fetchResetEvents(lastQuotaSnapshot?.updatedAt);
+    fetchPlanChangeEvents(lastQuotaSnapshot?.updatedAt);
+  });
   fetchSummary();
   fetchHourlyStats();
   fetchSettlementReport("daily");
-  fetchResetEvents();
-  fetchPlanChangeEvents();
   fetchHistory();
   setupSse();
 
@@ -1406,8 +1425,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (button.disabled) return;
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
-    const results = await Promise.all([fetchQuota(true), fetchSummary(), fetchHourlyStats(), fetchSettlementReport(currentSettlementPeriod), fetchResetEvents(), fetchPlanChangeEvents(), fetchHistory()]);
-    const requestsSucceeded = results.every(Boolean);
+    const quotaSucceeded = await fetchQuota(true);
+    const results = await Promise.all([fetchSummary(), fetchHourlyStats(), fetchSettlementReport(currentSettlementPeriod), fetchResetEvents(lastQuotaSnapshot?.updatedAt), fetchPlanChangeEvents(lastQuotaSnapshot?.updatedAt), fetchHistory()]);
+    const requestsSucceeded = quotaSucceeded && results.every(Boolean);
     const quotaIsFresh = lastQuotaTrust?.level === "fresh";
     if (requestsSucceeded && quotaIsFresh) {
       showFeedback(uiText("Data refreshed with a live quota snapshot.", "資料已更新，額度為即時快照。"));

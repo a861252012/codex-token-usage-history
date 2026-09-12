@@ -1,10 +1,10 @@
 /**
- * OpenAI 各模型官方 API 定價計算器 (Token 等值金額換算模組)
+ * OpenAI 各模型標準 API 等值定價計算器 (Token 等值金額換算模組)
  *
  * 階層化定價決策鏈 (Hierarchical Pricing Fallback Chain):
  *   1. 最高優先: 使用者自訂覆蓋 ~/.codex/pricing.json ("user-config")
  *   2. 第二優先: 本機快取之開源社群定價庫 ~/.codex/pricing_cache.json ("upstream-cache")
- *   3. 保底防線: 程式內嵌官方基準與 Codex 預覽模型定價 ("builtin")
+ *   3. 保底防線: 程式內嵌已查證基準定價 ("builtin")
  *   4. 通用降級: 未知模型預設定價 ("fallback")
  *
  * 單位: 每 1,000,000 Tokens 之美元費率 (USD per 1M tokens)
@@ -16,12 +16,16 @@ import { homedir } from "node:os";
 import { loadCachedUpstreamPricing } from "./pricing-sync.js";
 import type { PricingSource } from "./types.js";
 
-export interface ModelPricingTier {
-  modelPrefix: string;
+interface TokenPrices {
   inputCostPerMillion: number;
   cachedInputCostPerMillion: number;
   outputCostPerMillion: number;
   reasoningOutputCostPerMillion: number;
+}
+
+export interface ModelPricingTier extends TokenPrices {
+  modelPrefix: string;
+  longContext?: TokenPrices & { inputTokenThreshold: number };
 }
 
 export interface CalculatedCostResult {
@@ -51,49 +55,70 @@ export interface PricingConfigSummary {
   builtinCount: number;
 }
 
-// 程式內嵌基準定價 (包含 Codex 特有或尚未登錄公開資料庫之模型)
+// Standard API rates verified 2026-09-12: https://developers.openai.com/api/docs/models/<model>
 const BUILTIN_MODEL_PRICING: ModelPricingTier[] = [
   {
     modelPrefix: "gpt-6-astra",
-    inputCostPerMillion: 2.50,
-    cachedInputCostPerMillion: 1.25,
-    outputCostPerMillion: 10.00,
-    reasoningOutputCostPerMillion: 10.00,
-  },
-  {
-    modelPrefix: "gpt-5.3-codex-spark",
-    inputCostPerMillion: 1.25,
-    cachedInputCostPerMillion: 0.30,
-    outputCostPerMillion: 5.00,
-    reasoningOutputCostPerMillion: 5.00,
+    inputCostPerMillion: 10,
+    cachedInputCostPerMillion: 1,
+    outputCostPerMillion: 50,
+    reasoningOutputCostPerMillion: 50,
+    longContext: {
+      inputTokenThreshold: 272_000,
+      inputCostPerMillion: 20,
+      cachedInputCostPerMillion: 2,
+      outputCostPerMillion: 75.0,
+      reasoningOutputCostPerMillion: 75.0,
+    },
   },
   {
     modelPrefix: "gpt-5.6-sol",
-    inputCostPerMillion: 2.00,
-    cachedInputCostPerMillion: 0.50,
-    outputCostPerMillion: 8.00,
-    reasoningOutputCostPerMillion: 8.00,
+    inputCostPerMillion: 4,
+    cachedInputCostPerMillion: 0.4,
+    outputCostPerMillion: 20,
+    reasoningOutputCostPerMillion: 20,
+    longContext: {
+      inputTokenThreshold: 272_000,
+      inputCostPerMillion: 8,
+      cachedInputCostPerMillion: 0.8,
+      outputCostPerMillion: 30.0,
+      reasoningOutputCostPerMillion: 30.0,
+    },
   },
   {
     modelPrefix: "gpt-5.6-terra",
-    inputCostPerMillion: 2.00,
-    cachedInputCostPerMillion: 0.50,
-    outputCostPerMillion: 8.00,
-    reasoningOutputCostPerMillion: 8.00,
+    inputCostPerMillion: 2,
+    cachedInputCostPerMillion: 0.2,
+    outputCostPerMillion: 12,
+    reasoningOutputCostPerMillion: 12,
+    longContext: {
+      inputTokenThreshold: 272_000,
+      inputCostPerMillion: 4,
+      cachedInputCostPerMillion: 0.4,
+      outputCostPerMillion: 18.0,
+      reasoningOutputCostPerMillion: 18.0,
+    },
   },
   {
     modelPrefix: "gpt-5.6-luna",
-    inputCostPerMillion: 2.00,
-    cachedInputCostPerMillion: 0.50,
-    outputCostPerMillion: 8.00,
-    reasoningOutputCostPerMillion: 8.00,
+    inputCostPerMillion: 0.2,
+    cachedInputCostPerMillion: 0.02,
+    outputCostPerMillion: 1.2,
+    reasoningOutputCostPerMillion: 1.2,
+    longContext: {
+      inputTokenThreshold: 272_000,
+      inputCostPerMillion: 0.4,
+      cachedInputCostPerMillion: 0.04,
+      outputCostPerMillion: 1.8,
+      reasoningOutputCostPerMillion: 1.8,
+    },
   },
   {
     modelPrefix: "gpt-5",
-    inputCostPerMillion: 2.00,
-    cachedInputCostPerMillion: 0.50,
-    outputCostPerMillion: 8.00,
-    reasoningOutputCostPerMillion: 8.00,
+    inputCostPerMillion: 1.25,
+    cachedInputCostPerMillion: 0.125,
+    outputCostPerMillion: 10,
+    reasoningOutputCostPerMillion: 10,
   },
   {
     modelPrefix: "o3-mini",
@@ -123,13 +148,6 @@ const BUILTIN_MODEL_PRICING: ModelPricingTier[] = [
     outputCostPerMillion: 10.00,
     reasoningOutputCostPerMillion: 10.00,
   },
-  {
-    modelPrefix: "codex-auto-review",
-    inputCostPerMillion: 1.50,
-    cachedInputCostPerMillion: 0.50,
-    outputCostPerMillion: 6.00,
-    reasoningOutputCostPerMillion: 6.00,
-  },
 ];
 
 export const DEFAULT_FALLBACK_PRICING: ModelPricingTier = {
@@ -140,7 +158,7 @@ export const DEFAULT_FALLBACK_PRICING: ModelPricingTier = {
   reasoningOutputCostPerMillion: 8.00,
 };
 
-const BUILTIN_VERSION = "2026-09-09";
+const BUILTIN_VERSION = "2026-09-12";
 const MAXIMUM_USER_PRICING_FILE_BYTES = 1024 * 1024;
 const MAXIMUM_USER_PRICING_MODELS = 1_000;
 const MAXIMUM_MODEL_PREFIX_LENGTH = 128;
@@ -164,12 +182,23 @@ function validatePricingTier(value: unknown): ModelPricingTier | null {
   const reasoningPrice = candidate.reasoningOutputCostPerMillion ?? candidate.outputCostPerMillion;
   if (!isValidPrice(cachedPrice) || !isValidPrice(reasoningPrice)) return null;
 
+  const longContext = candidate.longContext;
+  if (longContext !== undefined && (
+    !longContext || typeof longContext !== "object" ||
+    !Number.isSafeInteger(longContext.inputTokenThreshold) || longContext.inputTokenThreshold <= 0 ||
+    !isValidPrice(longContext.inputCostPerMillion) ||
+    !isValidPrice(longContext.cachedInputCostPerMillion) ||
+    !isValidPrice(longContext.outputCostPerMillion) ||
+    !isValidPrice(longContext.reasoningOutputCostPerMillion)
+  )) return null;
+
   return {
     modelPrefix: candidate.modelPrefix.toLowerCase(),
     inputCostPerMillion: candidate.inputCostPerMillion,
     cachedInputCostPerMillion: cachedPrice,
     outputCostPerMillion: candidate.outputCostPerMillion,
     reasoningOutputCostPerMillion: reasoningPrice,
+    ...(longContext ? { longContext } : {}),
   };
 }
 
@@ -264,9 +293,9 @@ export function loadUserPricingConfig(): { version: string; models: ModelPricing
 }
 
 /**
- * 輔助函數: 從指定清單中尋找最適模型階層 (精確比對優先，次採最長前綴比對)
+ * 自訂設定允許前綴；公開價目必須匹配明列的模型名稱。
  */
-function findBestTierInList(modelName: string, tierList: ModelPricingTier[]): ModelPricingTier | null {
+function findBestTierInList(modelName: string, tierList: ModelPricingTier[], customPrefixes = false): ModelPricingTier | null {
   const normalizedName = modelName.toLowerCase();
 
   // 1. 完全一致匹配 (Exact Match)
@@ -276,7 +305,9 @@ function findBestTierInList(modelName: string, tierList: ModelPricingTier[]): Mo
     }
   }
 
-  // 2. 最長前綴匹配 (Longest Prefix Match)
+  if (!customPrefixes) return null;
+
+  // 2. 使用者明示的最長前綴匹配
   let bestCandidate: ModelPricingTier | null = null;
   let maxPrefixLength = 0;
 
@@ -323,7 +354,7 @@ export function resolvePricingTierForModel(modelName: string): PricingResolution
 
   // 1. 最高優先: 檢查使用者自訂設定檔 (~/.codex/pricing.json)
   if (userConfig) {
-    const matchedUserTier = findBestTierInList(normalizedModelName, userConfig.models);
+    const matchedUserTier = findBestTierInList(normalizedModelName, userConfig.models, true);
     if (matchedUserTier) {
       const resolution: PricingResolution = {
         tier: matchedUserTier,
@@ -335,10 +366,15 @@ export function resolvePricingTierForModel(modelName: string): PricingResolution
     }
   }
 
+  const matchedBuiltinTier = findBestTierInList(normalizedModelName, BUILTIN_MODEL_PRICING);
+
   // 2. 第二優先: 檢查本機快取的開源社群定價庫 (~/.codex/pricing_cache.json)
   if (upstreamCache) {
     const matchedUpstreamTier = findBestTierInList(normalizedModelName, upstreamCache.models);
-    if (matchedUpstreamTier) {
+    // Legacy caches discarded long-context prices. Use a verified builtin while they refresh.
+    const missingLongContext = upstreamCache.schemaVersion !== 2 &&
+      matchedBuiltinTier?.longContext && !matchedUpstreamTier?.longContext;
+    if (matchedUpstreamTier && !missingLongContext) {
       const resolution: PricingResolution = {
         tier: matchedUpstreamTier,
         source: "upstream-cache",
@@ -349,8 +385,7 @@ export function resolvePricingTierForModel(modelName: string): PricingResolution
     }
   }
 
-  // 3. 第三優先: 檢查內建預設定價 (官方標竿與 Codex 專屬模型)
-  const matchedBuiltinTier = findBestTierInList(normalizedModelName, BUILTIN_MODEL_PRICING);
+  // 3. 第三優先: 檢查內建已查證定價
   if (matchedBuiltinTier) {
     const resolution: PricingResolution = {
       tier: matchedBuiltinTier,
@@ -391,12 +426,13 @@ export function calculateTokenCost(
 ): CalculatedCostResult {
   const { tier, source, version } = resolvePricingTierForModel(modelName);
 
+  const rates = tier.longContext && inputTokens > tier.longContext.inputTokenThreshold ? tier.longContext : tier;
   const directInputTokens = Math.max(0, inputTokens - cachedInputTokens);
-  const inputCost = (directInputTokens / 1_000_000) * tier.inputCostPerMillion;
-  const cachedInputCost = (cachedInputTokens / 1_000_000) * tier.cachedInputCostPerMillion;
+  const inputCost = (directInputTokens / 1_000_000) * rates.inputCostPerMillion;
+  const cachedInputCost = (cachedInputTokens / 1_000_000) * rates.cachedInputCostPerMillion;
   const standardOutputTokens = Math.max(0, outputTokens - reasoningOutputTokens);
-  const outputCost = (standardOutputTokens / 1_000_000) * tier.outputCostPerMillion;
-  const reasoningOutputCost = (reasoningOutputTokens / 1_000_000) * tier.reasoningOutputCostPerMillion;
+  const outputCost = (standardOutputTokens / 1_000_000) * rates.outputCostPerMillion;
+  const reasoningOutputCost = (reasoningOutputTokens / 1_000_000) * rates.reasoningOutputCostPerMillion;
 
   const totalCost = inputCost + cachedInputCost + outputCost + reasoningOutputCost;
 
@@ -471,12 +507,15 @@ export function getEffectiveCatalogOverview(): Array<{
   reasoningOutputPer1M: number;
   source: PricingSource;
   version: string;
+  longContext?: ModelPricingTier["longContext"];
 }> {
   // 挑選常用的主流核心模型與 Codex 模型
   const sampleModels = [
     "gpt-6-astra",
     "gpt-5.3-codex-spark",
     "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5",
     "o3-mini",
     "o1",
@@ -488,13 +527,14 @@ export function getEffectiveCatalogOverview(): Array<{
   return sampleModels.map((modelName) => {
     const { tier, source, version } = resolvePricingTierForModel(modelName);
     return {
-      modelPrefix: tier.modelPrefix,
+      modelPrefix: modelName,
       inputPer1M: tier.inputCostPerMillion,
       cachedInputPer1M: tier.cachedInputCostPerMillion,
       outputPer1M: tier.outputCostPerMillion,
       reasoningOutputPer1M: tier.reasoningOutputCostPerMillion,
       source,
       version,
+      ...(tier.longContext ? { longContext: tier.longContext } : {}),
     };
   });
 }

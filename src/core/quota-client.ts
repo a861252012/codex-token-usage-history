@@ -82,6 +82,8 @@ export class QuotaClient {
   private codexHome: string;
   private cachedSnapshot: QuotaSnapshot | null = null;
   private cachePath: string;
+  private refreshSequence = 0;
+  private pendingRefresh: { accountId: string; accessToken: string; promise: Promise<QuotaSnapshot> } | null = null;
 
   private databaseInstance: import("./history-db.js").HistoryDatabase | null = null;
 
@@ -160,22 +162,42 @@ export class QuotaClient {
 
   /** 取得即時配額快照 (支援記憶體快取與即時強制重整)。 */
   public async getQuotaSnapshot(forceRefresh = false): Promise<QuotaSnapshot> {
+    const authTokens = this.readAuthTokens();
+    if (authTokens && (!authTokens.accountId || this.cachedSnapshot?.accountId !== authTokens.accountId)) {
+      this.cachedSnapshot = null;
+    }
     const currentTimeMs = Date.now();
-    if (!forceRefresh && this.cachedSnapshot && (currentTimeMs - this.cachedSnapshot.updatedAt < CACHE_TTL_MS)) {
+    const cacheAge = this.cachedSnapshot ? currentTimeMs - this.cachedSnapshot.updatedAt : NaN;
+    if (!forceRefresh && this.cachedSnapshot && Number.isFinite(cacheAge) && cacheAge >= 0 && cacheAge < CACHE_TTL_MS) {
       return this.cachedSnapshot;
     }
 
-    const authTokens = this.readAuthTokens();
     if (!authTokens) {
+      this.refreshSequence += 1;
+      this.pendingRefresh = null;
       if (this.cachedSnapshot) {
         return this.createStaleSnapshot(this.cachedSnapshot, "尚未於 ~/.codex/auth.json 找到有效登入憑證");
       }
       return this.getEmptyFallback("尚未於 ~/.codex/auth.json 找到有效登入憑證");
     }
 
+    if (this.pendingRefresh?.accountId === authTokens.accountId && this.pendingRefresh.accessToken === authTokens.accessToken) {
+      return this.pendingRefresh.promise;
+    }
+    const promise = this.refreshQuotaSnapshot(authTokens, ++this.refreshSequence);
+    this.pendingRefresh = { ...authTokens, promise };
+    try {
+      return await promise;
+    } finally {
+      if (this.pendingRefresh?.promise === promise) this.pendingRefresh = null;
+    }
+  }
+
+  private async refreshQuotaSnapshot(authTokens: { accessToken: string; accountId: string }, sequence: number): Promise<QuotaSnapshot> {
     const abortController = new AbortController();
     const timeoutIdentifier = setTimeout(() => abortController.abort(), DEFAULT_TIMEOUT_MS);
     timeoutIdentifier.unref?.();
+    let newSnapshot: QuotaSnapshot;
 
     try {
       const httpResponse = await fetch("https://chatgpt.com/backend-api/wham/usage", {
@@ -188,11 +210,7 @@ export class QuotaClient {
       });
 
       if (!httpResponse.ok) {
-        const failureReason = `遠端 API 回應代碼: ${httpResponse.status}`;
-        if (this.cachedSnapshot) {
-          return this.createStaleSnapshot(this.cachedSnapshot, failureReason);
-        }
-        return this.getEmptyFallback(failureReason);
+        throw new Error(`遠端 API 回應代碼: ${httpResponse.status}`);
       }
 
       const declaredLength = Number(httpResponse.headers.get("content-length"));
@@ -201,36 +219,37 @@ export class QuotaClient {
       }
       const responseText = await readBoundedResponseText(httpResponse, MAXIMUM_QUOTA_RESPONSE_BYTES);
       const rawResponsePayload = JSON.parse(responseText) as RawWhamResponse;
-      const newSnapshot = this.parseWhamResponse(rawResponsePayload);
-      if (newSnapshot.errorReason) {
-        return this.cachedSnapshot
-          ? this.createStaleSnapshot(this.cachedSnapshot, newSnapshot.errorReason)
-          : { ...newSnapshot, source: "fallback" };
-      }
-
-      // 自動比對配額重置或重置券事件
-      this.detectAndRecordResetEvents(newSnapshot);
-
-      this.cachedSnapshot = newSnapshot;
-      this.persistCache(newSnapshot);
-      return newSnapshot;
+      newSnapshot = this.parseWhamResponse(rawResponsePayload);
+      newSnapshot.accountId = authTokens.accountId || newSnapshot.accountId;
     } catch (caughtError: any) {
-      // 網路連線逾時或失敗時，優先回傳已儲存的快取
-      const failureReason = caughtError?.message || "無法連線至 OpenAI 配額伺服器";
-      if (this.cachedSnapshot) {
-        return this.createStaleSnapshot(this.cachedSnapshot, failureReason);
-      }
-      return this.getEmptyFallback("無法連線至 OpenAI 配額伺服器");
+      newSnapshot = this.getEmptyFallback(caughtError?.message || "無法連線至 OpenAI 配額伺服器");
     } finally {
       clearTimeout(timeoutIdentifier);
     }
+
+    // 完成前登入狀態可能已改變；舊請求的成功與失敗都不能改寫新狀態。
+    const currentAuth = this.readAuthTokens();
+    if (sequence !== this.refreshSequence || currentAuth?.accountId !== authTokens.accountId || currentAuth?.accessToken !== authTokens.accessToken) {
+      if (currentAuth?.accountId && this.cachedSnapshot?.accountId === currentAuth.accountId) return this.cachedSnapshot;
+      this.cachedSnapshot = null;
+      return this.getEmptyFallback("登入狀態已變更，已忽略舊配額請求");
+    }
+    if (newSnapshot.errorReason) {
+      return this.cachedSnapshot
+        ? this.createStaleSnapshot(this.cachedSnapshot, newSnapshot.errorReason)
+        : { ...newSnapshot, source: "fallback" };
+    }
+    this.detectAndRecordResetEvents(newSnapshot);
+    this.cachedSnapshot = newSnapshot;
+    this.persistCache(newSnapshot);
+    return newSnapshot;
   }
 
   /**
    * 偵測並記錄 OpenAI 不定期配額重置或重置券發送歷史
    */
   private detectAndRecordResetEvents(newSnapshot: QuotaSnapshot): void {
-    if (!this.cachedSnapshot || !this.databaseInstance) {
+    if (!this.cachedSnapshot || !this.databaseInstance || !newSnapshot.accountId || this.cachedSnapshot.accountId !== newSnapshot.accountId) {
       return;
     }
 
@@ -442,6 +461,7 @@ export class QuotaClient {
 
     return {
       updatedAt: currentTimeMs,
+      accountId: boundedText(responsePayload.account_id),
       email: boundedText(responsePayload.email),
       planType,
       proTier: computeProTier(planType, fiveHourWindow, weeklyWindow, "wham"),

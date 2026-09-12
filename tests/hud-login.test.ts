@@ -19,6 +19,7 @@ assert(item.isEnabled)
 let path = root.appendingPathComponent("Library/LaunchAgents/com.codex.token-usage-hud.plist")
 let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: path), format: nil) as! [String: Any]
 assert(plist["KeepAlive"] == nil)
+assert((plist["EnvironmentVariables"] as? [String: String])?["PATH"] == ProcessInfo.processInfo.environment["PATH"])
 assert(plist["LimitLoadToSessionType"] as? String == "Aqua")
 try item.setEnabled(false)
 assert(!item.isEnabled)

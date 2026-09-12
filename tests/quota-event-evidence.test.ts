@@ -7,17 +7,17 @@ test("missing windows or credits do not create fictional reset or credit-consume
   await database.init();
   const client = new QuotaClient("/nonexistent-codex-fixture", database);
   const window = (used: number, seconds: number) => ({ used_percent: used, limit_window_seconds: seconds, reset_after_seconds: 3600 });
-  const before = client.parseWhamResponse({ rate_limit: { primary_window: window(50, 18000), secondary_window: window(30, 604800) }, rate_limit_reset_credits: { available_count: 2 } });
+  const before = client.parseWhamResponse({ account_id: "test-account", rate_limit: { primary_window: window(50, 18000), secondary_window: window(30, 604800) }, rate_limit_reset_credits: { available_count: 2 } });
   try {
     for (const payload of [
       { rate_limit: { secondary_window: window(35, 604800) }, rate_limit_reset_credits: { available_count: 2 } },
       { rate_limit: { primary_window: window(50, 18000), secondary_window: window(35, 604800) } },
     ]) {
       (client as any).cachedSnapshot = before;
-      (client as any).detectAndRecordResetEvents(client.parseWhamResponse(payload));
+      (client as any).detectAndRecordResetEvents(client.parseWhamResponse({ account_id: "test-account", ...payload }));
       expect(database.getResetEvents(10)).toHaveLength(0);
     }
-    const explicitZero = client.parseWhamResponse({ rate_limit: { primary_window: window(50, 18000), secondary_window: window(35, 604800) }, rate_limit_reset_credits: { available_count: 0 } });
+    const explicitZero = client.parseWhamResponse({ account_id: "test-account", rate_limit: { primary_window: window(50, 18000), secondary_window: window(35, 604800) }, rate_limit_reset_credits: { available_count: 0 } });
     expect(explicitZero.resetCreditsKnown).toBe(true);
     (client as any).cachedSnapshot = before;
     (client as any).detectAndRecordResetEvents(explicitZero);
@@ -41,6 +41,7 @@ for (const scenario of [
       const client = new QuotaClient("/nonexistent-codex-fixture", database);
       const now = Math.floor(Date.now() / 1000);
       const snapshot = (used: number, credits: number | undefined, resetAt: number, plan = "plus") => client.parseWhamResponse({
+        account_id: "test-account",
         plan_type: plan,
         rate_limit: {
           primary_window: { used_percent: used, limit_window_seconds: 18000, reset_at: resetAt },

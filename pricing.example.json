@@ -1,68 +1,103 @@
 {
-  "pricingVersion": "2026-09-09",
+  "pricingVersion": "2026-09-12",
   "models": [
     {
       "modelPrefix": "gpt-6-astra",
-      "inputCostPerMillion": 2.50,
-      "cachedInputCostPerMillion": 1.25,
-      "outputCostPerMillion": 10.00,
-      "reasoningOutputCostPerMillion": 10.00
+      "inputCostPerMillion": 10,
+      "cachedInputCostPerMillion": 1,
+      "outputCostPerMillion": 50,
+      "reasoningOutputCostPerMillion": 50,
+      "longContext": {
+        "inputTokenThreshold": 272000,
+        "inputCostPerMillion": 20,
+        "cachedInputCostPerMillion": 2,
+        "outputCostPerMillion": 75,
+        "reasoningOutputCostPerMillion": 75
+      }
     },
     {
-      "modelPrefix": "gpt-5.3-codex-spark",
-      "inputCostPerMillion": 1.25,
-      "cachedInputCostPerMillion": 0.30,
-      "outputCostPerMillion": 5.00,
-      "reasoningOutputCostPerMillion": 5.00
+      "modelPrefix": "gpt-5.6-sol",
+      "inputCostPerMillion": 4,
+      "cachedInputCostPerMillion": 0.4,
+      "outputCostPerMillion": 20,
+      "reasoningOutputCostPerMillion": 20,
+      "longContext": {
+        "inputTokenThreshold": 272000,
+        "inputCostPerMillion": 8,
+        "cachedInputCostPerMillion": 0.8,
+        "outputCostPerMillion": 30,
+        "reasoningOutputCostPerMillion": 30
+      }
+    },
+    {
+      "modelPrefix": "gpt-5.6-terra",
+      "inputCostPerMillion": 2,
+      "cachedInputCostPerMillion": 0.2,
+      "outputCostPerMillion": 12,
+      "reasoningOutputCostPerMillion": 12,
+      "longContext": {
+        "inputTokenThreshold": 272000,
+        "inputCostPerMillion": 4,
+        "cachedInputCostPerMillion": 0.4,
+        "outputCostPerMillion": 18,
+        "reasoningOutputCostPerMillion": 18
+      }
+    },
+    {
+      "modelPrefix": "gpt-5.6-luna",
+      "inputCostPerMillion": 0.2,
+      "cachedInputCostPerMillion": 0.02,
+      "outputCostPerMillion": 1.2,
+      "reasoningOutputCostPerMillion": 1.2,
+      "longContext": {
+        "inputTokenThreshold": 272000,
+        "inputCostPerMillion": 0.4,
+        "cachedInputCostPerMillion": 0.04,
+        "outputCostPerMillion": 1.8,
+        "reasoningOutputCostPerMillion": 1.8
+      }
     },
     {
       "modelPrefix": "gpt-5",
-      "inputCostPerMillion": 2.00,
-      "cachedInputCostPerMillion": 0.50,
-      "outputCostPerMillion": 8.00,
-      "reasoningOutputCostPerMillion": 8.00
+      "inputCostPerMillion": 1.25,
+      "cachedInputCostPerMillion": 0.125,
+      "outputCostPerMillion": 10,
+      "reasoningOutputCostPerMillion": 10
     },
     {
       "modelPrefix": "o3-mini",
-      "inputCostPerMillion": 1.10,
+      "inputCostPerMillion": 1.1,
       "cachedInputCostPerMillion": 0.55,
-      "outputCostPerMillion": 4.40,
-      "reasoningOutputCostPerMillion": 4.40
+      "outputCostPerMillion": 4.4,
+      "reasoningOutputCostPerMillion": 4.4
     },
     {
       "modelPrefix": "o1",
-      "inputCostPerMillion": 15.00,
-      "cachedInputCostPerMillion": 7.50,
-      "outputCostPerMillion": 60.00,
-      "reasoningOutputCostPerMillion": 60.00
+      "inputCostPerMillion": 15,
+      "cachedInputCostPerMillion": 7.5,
+      "outputCostPerMillion": 60,
+      "reasoningOutputCostPerMillion": 60
     },
     {
       "modelPrefix": "gpt-4o-mini",
       "inputCostPerMillion": 0.15,
       "cachedInputCostPerMillion": 0.075,
-      "outputCostPerMillion": 0.60,
-      "reasoningOutputCostPerMillion": 0.60
+      "outputCostPerMillion": 0.6,
+      "reasoningOutputCostPerMillion": 0.6
     },
     {
       "modelPrefix": "gpt-4o",
-      "inputCostPerMillion": 2.50,
+      "inputCostPerMillion": 2.5,
       "cachedInputCostPerMillion": 1.25,
-      "outputCostPerMillion": 10.00,
-      "reasoningOutputCostPerMillion": 10.00
-    },
-    {
-      "modelPrefix": "codex-auto-review",
-      "inputCostPerMillion": 1.50,
-      "cachedInputCostPerMillion": 0.50,
-      "outputCostPerMillion": 6.00,
-      "reasoningOutputCostPerMillion": 6.00
+      "outputCostPerMillion": 10,
+      "reasoningOutputCostPerMillion": 10
     }
   ],
   "fallback": {
     "modelPrefix": "default",
-    "inputCostPerMillion": 2.00,
-    "cachedInputCostPerMillion": 0.50,
-    "outputCostPerMillion": 8.00,
-    "reasoningOutputCostPerMillion": 8.00
+    "inputCostPerMillion": 2,
+    "cachedInputCostPerMillion": 0.5,
+    "outputCostPerMillion": 8,
+    "reasoningOutputCostPerMillion": 8
   }
 }

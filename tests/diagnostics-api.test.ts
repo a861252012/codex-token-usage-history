@@ -12,7 +12,7 @@ test("diagnostics API exposes actual scan scope and remains behind HTTP boundari
   process.env.CODEX_HOME = directory;
   mkdirSync(join(directory, "sessions"));
   mkdirSync(join(directory, "archived_sessions"));
-  writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ updatedAtMs: Date.now(), updatedDate: "test", models: [] }));
+  writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ schemaVersion: 2, updatedAtMs: Date.now(), updatedDate: "test", modelCount: 0, models: [] }));
   writeFileSync(join(directory, "sessions", "sample.jsonl"), [
     JSON.stringify({ type: "token_usage_record", timestamp: new Date().toISOString(), payload: { usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } }),
     "{broken-json",

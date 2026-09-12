@@ -136,16 +136,17 @@ test("manual refresh skips overlapping batches without a high-frequency timer", 
     fetchQuota: fetchData, fetchSummary: fetchData, fetchHourlyStats: fetchData,
     fetchSettlementReport: fetchData, fetchResetEvents: fetchData, fetchPlanChangeEvents: fetchData,
     fetchHistory: fetchData, fetchDiagnostics: fetchData,
-    currentSettlementPeriod: "daily", lastQuotaTrust: { level: "fresh" }, showFeedback() {}, uiText: (value: string) => value,
+    currentSettlementPeriod: "daily", lastQuotaSnapshot: { updatedAt: 1 }, lastQuotaTrust: { level: "fresh" }, showFeedback() {}, uiText: (value: string) => value,
   });
   handlers.manual();
-  expect(calls).toBe(7);
+  expect(calls).toBe(1);
   handlers.manual();
-  expect(calls).toBe(7);
+  expect(calls).toBe(1);
   finish(true);
   await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(calls).toBe(7);
   handlers.manual();
-  expect(calls).toBe(14);
+  expect(calls).toBe(8);
   expect(tick).toBeUndefined();
   expect(source).not.toContain("highFrequency");
 });

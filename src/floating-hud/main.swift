@@ -4,6 +4,12 @@ import Foundation
 import QuartzCore
 import Darwin
 
+func dashboardMatchesProfile(_ dataDirectory: String?, _ codexDirectory: String) -> Bool {
+    guard let directory = dataDirectory, !directory.isEmpty else { return false }
+    return URL(fileURLWithPath: directory).standardizedFileURL.resolvingSymlinksInPath().path
+        == URL(fileURLWithPath: codexDirectory).standardizedFileURL.resolvingSymlinksInPath().path
+}
+
 func acquireHudLock(at path: String) throws -> Int32? {
     let descriptor = open(path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR)
     guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
@@ -12,6 +18,22 @@ func acquireHudLock(at path: String) throws -> Int32? {
     close(descriptor)
     if error == EWOULDBLOCK { return nil }
     throw NSError(domain: NSPOSIXErrorDomain, code: Int(error))
+}
+
+func makeDashboardProcess(executableURL: URL, codexDirectory: String) throws -> Process {
+    let cli = executableURL.resolvingSymlinksInPath().deletingLastPathComponent().appendingPathComponent("codex-usage")
+    guard FileManager.default.isExecutableFile(atPath: cli.path) else { throw CocoaError(.fileReadNoSuchFile) }
+    let process = Process()
+    process.executableURL = cli
+    process.arguments = ["dashboard"]
+    var environment = ProcessInfo.processInfo.environment
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    environment["PATH"] = [environment["PATH"] ?? "", "\(home)/.bun/bin", "\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].filter { !$0.isEmpty }.joined(separator: ":")
+    environment["CODEX_HOME"] = URL(fileURLWithPath: codexDirectory).standardizedFileURL.resolvingSymlinksInPath().path
+    process.environment = environment
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    return process
 }
 
 struct HudLoginItem {
@@ -42,7 +64,10 @@ struct HudLoginItem {
                 "ProgramArguments": [executableURL.path],
                 "RunAtLoad": true,
                 "LimitLoadToSessionType": "Aqua",
-                "EnvironmentVariables": ["CODEX_HOME": ProcessInfo.processInfo.environment["CODEX_HOME"] ?? homeDirectory.appendingPathComponent(".codex").path]
+                "EnvironmentVariables": [
+                    "CODEX_HOME": ProcessInfo.processInfo.environment["CODEX_HOME"] ?? homeDirectory.appendingPathComponent(".codex").path,
+                    "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+                ]
             ]
             let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
             try FileManager.default.createDirectory(at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -382,6 +407,7 @@ struct PlanChangeEventDTO: Codable {
 }
 
 struct FullStatusDTO: Codable {
+    var dataDirectory: String? = nil
     let snapshot: QuotaSnapshotDTO
     let todaySummary: TodaySummaryDTO
     let recentRecords: [TokenRecordDTO]
@@ -713,6 +739,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var secondaryTagLabel: NSTextField!
     private var primaryValueLabel: NSTextField!
 
+    private var dashboardProcess: Process?
     private var refreshTimer: Timer?
     private var refreshIntervalSeconds: TimeInterval = 5
     private let homeDirectoryPath = FileManager.default.homeDirectoryForCurrentUser.path
@@ -1108,33 +1135,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openWebDashboard() {
-        let dashboardUrlString = "http://127.0.0.1:10200"
-        guard let url = URL(string: dashboardUrlString) else { return }
+        let url = URL(string: "http://127.0.0.1:10200")!
+        var request = URLRequest(url: url.appendingPathComponent("api/diagnostics"))
+        request.timeoutInterval = 2
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if response != nil {
+                    guard let data = data,
+                          let diagnostics = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          dashboardMatchesProfile(diagnostics["dataDirectory"] as? String, self.codexDirectoryPath) else {
+                        self.showDashboardError("Port 10200 belongs to another profile or an incompatible service. Stop that service before opening this dashboard.")
+                        return
+                    }
+                    NSWorkspace.shared.open(url)
+                    return
+                }
+                guard (error as? URLError)?.code == .cannotConnectToHost else {
+                    self.showDashboardError(error?.localizedDescription ?? "Dashboard did not respond.")
+                    return
+                }
+                guard self.dashboardProcess?.isRunning != true else { return }
+                do {
+                    guard let executable = Bundle.main.executableURL else { throw CocoaError(.fileNoSuchFile) }
+                    let process = try makeDashboardProcess(executableURL: executable, codexDirectory: self.codexDirectoryPath)
+                    process.terminationHandler = { [weak self] finished in
+                        DispatchQueue.main.async {
+                            self?.dashboardProcess = nil
+                            if finished.terminationStatus != 0 {
+                                self?.showDashboardError("Dashboard exited with status \(finished.terminationStatus). Check that Bun or Node.js is installed, then run codex-usage dashboard in a terminal for details.")
+                            }
+                        }
+                    }
+                    try process.run()
+                    self.dashboardProcess = process
+                } catch {
+                    self.showDashboardError(error.localizedDescription)
+                }
+            }
+        }.resume()
+    }
 
-        let checkTask = Process()
-        checkTask.launchPath = "/usr/bin/nc"
-        checkTask.arguments = ["-z", "127.0.0.1", "10200"]
-        let pipe = Pipe()
-        checkTask.standardOutput = pipe
-        checkTask.standardError = pipe
-
-        var serverRunning: Bool = false
-        do {
-            try checkTask.run()
-            checkTask.waitUntilExit()
-            serverRunning = (checkTask.terminationStatus == 0)
-        } catch {
-            serverRunning = false
-        }
-
-        if !serverRunning {
-            let launchTask = Process()
-            launchTask.launchPath = "/bin/bash"
-            launchTask.arguments = ["-c", "codex-usage dashboard &"]
-            try? launchTask.run()
-        } else {
-            NSWorkspace.shared.open(url)
-        }
+    private func showDashboardError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = HudLocalization.string(key: "open_dashboard", language: currentLanguage)
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     private func startPeriodicTimer() {
@@ -1170,7 +1217,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let semaphore = DispatchSemaphore(value: 0)
 
                 let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-                    if let rawData = data, let decodedStatus = try? JSONDecoder().decode(FullStatusDTO.self, from: rawData) {
+                    if let rawData = data, let decodedStatus = try? JSONDecoder().decode(FullStatusDTO.self, from: rawData),
+                       dashboardMatchesProfile(decodedStatus.dataDirectory, self.codexDirectoryPath) {
                         fetchedStatus = decodedStatus
                     }
                     semaphore.signal()

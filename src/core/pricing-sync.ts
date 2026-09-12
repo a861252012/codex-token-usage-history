@@ -17,6 +17,7 @@ export const UPSTREAM_PRICING_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const MAXIMUM_PRICING_RESPONSE_BYTES = 20 * 1024 * 1024;
 const MAXIMUM_PRICING_MODELS = 20_000;
+const PRICING_CACHE_SCHEMA_VERSION = 2;
 
 function isValidTokenPrice(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
@@ -56,6 +57,7 @@ async function readBoundedJsonResponse(response: Response): Promise<Record<strin
 }
 
 export interface PricingCacheFile {
+  schemaVersion?: number;
   updatedAtMs: number;
   updatedDate: string;
   sourceUrl: string;
@@ -161,12 +163,28 @@ export function parseLiteLlmPricingJson(rawJson: Record<string, any>): ModelPric
     const cachedInputPerToken = spec.cache_read_input_token_cost;
     const cachedInputCostPerMillion = isValidTokenPrice(cachedInputPerToken)
       ? cachedInputPerToken * 1_000_000
-      : inputCostPerMillion * 0.5; // 若未提供快取價，按常規半價計算
+      : inputCostPerMillion; // 未公布快取折扣時按輸入費率估算
 
     const reasoningPerToken = spec.output_cost_per_reasoning_token;
     const reasoningOutputCostPerMillion = isValidTokenPrice(reasoningPerToken)
       ? reasoningPerToken * 1_000_000
       : outputCostPerMillion;
+
+    let longContext: ModelPricingTier["longContext"];
+    const longInput = spec.input_cost_per_token_above_272k_tokens;
+    const longOutput = spec.output_cost_per_token_above_272k_tokens;
+    if (longInput !== undefined || longOutput !== undefined) {
+      const longCached = spec.cache_read_input_token_cost_above_272k_tokens ?? longInput;
+      const longReasoning = spec.output_cost_per_reasoning_token_above_272k_tokens ?? longOutput;
+      if (![longInput, longOutput, longCached, longReasoning].every(isValidTokenPrice)) continue;
+      longContext = {
+        inputTokenThreshold: 272_000,
+        inputCostPerMillion: Number((longInput * 1_000_000).toFixed(4)),
+        cachedInputCostPerMillion: Number((longCached * 1_000_000).toFixed(4)),
+        outputCostPerMillion: Number((longOutput * 1_000_000).toFixed(4)),
+        reasoningOutputCostPerMillion: Number((longReasoning * 1_000_000).toFixed(4)),
+      };
+    }
 
     tiers.push({
       modelPrefix: modelKey.toLowerCase(),
@@ -174,6 +192,7 @@ export function parseLiteLlmPricingJson(rawJson: Record<string, any>): ModelPric
       cachedInputCostPerMillion: Number(cachedInputCostPerMillion.toFixed(4)),
       outputCostPerMillion: Number(outputCostPerMillion.toFixed(4)),
       reasoningOutputCostPerMillion: Number(reasoningOutputCostPerMillion.toFixed(4)),
+      ...(longContext ? { longContext } : {}),
     });
   }
 
@@ -187,7 +206,7 @@ export async function syncPricingFromUpstream(force = false): Promise<SyncPricin
   const cache = loadCachedUpstreamPricing();
   const cacheTtlMs = 24 * 3600 * 1000; // 24 小時快取過期時間
 
-  if (!force && cache && Date.now() - cache.updatedAtMs < cacheTtlMs) {
+  if (!force && cache?.schemaVersion === PRICING_CACHE_SCHEMA_VERSION && Date.now() - cache.updatedAtMs < cacheTtlMs) {
     return {
       success: true,
       updated: false,
@@ -223,6 +242,7 @@ export async function syncPricingFromUpstream(force = false): Promise<SyncPricin
 
     const todayDateString = new Date().toISOString().slice(0, 10);
     const cacheData: PricingCacheFile = {
+      schemaVersion: PRICING_CACHE_SCHEMA_VERSION,
       updatedAtMs: Date.now(),
       updatedDate: todayDateString,
       sourceUrl: UPSTREAM_PRICING_URL,

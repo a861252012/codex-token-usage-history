@@ -18,6 +18,7 @@ describe("CSV export security", () => {
     );
     mkdirSync(sessionDirectory, { recursive: true });
     writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({
+      schemaVersion: 2,
       updatedAtMs: Date.now(),
       updatedDate: "test",
       modelCount: 0,

@@ -13,7 +13,7 @@ test("HUD interval defaults, validation, persistence and same-origin API", async
   const database = new HistoryDatabase(join(directory, "history.sqlite"));
   const server = new DashboardServer(database, { port: 0 });
   try {
-    writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ updatedAtMs: Date.now(), updatedDate: "test", modelCount: 0, models: [] }));
+    writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ schemaVersion: 2, updatedAtMs: Date.now(), updatedDate: "test", modelCount: 0, models: [] }));
     expect(readHudSettings(directory).refreshIntervalSeconds).toBe(5);
     writeFileSync(join(directory, "hud-settings.json"), "broken");
     expect(readHudSettings(directory).refreshIntervalSeconds).toBe(5);

@@ -23,6 +23,23 @@ function parseTokenCount(value: unknown, fallback = 0): number | null {
   return value;
 }
 
+const TOKEN_USAGE_FIELDS = ["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens"] as const;
+type ParsedTokenUsage = Record<(typeof TOKEN_USAGE_FIELDS)[number], number>;
+
+function parseTokenUsage(value: unknown): ParsedTokenUsage | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (!TOKEN_USAGE_FIELDS.some((field) => candidate[field] !== undefined)) return null;
+  const usage = {} as ParsedTokenUsage;
+  for (const field of TOKEN_USAGE_FIELDS) {
+    const fallback = field === "total_tokens" ? usage.input_tokens + usage.output_tokens : 0;
+    const count = parseTokenCount(candidate[field], fallback);
+    if (count === null || !Number.isSafeInteger(count)) return null;
+    usage[field] = count;
+  }
+  return usage;
+}
+
 function parseQuotaPercent(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
 }
@@ -199,6 +216,13 @@ export class SessionIndexer {
 
     let currentModel = "codex-default";
     let defaultSessionId = "";
+    let currentTurnId = "";
+    let hasInheritedHistory = false;
+    let previousLegacyUsage: ParsedTokenUsage | null = null;
+    let pendingModernUsage = Object.fromEntries(TOKEN_USAGE_FIELDS.map((field) => [field, 0])) as ParsedTokenUsage;
+    let modernRecordCount = 0;
+    const modernRecordKeys = new Set<string>();
+    const legacySnapshots = new Set<string>();
     let currentAgentRole: "main" | "subagent" | "unknown" = "unknown";
     let lastFiveHourUsedPercent: number | null = null;
     let lastWeeklyUsedPercent: number | null = null;
@@ -222,19 +246,24 @@ export class SessionIndexer {
           continue;
         }
 
+        if (!parsedPayload || typeof parsedPayload !== "object" || Array.isArray(parsedPayload)) {
+          invalidRecords += 1;
+          continue;
+        }
         const eventType = parsedPayload.type;
         const payloadData = parsedPayload.payload;
         if (!supportedEventTypes.has(eventType)) {
           unsupportedEvents += 1;
           continue;
         }
-        if (!payloadData || typeof payloadData !== "object") {
+        if (!payloadData || typeof payloadData !== "object" || Array.isArray(payloadData)) {
           invalidRecords += 1;
           continue;
         }
 
         // 提取 session 資訊、預設模型與代理人角色
         if (eventType === "session_meta") {
+          hasInheritedHistory = payloadData.history_base != null;
           defaultSessionId = sanitizeDisplayString(payloadData.session_id || payloadData.id, defaultSessionId);
           if (payloadData.provenance?.model) {
             currentModel = sanitizeDisplayString(payloadData.provenance.model, currentModel, MAXIMUM_MODEL_LENGTH);
@@ -250,6 +279,7 @@ export class SessionIndexer {
             currentAgentRole = "main";
           }
         } else if (eventType === "turn_context") {
+          currentTurnId = sanitizeDisplayString(payloadData.turn_id, currentTurnId);
           if (payloadData.model) {
             currentModel = sanitizeDisplayString(payloadData.model, currentModel, MAXIMUM_MODEL_LENGTH);
           }
@@ -293,40 +323,77 @@ export class SessionIndexer {
           }
         }
 
-        // 提取 token 消耗紀錄
-        if (
-          eventType === "token_usage_record" &&
-          payloadData.usage &&
-          typeof payloadData.usage === "object" &&
-          [
-            "input_tokens",
-            "cached_input_tokens",
-            "output_tokens",
-            "reasoning_output_tokens",
-            "total_tokens",
-          ].some((fieldName) => payloadData.usage[fieldName] !== undefined)
-        ) {
-          const usageData = payloadData.usage;
-          const timestampMilliseconds = parsedPayload.timestamp === undefined
-            ? Date.now()
-            : new Date(parsedPayload.timestamp).getTime();
+        const isModernUsage = eventType === "token_usage_record";
+        const isLegacyUsage = eventType === "event_msg" && payloadData.type === "token_count" && payloadData.info != null;
+        if (isModernUsage || isLegacyUsage) {
+          let usage = parseTokenUsage(isModernUsage ? payloadData.usage : payloadData.info?.total_token_usage);
+          if (!usage) {
+            invalidRecords += 1;
+            continue;
+          }
+          if (isLegacyUsage) {
+            const cumulative = usage;
+            // fill_to_context_window clears the measured counters, even when its total repeats.
+            // Each fill starts a new generation; equal response totals after it are new usage.
+            if (TOKEN_USAGE_FIELDS.every((field) => field === "total_tokens" || cumulative[field] === 0)) {
+              previousLegacyUsage = cumulative;
+              legacySnapshots.clear();
+              continue;
+            }
+            // Referenced forks seed TokenUsageInfo from their parent. Their first snapshot
+            // is a baseline; local responses already have authoritative modern records.
+            if (hasInheritedHistory && previousLegacyUsage === null) {
+              previousLegacyUsage = cumulative;
+              pendingModernUsage = Object.fromEntries(TOKEN_USAGE_FIELDS.map((field) => [field, 0])) as ParsedTokenUsage;
+              continue;
+            }
+            const snapshotKey = JSON.stringify(cumulative);
+            if (legacySnapshots.has(snapshotKey)) continue;
+            legacySnapshots.add(snapshotKey);
+            const reset = previousLegacyUsage !== null && TOKEN_USAGE_FIELDS.some((field) => cumulative[field] < previousLegacyUsage![field]);
+            usage = reset
+              ? parseTokenUsage(payloadData.info.last_token_usage)
+              : Object.fromEntries(TOKEN_USAGE_FIELDS.map((field) => [field, cumulative[field] - (previousLegacyUsage?.[field] ?? 0)])) as ParsedTokenUsage;
+            previousLegacyUsage = cumulative;
+            if (!usage) {
+              invalidRecords += 1;
+              continue;
+            }
+            // TokenCount replays usage on quota/context updates. Only cumulative growth counts;
+            // modern Codex persists the response record before publishing that same growth.
+            for (const field of TOKEN_USAGE_FIELDS) {
+              const covered = Math.min(usage[field], pendingModernUsage[field]);
+              usage[field] -= covered;
+              pendingModernUsage[field] -= covered;
+            }
+            // Context-window estimates contain only total_tokens, not measured input/output.
+            if (usage.input_tokens === 0 && usage.output_tokens === 0) {
+              if (reset) pendingModernUsage = Object.fromEntries(TOKEN_USAGE_FIELDS.map((field) => [field, 0])) as ParsedTokenUsage;
+              continue;
+            }
+            usage.total_tokens = usage.input_tokens + usage.output_tokens;
+          }
+          const timestampValue = parsedPayload.timestamp;
+          const timestampMilliseconds = typeof timestampValue === "string" || typeof timestampValue === "number"
+            ? new Date(timestampValue).getTime()
+            : NaN;
           if (!Number.isFinite(timestampMilliseconds)) {
             invalidRecords += 1;
             continue;
           }
-
-          const inputTokens = parseTokenCount(usageData.input_tokens);
-          const cachedInputTokens = parseTokenCount(usageData.cached_input_tokens);
-          const outputTokens = parseTokenCount(usageData.output_tokens);
-          const reasoningOutputTokens = parseTokenCount(usageData.reasoning_output_tokens);
-          if (inputTokens === null || cachedInputTokens === null || outputTokens === null || reasoningOutputTokens === null) {
-            invalidRecords += 1;
-            continue;
-          }
-          const totalTokens = parseTokenCount(usageData.total_tokens, inputTokens + outputTokens);
-          if (totalTokens === null) {
-            invalidRecords += 1;
-            continue;
+          const { input_tokens: inputTokens, cached_input_tokens: cachedInputTokens,
+            output_tokens: outputTokens, reasoning_output_tokens: reasoningOutputTokens,
+            total_tokens: totalTokens } = usage;
+          const sessionId = sanitizeDisplayString(payloadData.session_id, defaultSessionId || "unknown");
+          const turnId = isModernUsage
+            ? sanitizeDisplayString(payloadData.turn_id, `turn-${timestampMilliseconds}-${modernRecordCount}`)
+            : `legacy-${timestampMilliseconds}-${currentTurnId}-${TOKEN_USAGE_FIELDS.map((field) => previousLegacyUsage![field]).join("-")}`;
+          if (isModernUsage) {
+            modernRecordCount += 1;
+            const key = JSON.stringify([sessionId, turnId, currentModel, timestampMilliseconds]);
+            if (modernRecordKeys.has(key)) continue;
+            modernRecordKeys.add(key);
+            for (const field of TOKEN_USAGE_FIELDS) pendingModernUsage[field] += usage[field];
           }
 
           // 判斷此請求是否屬於 subAgent
@@ -350,9 +417,9 @@ export class SessionIndexer {
           records.push({
             timestamp: timestampMilliseconds,
             datetime: new Date(timestampMilliseconds).toISOString(),
-            sessionId: sanitizeDisplayString(payloadData.session_id, defaultSessionId || "unknown"),
+            sessionId,
             threadId: sanitizeDisplayString(payloadData.thread_id || payloadData.session_id, "unknown"),
-            turnId: sanitizeDisplayString(payloadData.turn_id, `turn-${timestampMilliseconds}-${records.length}`),
+            turnId,
             responseId: payloadData.response_id
               ? sanitizeDisplayString(payloadData.response_id, "") || undefined
               : undefined,
@@ -372,8 +439,6 @@ export class SessionIndexer {
           });
           dataStartMs = dataStartMs === null ? timestampMilliseconds : Math.min(dataStartMs, timestampMilliseconds);
           dataEndMs = dataEndMs === null ? timestampMilliseconds : Math.max(dataEndMs, timestampMilliseconds);
-        } else if (eventType === "token_usage_record") {
-          invalidRecords += 1;
         }
       }
     } catch {

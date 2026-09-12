@@ -57,7 +57,7 @@ describe("dashboard HTTP security", () => {
     const quotaCachePath = join(directory, "codex_quota_snapshot.json");
     const pricingCachePath = join(directory, "pricing_cache.json");
     writeFileSync(quotaCachePath, JSON.stringify({ updatedAt: Date.now(), source: "cache" }));
-    writeFileSync(pricingCachePath, JSON.stringify({ updatedAtMs: Date.now(), updatedDate: "test", modelCount: 0, models: [] }));
+    writeFileSync(pricingCachePath, JSON.stringify({ schemaVersion: 2, updatedAtMs: Date.now(), updatedDate: "test", modelCount: 0, models: [] }));
     chmodSync(quotaCachePath, 0o644);
     chmodSync(pricingCachePath, 0o644);
 
@@ -137,7 +137,7 @@ describe("dashboard HTTP security", () => {
   test("does not follow static-file symlinks outside the web root", async () => {
     const directory = mkdtempSync(join(tmpdir(), "codex-dashboard-symlink-"));
     temporaryDirectories.push(directory);
-    writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ updatedAtMs: Date.now(), updatedDate: "test", models: [] }));
+    writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ schemaVersion: 2, updatedAtMs: Date.now(), updatedDate: "test", modelCount: 0, models: [] }));
     const previousCodexHome = process.env.CODEX_HOME;
     process.env.CODEX_HOME = directory;
     const linkName = `.security-test-${process.pid}-${Date.now()}`;

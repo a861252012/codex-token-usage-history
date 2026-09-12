@@ -40,11 +40,14 @@ fi
 # 3. 輸出 Shell 整合提示
 echo ""
 echo "=============================================================================="
-echo "[提示] 如需在終端機 (zsh / bash) 即時顯示剩餘額度，可將以下程式碼加入 ~/.zshrc:"
+echo "[提示] 如需在 zsh 提示字元顯示最新快取額度，可將以下程式碼加入 ~/.zshrc:"
 echo ""
-echo '  # Codex 剩餘配額 Prompt 整合'
-echo '  codex_quota_prompt() {'
-echo '    codex-usage prompt 2>/dev/null'
-echo '  }'
-echo '  RPROMPT="$(codex_quota_prompt) $RPROMPT"'
+cat <<'SHELL_INTEGRATION'
+  # Codex 剩餘配額 Prompt 整合（zsh）
+  codex_quota_prompt() {
+    codex-usage prompt 2>/dev/null
+  }
+  setopt PROMPT_SUBST
+  RPROMPT='$(codex_quota_prompt) '"$RPROMPT"
+SHELL_INTEGRATION
 echo "=============================================================================="

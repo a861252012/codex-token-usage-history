@@ -28,7 +28,7 @@ for (let day = 0; day < 14; day++) {
   }
 }
 writeFileSync(join(sessions, "demo.jsonl"), events.join("\n"));
-writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ updatedAtMs: now, updatedDate: "demo", models: [] }), { mode: 0o600 });
+writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ schemaVersion: 2, updatedAtMs: now, updatedDate: "demo", modelCount: 0, models: [] }), { mode: 0o600 });
 const window = (used: number, seconds: number) => ({ usedPercent: used, remainingPercent: 100 - used,
   limitWindowSeconds: seconds, resetAfterSeconds: seconds / 2, resetAtMs: now + seconds * 500, resetCountdown: "Demo" });
 writeFileSync(join(directory, "codex_quota_snapshot.json"), JSON.stringify({

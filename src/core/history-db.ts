@@ -714,23 +714,25 @@ export class HistoryDatabase {
   /**
    * 取得每小時 Token 消耗統計 (24小時趨勢)
    */
-  public getHourlyStats(hours = 24): Array<{ hour: string; tokens: number; requests: number }> {
+  public getHourlyStats(hours = 24): Array<{ hour: string; hourStartMs: number; tokens: number; requests: number }> {
     const database = this.ensureDatabase();
     const sinceMs = Date.now() - hours * 3600 * 1000;
 
     const rows = database.prepare(`
       SELECT
-        strftime('%Y-%m-%d %H:00', datetime, 'localtime') as hour,
+        (timestamp / 3600000) * 3600000 as hour_start_ms,
+        strftime('%Y-%m-%d %H:%M', (timestamp / 3600000) * 3600, 'unixepoch', 'localtime') as hour,
         COALESCE(SUM(total_tokens), 0) as tokens,
         COUNT(*) as requests
       FROM token_records
       WHERE timestamp >= ?
-      GROUP BY hour
-      ORDER BY hour ASC
+      GROUP BY hour_start_ms
+      ORDER BY hour_start_ms ASC
     `).all(sinceMs);
 
     return rows.map((row: any) => ({
       hour: row.hour,
+      hourStartMs: Number(row.hour_start_ms),
       tokens: Number(row.tokens),
       requests: Number(row.requests),
     }));

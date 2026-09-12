@@ -22,7 +22,8 @@
     "build:hud": "bash scripts/build-hud.sh",
     "install:all": "bash scripts/install.sh",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "test:node": "node --test tests/node-compatibility.mjs"
   },
   "keywords": [
     "codex",
@@ -38,6 +39,6 @@
     "typescript": "^5.0.0"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": "^22.13.0 || >=23.4.0"
   }
 }

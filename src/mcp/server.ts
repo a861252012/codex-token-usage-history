@@ -72,10 +72,29 @@ export async function runMcpServer(): Promise<void> {
     try {
       jsonRpcRequest = JSON.parse(inputLine);
     } catch {
+      sendResponse({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
+      return;
+    }
+
+    if (!jsonRpcRequest || typeof jsonRpcRequest !== "object" || Array.isArray(jsonRpcRequest)
+      || jsonRpcRequest.jsonrpc !== "2.0" || typeof jsonRpcRequest.method !== "string"
+      || (jsonRpcRequest.id !== undefined && typeof jsonRpcRequest.id !== "string"
+        && !Number.isFinite(jsonRpcRequest.id))) {
+      sendResponse({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid request" } });
       return;
     }
 
     const { id, method, params } = jsonRpcRequest;
+    if (id === undefined) return;
+    if (params !== undefined && (!params || typeof params !== "object" || Array.isArray(params))) {
+      sendResponse({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } });
+      return;
+    }
+
+    if (method === "ping") {
+      sendResponse({ jsonrpc: "2.0", id, result: {} });
+      return;
+    }
 
     // 1. 初始化方法
     if (method === "initialize") {

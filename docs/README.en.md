@@ -54,7 +54,7 @@ The service imports full history automatically at startup, then updates incremen
 
 Open [http://127.0.0.1:10200](http://127.0.0.1:10200)
 
-Reads `~/.codex` by default; set `CODEX_HOME` for a different core data directory. Quota queries require local `auth.json`; history remains available without live quota.
+Reads `~/.codex` by default; set `CODEX_HOME` to choose the data directory for the CLI, dashboard, and native UI. Quota queries require local `auth.json`; history remains available without live quota.
 
 ## Commands
 
@@ -78,8 +78,16 @@ Reads `~/.codex` by default; set `CODEX_HOME` for a different core data director
 ## macOS
 
 Requires Xcode Command Line Tools. Drag the HUD to move it, left-click to switch metrics, and right-click for settings.
-Enable “Launch at Login” in the right-click menu to start the HUD at your next login. Click again to disable it; re-enable it after moving the project.
+Enable “Launch at Login” in the right-click menu to start the HUD at your next login. Click again to disable it; re-enable it after moving the project. This starts only the HUD, not the data refresh service.
 Dashboard → HUD settings controls the refresh interval: default 5 seconds, integers from 1 to 300. Changes apply by the next HUD refresh.
+
+The HUD reads local cached data. To keep quota and today’s usage up to date, run this service continuously in one terminal:
+
+```bash
+./bin/codex-usage dashboard --no-open
+```
+
+Then build and launch the native UI from another terminal:
 
 ```bash
 bash scripts/build-hud.sh
@@ -93,12 +101,13 @@ Optional: `bash scripts/install.sh` creates a global shortcut, attempts MCP conf
 <details>
 <summary>Node.js</summary>
 
-Requires Node.js with `node:sqlite`. Tests and Bun bundling still require Bun.
+Requires Node.js 22.x starting at 22.13, or version 23.4 or later, for `node:sqlite` without extra flags. The full test suite and Bun bundling require Bun; the Node checks below do not.
 
 ```bash
 node -e 'require("node:sqlite")'
 npm install
 npx tsc
+npm run test:node
 node --no-warnings dist/cli/index.js dashboard
 ```
 
@@ -119,11 +128,15 @@ enabled = true
 
 ## Usage notes
 
-- Costs are API-equivalent estimates. Each record retains its pricing source and version.
-- History filters apply only to the table and CSV; exports are limited to 5000 records.
-- Roles without evidence remain `unknown`. Use `index --all --force --json` to reread sources; `reprice` recalculates stored costs.
+- Costs are standard API-equivalent estimates, not subscription bills. Each record retains its pricing source and version. Fast, Batch, Flex, cache-write, and other service-specific rates are not included. Models without verified rates are marked `fallback`; that is not their official price.
+- Built-in Astra, Sol, Terra, and Luna pricing applies 2× input/cached-input and 1.5× output rates to the entire record when input, including cached tokens, exceeds 272,000 tokens. Other built-in model rates do not assume this threshold. Custom and community rates use their supplied long-context settings.
+- Supports newer `token_usage_record` events and older cumulative `token_count` events; repeated cumulative snapshots are not counted again. Run `index --all --force --json` to import files already scanned by an older version. Roles without evidence remain `unknown`.
+- Updating the app or pricing does not automatically recalculate stored records. Run `reprice` yourself to apply new rates to existing data.
+- Dashboard history filters apply only to the table and CSV; exports are limited to 5000 records. The CLI `history` and `report` commands cap `--limit` at 10000.
 - Quota displays its source, update time, and errors. Scan diagnostics cover only that process’s latest scan.
-- The dashboard is local-only. Some native UI and installer paths remain fixed to `~/.codex`.
+- The dashboard is local-only. The native UI and dashboard must use the same `CODEX_HOME`; the native UI currently connects to port 10200.
+
+Built-in rates and long-context rules were checked against official model documentation on 2026-09-12: [Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) · [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) · [Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra) · [Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) · [GPT-5](https://developers.openai.com/api/docs/models/gpt-5).
 
 ## Development
 

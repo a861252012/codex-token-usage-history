@@ -1,6 +1,12 @@
 import Cocoa
 import Foundation
 
+func dashboardMatchesProfile(_ dataDirectory: String?, _ codexDirectory: String) -> Bool {
+    guard let directory = dataDirectory, !directory.isEmpty else { return false }
+    return URL(fileURLWithPath: directory).standardizedFileURL.resolvingSymlinksInPath().path
+        == URL(fileURLWithPath: codexDirectory).standardizedFileURL.resolvingSymlinksInPath().path
+}
+
 // 型別結構定義
 struct QuotaWindowDTO: Codable {
     let usedPercent: Double
@@ -39,6 +45,7 @@ struct RecentRecordDTO: Codable {
 }
 
 struct StatusOutputDTO: Codable {
+    var dataDirectory: String? = nil
     let snapshot: QuotaSnapshotDTO
     let todaySummary: TodaySummaryDTO
     let recentRecords: [RecentRecordDTO]
@@ -129,7 +136,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 request.timeoutInterval = 1.0
                 let semaphore = DispatchSemaphore(value: 0)
                 let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-                    if let d = data, let fullStatus = try? JSONDecoder().decode(StatusOutputDTO.self, from: d) {
+                    if let d = data, let fullStatus = try? JSONDecoder().decode(StatusOutputDTO.self, from: d),
+                       dashboardMatchesProfile(fullStatus.dataDirectory, self.codexDirectoryPath) {
                         statusData = fullStatus
                     }
                     semaphore.signal()
@@ -287,7 +295,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             recordCountMenuItem.isEnabled = false
             menu.addItem(recordCountMenuItem)
 
-            let costText = todaySummary.formattedCostUsd != nil ? " (~$\(todaySummary.formattedCostUsd!) USD)" : ""
+            let costText = todaySummary.formattedCostUsd != nil ? " (~\(todaySummary.formattedCostUsd!) USD)" : ""
             let summaryMenuItem = NSMenuItem(title: "本日消耗總計: \(formatNumber(todaySummary.totalTokens)) tokens\(costText)", action: nil, keyEquivalent: "")
             summaryMenuItem.isEnabled = false
             menu.addItem(summaryMenuItem)
@@ -333,9 +341,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openWebDashboard() {
-        if let url = URL(string: "http://127.0.0.1:10200") {
-            NSWorkspace.shared.open(url)
-        }
+        let url = URL(string: "http://127.0.0.1:10200")!
+        var request = URLRequest(url: url.appendingPathComponent("api/diagnostics"))
+        request.timeoutInterval = 2
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let data = data,
+                      let diagnostics = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      dashboardMatchesProfile(diagnostics["dataDirectory"] as? String, self.codexDirectoryPath) else {
+                    let alert = NSAlert()
+                    alert.messageText = "無法開啟此帳號的儀表板"
+                    alert.informativeText = "請確認目前 CODEX_HOME 的 dashboard 服務已啟動；10200 可能由其他資料目錄或舊版服務使用。"
+                    alert.runModal()
+                    return
+                }
+                NSWorkspace.shared.open(url)
+            }
+        }.resume()
     }
 }
 

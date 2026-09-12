@@ -54,7 +54,7 @@ bun run demo
 
 打开 [http://127.0.0.1:10200](http://127.0.0.1:10200)
 
-默认读取 `~/.codex`；核心可通过 `CODEX_HOME` 指定目录。配额查询需要本地 `auth.json`，历史查询不需要实时配额。
+默认读取 `~/.codex`；CLI、Dashboard 与原生界面可通过 `CODEX_HOME` 指定目录。配额查询需要本地 `auth.json`，历史查询不需要实时配额。
 
 ## 常用命令
 
@@ -78,8 +78,16 @@ bun run demo
 ## macOS
 
 需要 Xcode Command Line Tools。悬浮窗可拖动，左键切换指标，右键调整设置。
-右键勾选“登录时自动启动”，下次登录 Mac 就会打开；再次点击可取消。移动项目后请重新勾选。
+右键勾选“登录时自动启动”，下次登录 Mac 就会打开；再次点击可取消。移动项目后请重新勾选。此设置只启动 HUD，不会启动数据更新服务。
 Dashboard 的悬浮球设置可调整更新间隔：默认 5 秒，仅限 1～300 的整数，最迟于下一轮更新生效。
+
+HUD 读取本地缓存。要持续更新配额与今日用量，先在一个终端执行并保持服务运行：
+
+```bash
+./bin/codex-usage dashboard --no-open
+```
+
+再于另一个终端编译并启动原生界面：
 
 ```bash
 bash scripts/build-hud.sh
@@ -93,12 +101,13 @@ bash scripts/build-menubar.sh
 <details>
 <summary>Node.js</summary>
 
-需要支持 `node:sqlite` 的 Node.js；测试与 Bun 打包仍需要 Bun。
+需要 Node.js 22.13 及以上的 22.x，或 23.4 及以上版本，才能直接使用 `node:sqlite`。完整测试与 Bun 打包仍需要 Bun；以下 Node 验证不需要 Bun。
 
 ```bash
 node -e 'require("node:sqlite")'
 npm install
 npx tsc
+npm run test:node
 node --no-warnings dist/cli/index.js dashboard
 ```
 
@@ -119,11 +128,15 @@ enabled = true
 
 ## 使用说明
 
-- 金额为 API 等值估算；每条记录保留定价来源与版本。
-- 历史筛选只影响表格与 CSV，单次最多导出 5000 条。
-- 角色证据不足时显示 `unknown`；`index --all --force --json` 可重读来源补全。`reprice` 会重算已存成本。
+- 金额为标准 API 等值估算，不是订阅账单；每条记录保留定价来源与版本。Fast、Batch、Flex、cache-write 等不同服务费率未计入。无可核实费率的模型标示为 `fallback`，不代表该模型的官方价格。
+- 内置 Astra、Sol、Terra、Luna 费率在输入（含缓存）超过 272,000 Tokens 时，整条输入／缓存采用 2 倍、输出采用 1.5 倍费率；其他内置模型不默认套用此阈值。自定义或社区费率依其提供的长上下文设置计算。
+- 支持新版 `token_usage_record` 与旧版累计 `token_count`；重复累计快照不重复计数。已被旧版本扫描过的文件，请执行 `index --all --force --json` 补充导入。角色证据不足时保留 `unknown`。
+- 更新程序或定价不会自动重算已有数据；需要应用新费率时，请自行执行 `reprice`。
+- Dashboard 历史筛选只影响表格与 CSV，单次最多导出 5000 条；CLI `history`／`report` 的 `--limit` 上限为 10000 条。
 - 配额标示来源、更新时间与错误；扫描诊断仅代表该进程最近一轮结果。
-- 仪表盘仅供本机访问。原生界面与安装脚本的部分路径固定为 `~/.codex`。
+- 仪表盘仅供本机访问。原生界面与 Dashboard 必须使用相同的 `CODEX_HOME`；原生界面目前固定连接 10200 端口。
+
+内置费率与长上下文规则依据 2026-09-12 核实的官方模型文档设置：[Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) · [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) · [Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra) · [Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) · [GPT-5](https://developers.openai.com/api/docs/models/gpt-5)。
 
 ## 开发
 
