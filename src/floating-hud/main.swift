@@ -1388,10 +1388,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.75)
             secondaryTagLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
 
-            if !isLive {
+            if !isLive && snapshot.source != "cache" {
                 switch snapshot.source {
                 case "fallback": secondaryTagLabel.stringValue = "OFFLINE"
-                case "wham", "cache": secondaryTagLabel.stringValue = "STALE"
+                case "wham": secondaryTagLabel.stringValue = "STALE"
                 default: secondaryTagLabel.stringValue = "UNKNOWN"
                 }
 

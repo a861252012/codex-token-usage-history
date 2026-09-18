@@ -52,7 +52,7 @@ describe("native quota UI trust", () => {
     expect(menubarSource).toContain("資料更新:");
     expect(menubarSource).toContain("狀態說明:");
     expect(hudSource).not.toContain('secondaryTagLabel.stringValue = "CACHE"');
-    expect(hudSource).toContain('if !isLive');
+    expect(hudSource).toContain('if !isLive && snapshot.source != "cache"');
     expect(hudSource).toContain('secondaryTagLabel.stringValue = "STALE"');
     expect(hudSource).toContain("snapshot: self.asLocalCache(previousStatus.snapshot)");
     expect(hudSource).toContain('secondaryTagLabel.stringValue = "OFFLINE"');
