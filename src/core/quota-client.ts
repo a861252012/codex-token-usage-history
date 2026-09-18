@@ -1,8 +1,15 @@
 import { chmodSync, existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { writePrivateFileAtomic } from "./atomic-file.js";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { QuotaSnapshot, QuotaWindow, AdditionalQuotaLimit } from "./types.js";
+
+export function computeAuthFingerprint(tokens: { accessToken: string; accountId: string }): string {
+  return createHash("sha256")
+    .update(`${tokens.accountId || ""}\0${tokens.accessToken || ""}`)
+    .digest("hex");
+}
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const CACHE_TTL_MS = 30_000; // 快取 30 秒，避免頻繁請求打滿 API
@@ -83,7 +90,7 @@ export class QuotaClient {
   private cachedSnapshot: QuotaSnapshot | null = null;
   private cachePath: string;
   private refreshSequence = 0;
-  private pendingRefresh: { accountId: string; accessToken: string; promise: Promise<QuotaSnapshot> } | null = null;
+  private pendingRefresh: { fingerprint: string; promise: Promise<QuotaSnapshot> } | null = null;
 
   private databaseInstance: import("./history-db.js").HistoryDatabase | null = null;
 
@@ -160,12 +167,35 @@ export class QuotaClient {
     return this.cachedSnapshot ?? this.getEmptyFallback("尚無本機配額快取");
   }
 
+  /**
+   * 檢查本機快照是否屬於目前憑證使用者
+   */
+  private isSnapshotMatchingAuth(
+    snapshot: QuotaSnapshot,
+    authTokens: { accessToken: string; accountId: string },
+    currentFingerprint: string
+  ): boolean {
+    if (typeof snapshot.authFingerprint === "string" && snapshot.authFingerprint.length > 0) {
+      return snapshot.authFingerprint === currentFingerprint;
+    }
+    if (authTokens.accountId && typeof snapshot.accountId === "string" && snapshot.accountId === authTokens.accountId) {
+      return true;
+    }
+    return false;
+  }
+
   /** 取得即時配額快照 (支援記憶體快取與即時強制重整)。 */
   public async getQuotaSnapshot(forceRefresh = false): Promise<QuotaSnapshot> {
     const authTokens = this.readAuthTokens();
-    if (authTokens && (!authTokens.accountId || this.cachedSnapshot?.accountId !== authTokens.accountId)) {
-      this.cachedSnapshot = null;
+    const currentFingerprint = authTokens ? computeAuthFingerprint(authTokens) : null;
+
+    if (authTokens && this.cachedSnapshot) {
+      const isMatching = this.isSnapshotMatchingAuth(this.cachedSnapshot, authTokens, currentFingerprint!);
+      if (!isMatching) {
+        this.cachedSnapshot = null;
+      }
     }
+
     const currentTimeMs = Date.now();
     const cacheAge = this.cachedSnapshot ? currentTimeMs - this.cachedSnapshot.updatedAt : NaN;
     if (!forceRefresh && this.cachedSnapshot && Number.isFinite(cacheAge) && cacheAge >= 0 && cacheAge < CACHE_TTL_MS) {
@@ -181,11 +211,11 @@ export class QuotaClient {
       return this.getEmptyFallback("尚未於 ~/.codex/auth.json 找到有效登入憑證");
     }
 
-    if (this.pendingRefresh?.accountId === authTokens.accountId && this.pendingRefresh.accessToken === authTokens.accessToken) {
+    if (this.pendingRefresh?.fingerprint === currentFingerprint) {
       return this.pendingRefresh.promise;
     }
     const promise = this.refreshQuotaSnapshot(authTokens, ++this.refreshSequence);
-    this.pendingRefresh = { ...authTokens, promise };
+    this.pendingRefresh = { fingerprint: currentFingerprint!, promise };
     try {
       return await promise;
     } finally {
@@ -221,16 +251,26 @@ export class QuotaClient {
       const rawResponsePayload = JSON.parse(responseText) as RawWhamResponse;
       newSnapshot = this.parseWhamResponse(rawResponsePayload);
       newSnapshot.accountId = authTokens.accountId || newSnapshot.accountId;
+      newSnapshot.authFingerprint = computeAuthFingerprint(authTokens);
     } catch (caughtError: any) {
       newSnapshot = this.getEmptyFallback(caughtError?.message || "無法連線至 OpenAI 配額伺服器");
+      newSnapshot.authFingerprint = computeAuthFingerprint(authTokens);
     } finally {
       clearTimeout(timeoutIdentifier);
     }
 
     // 完成前登入狀態可能已改變；舊請求的成功與失敗都不能改寫新狀態。
     const currentAuth = this.readAuthTokens();
-    if (sequence !== this.refreshSequence || currentAuth?.accountId !== authTokens.accountId || currentAuth?.accessToken !== authTokens.accessToken) {
-      if (currentAuth?.accountId && this.cachedSnapshot?.accountId === currentAuth.accountId) return this.cachedSnapshot;
+    const currentFingerprint = currentAuth ? computeAuthFingerprint(currentAuth) : null;
+    const authChanged = sequence !== this.refreshSequence
+      || !currentAuth
+      || currentAuth.accountId !== authTokens.accountId
+      || currentAuth.accessToken !== authTokens.accessToken;
+
+    if (authChanged) {
+      if (currentAuth && currentFingerprint && this.cachedSnapshot && this.isSnapshotMatchingAuth(this.cachedSnapshot, currentAuth, currentFingerprint)) {
+        return this.cachedSnapshot;
+      }
       this.cachedSnapshot = null;
       return this.getEmptyFallback("登入狀態已變更，已忽略舊配額請求");
     }
@@ -246,10 +286,23 @@ export class QuotaClient {
   }
 
   /**
+   * 檢查前後兩個快照是否屬於同一帳號識別 (支援 accountId 或 authFingerprint 比對)
+   */
+  private isSameAccountIdentity(previous: QuotaSnapshot, current: QuotaSnapshot): boolean {
+    if (previous.accountId && current.accountId) {
+      return previous.accountId === current.accountId;
+    }
+    if (previous.authFingerprint && current.authFingerprint) {
+      return previous.authFingerprint === current.authFingerprint;
+    }
+    return false;
+  }
+
+  /**
    * 偵測並記錄 OpenAI 不定期配額重置或重置券發送歷史
    */
   private detectAndRecordResetEvents(newSnapshot: QuotaSnapshot): void {
-    if (!this.cachedSnapshot || !this.databaseInstance || !newSnapshot.accountId || this.cachedSnapshot.accountId !== newSnapshot.accountId) {
+    if (!this.cachedSnapshot || !this.databaseInstance || !this.isSameAccountIdentity(this.cachedSnapshot, newSnapshot)) {
       return;
     }
 
@@ -326,7 +379,7 @@ export class QuotaClient {
    * 偵測用戶方案升級或降級調整並記錄歷史
    */
   private detectAndRecordPlanChanges(newSnapshot: QuotaSnapshot): void {
-    if (!this.cachedSnapshot || !this.databaseInstance) {
+    if (!this.cachedSnapshot || !this.databaseInstance || !this.isSameAccountIdentity(this.cachedSnapshot, newSnapshot)) {
       return;
     }
 

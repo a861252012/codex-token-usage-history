@@ -72,6 +72,10 @@ function parseOptionalTimestamp(rawValue: string | null): number | undefined {
   return Number.isSafeInteger(parsedValue) && parsedValue >= 0 ? parsedValue : undefined;
 }
 
+function isClientDisconnected(res: ServerResponse): boolean {
+  return res.writableEnded || res.destroyed || !res.writable || Boolean(res.socket?.destroyed || res.socket?.writable === false);
+}
+
 export interface DashboardServerOptions {
   port?: number;
   host?: string;
@@ -158,6 +162,9 @@ export class DashboardServer {
     this.serverSentEventClients.clear();
 
     if (this.serverInstance) {
+      if (typeof (this.serverInstance as any).closeIdleConnections === "function") {
+        (this.serverInstance as any).closeIdleConnections();
+      }
       this.serverInstance.close();
       this.serverInstance = null;
     }
@@ -166,6 +173,10 @@ export class DashboardServer {
   private broadcastServerSentEvent(eventType: string, eventData: any): void {
     const payload = `event: ${eventType}\ndata: ${JSON.stringify(eventData)}\n\n`;
     for (const clientResponse of this.serverSentEventClients) {
+      if (isClientDisconnected(clientResponse)) {
+        this.serverSentEventClients.delete(clientResponse);
+        continue;
+      }
       try {
         clientResponse.write(payload);
       } catch {
@@ -434,11 +445,28 @@ export class DashboardServer {
       this.serverSentEventClients.add(serverResponse);
 
       // 剛連線時主動推送一次最新快照
-      this.quotaClient.getQuotaSnapshot().then((snapshot) => {
-        serverResponse.write(`event: quota\ndata: ${JSON.stringify(snapshot)}\n\n`);
-      });
+      this.quotaClient
+        .getQuotaSnapshot()
+        .then((snapshot) => {
+          if (isClientDisconnected(serverResponse)) {
+            this.serverSentEventClients.delete(serverResponse);
+            return;
+          }
+          try {
+            serverResponse.write(`event: quota\ndata: ${JSON.stringify(snapshot)}\n\n`);
+          } catch {
+            this.serverSentEventClients.delete(serverResponse);
+          }
+        })
+        .catch((fetchError) => {
+          console.error("[dashboard] SSE 初始配額快照獲取失敗:", fetchError);
+        });
 
       serverResponse.on("error", () => {
+        this.serverSentEventClients.delete(serverResponse);
+      });
+
+      serverResponse.on("close", () => {
         this.serverSentEventClients.delete(serverResponse);
       });
 

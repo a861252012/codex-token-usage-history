@@ -433,6 +433,29 @@ async function main(): Promise<void> {
     const database = new HistoryDatabase();
     const server = new DashboardServer(database, { port, host });
 
+    let isShuttingDown = false;
+    const gracefulShutdown = (signal: string) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      console.log(`\n[停止] 接收到 ${signal} 信號，正在優雅關閉伺服器...`);
+      try {
+        server.stop();
+      } catch (stopError: any) {
+        console.error(`[錯誤] 關閉伺服器時發生錯誤: ${stopError?.message}`);
+      }
+      try {
+        database.close();
+      } catch (dbError: any) {
+        console.error(`[錯誤] 關閉資料庫時發生錯誤: ${dbError?.message}`);
+      }
+      process.exit(0);
+    };
+
+    const sigintHandler = () => gracefulShutdown("SIGINT");
+    const sigtermHandler = () => gracefulShutdown("SIGTERM");
+    process.once("SIGINT", sigintHandler);
+    process.once("SIGTERM", sigtermHandler);
+
     try {
       const serverUrl = await server.start();
       console.log(`==============================================================================`);
@@ -451,7 +474,15 @@ async function main(): Promise<void> {
         browserProcess.unref();
       }
     } catch (serverError: any) {
+      process.removeListener("SIGINT", sigintHandler);
+      process.removeListener("SIGTERM", sigtermHandler);
       console.error(`[錯誤] 儀表板啟動失敗: ${serverError.message}`);
+      try {
+        server.stop();
+      } catch {}
+      try {
+        database.close();
+      } catch {}
       process.exit(1);
     }
     return;

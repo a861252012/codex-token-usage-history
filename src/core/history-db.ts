@@ -86,9 +86,24 @@ export class HistoryDatabase {
     }
     this.databaseInstance = await createSqliteDb(this.databaseFilePath);
 
-    if (this.databaseInstance.prepare("PRAGMA user_version").get().user_version >= 2) return;
-
     try {
+      if (this.databaseInstance.prepare("PRAGMA user_version").get().user_version >= 2) {
+        const existingIndexes = new Set(
+          this.databaseInstance.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_token_records_agent_role_timestamp', 'idx_token_records_session_id_timestamp')"
+          ).all().map((row: any) => row.name)
+        );
+        if (
+          !existingIndexes.has("idx_token_records_agent_role_timestamp") ||
+          !existingIndexes.has("idx_token_records_session_id_timestamp")
+        ) {
+          this.databaseInstance.exec(`
+            CREATE INDEX IF NOT EXISTS idx_token_records_agent_role_timestamp ON token_records(agent_role, timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_token_records_session_id_timestamp ON token_records(session_id, timestamp DESC);
+          `);
+        }
+        return;
+      }
       // Serialize first-run migrations before reading schema or migration markers.
       this.databaseInstance.exec("BEGIN IMMEDIATE;");
       if (this.databaseInstance.prepare("PRAGMA user_version").get().user_version < 1) {
@@ -121,6 +136,7 @@ export class HistoryDatabase {
           CREATE INDEX IF NOT EXISTS idx_token_records_timestamp ON token_records(timestamp);
           CREATE INDEX IF NOT EXISTS idx_token_records_model ON token_records(model);
           CREATE INDEX IF NOT EXISTS idx_token_records_session_id ON token_records(session_id);
+          CREATE INDEX IF NOT EXISTS idx_token_records_session_id_timestamp ON token_records(session_id, timestamp DESC);
         `);
 
         // Legacy databases may predate these columns. Only migrate missing columns.
@@ -159,7 +175,10 @@ export class HistoryDatabase {
         }
 
         // 建立 agent_role 索引 (確保欄位已存在)
-        this.databaseInstance.exec(`CREATE INDEX IF NOT EXISTS idx_token_records_agent_role ON token_records(agent_role);`);
+        this.databaseInstance.exec(`
+          CREATE INDEX IF NOT EXISTS idx_token_records_agent_role ON token_records(agent_role);
+          CREATE INDEX IF NOT EXISTS idx_token_records_agent_role_timestamp ON token_records(agent_role, timestamp DESC);
+        `);
 
         // 3. OpenAI 配額重置與重置券變更事件表
         this.databaseInstance.exec(`
@@ -224,6 +243,8 @@ export class HistoryDatabase {
           BEFORE INSERT ON token_records
           WHEN EXISTS (SELECT 1 FROM deleted_token_records d WHERE d.session_id=NEW.session_id AND d.turn_id=NEW.turn_id AND d.model=NEW.model AND d.timestamp=NEW.timestamp)
           BEGIN SELECT RAISE(IGNORE); END;
+          CREATE INDEX IF NOT EXISTS idx_token_records_agent_role_timestamp ON token_records(agent_role, timestamp DESC);
+          CREATE INDEX IF NOT EXISTS idx_token_records_session_id_timestamp ON token_records(session_id, timestamp DESC);
           PRAGMA user_version = 2;
         `);
       }
@@ -785,44 +806,59 @@ export class HistoryDatabase {
 
     const rows = database.prepare(querySql).all(limitCount);
 
-    const pricingProvenanceRows = database.prepare(`
-      SELECT
-        ${periodKeySql} as period_key,
-        pricing_source,
-        pricing_version,
-        COUNT(*) as records
-      FROM token_records
-      GROUP BY period_key, pricing_source, pricing_version
-      ORDER BY period_key DESC, records DESC, pricing_source ASC, pricing_version ASC
-    `).all();
-    const pricingProvenanceMap = new Map<string, PricingProvenanceBreakdown[]>();
-    for (const item of pricingProvenanceRows) {
-      const breakdown = pricingProvenanceMap.get(item.period_key) || [];
-      breakdown.push(...mapPricingProvenanceRows([item]));
-      pricingProvenanceMap.set(item.period_key, breakdown);
+    if (rows.length === 0) {
+      return [];
     }
 
-    // 單次查詢批次取得各週期使用量第一名模型，杜絕 N+1 查詢問題
-    const topModelRows = database.prepare(`
-      WITH RankedModels AS (
+    const periodKeys = rows.map((row: any) => row.period_key);
+    const BATCH_SIZE = 500;
+    const pricingProvenanceMap = new Map<string, PricingProvenanceBreakdown[]>();
+    const topModelMap = new Map<string, string>();
+
+    for (let index = 0; index < periodKeys.length; index += BATCH_SIZE) {
+      const chunkKeys = periodKeys.slice(index, index + BATCH_SIZE);
+      const chunkPlaceholders = chunkKeys.map(() => "?").join(", ");
+
+      const pricingProvenanceRows = database.prepare(`
         SELECT
           ${periodKeySql} as period_key,
-          model,
-          ROW_NUMBER() OVER (
-            PARTITION BY ${periodKeySql}
-            ORDER BY SUM(total_tokens) DESC
-          ) as rank_num
+          pricing_source,
+          pricing_version,
+          COUNT(*) as records
         FROM token_records
-        GROUP BY period_key, model
-      )
-      SELECT period_key, model
-      FROM RankedModels
-      WHERE rank_num = 1
-    `).all();
+        WHERE ${periodKeySql} IN (${chunkPlaceholders})
+        GROUP BY period_key, pricing_source, pricing_version
+        ORDER BY period_key DESC, records DESC, pricing_source ASC, pricing_version ASC
+      `).all(...chunkKeys);
+      for (const item of pricingProvenanceRows) {
+        const breakdown = pricingProvenanceMap.get(item.period_key) || [];
+        breakdown.push(...mapPricingProvenanceRows([item]));
+        pricingProvenanceMap.set(item.period_key, breakdown);
+      }
 
-    const topModelMap = new Map<string, string>();
-    for (const item of topModelRows) {
-      topModelMap.set(item.period_key, item.model);
+      // 單次查詢批次取得各週期使用量第一名模型，杜絕 N+1 查詢問題；以 model ASC 為平手決勝條件以確保排序確定性
+      const topModelRows = database.prepare(`
+        WITH RankedModels AS (
+          SELECT
+            ${periodKeySql} as period_key,
+            model,
+            ROW_NUMBER() OVER (
+              PARTITION BY ${periodKeySql}
+              ORDER BY SUM(total_tokens) DESC, model ASC
+            ) as rank_num
+          FROM token_records
+          WHERE ${periodKeySql} IN (${chunkPlaceholders})
+          GROUP BY period_key, model
+        )
+        SELECT period_key, model
+        FROM RankedModels
+        WHERE rank_num = 1
+      `).all(...chunkKeys);
+
+      for (const item of topModelRows) {
+        const normalizedModel = typeof item.model === "string" ? item.model.trim() : "";
+        topModelMap.set(item.period_key, normalizedModel.length > 0 ? normalizedModel : "unknown");
+      }
     }
 
     return rows.map((row: any) => {
@@ -852,7 +888,7 @@ export class HistoryDatabase {
         estimatedCostUsd,
         formattedCostUsd,
         pricingProvenance: pricingProvenanceMap.get(row.period_key) || [],
-        topModel: topModelMap.get(row.period_key) || "gpt-6-astra",
+        topModel: topModelMap.get(row.period_key) || "unknown",
       };
     });
   }

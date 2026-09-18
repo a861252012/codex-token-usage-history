@@ -12,6 +12,8 @@ export interface SessionWatcherEvents {
   error: (err: Error) => void;
 }
 
+const FORCED_REFRESH_COOLDOWN_MS = 15_000; // 強制刷新冷卻間隔 15 秒
+
 export class SessionWatcher extends EventEmitter {
   private codexHome: string;
   private indexer: SessionIndexer;
@@ -19,6 +21,8 @@ export class SessionWatcher extends EventEmitter {
   private watchedDirectories = new Map<string, FSWatcher>();
   private debounceTimers = new Map<string, NodeJS.Timeout>();
   private pollInterval: NodeJS.Timeout | null = null;
+  private pendingQuotaRefreshTimer: NodeJS.Timeout | null = null;
+  private lastForcedRefreshTimestamp = 0;
   private active = false;
   private isPolling = false;
 
@@ -27,6 +31,49 @@ export class SessionWatcher extends EventEmitter {
     this.indexer = indexer;
     this.quotaClient = quotaClient;
     this.codexHome = codexHomeDirectory || process.env.CODEX_HOME || join(homedir(), ".codex");
+  }
+
+  /**
+   * 節流刷新遠端配額，避免高頻輸出連續觸發 HTTP 429
+   */
+  private async refreshQuotaThrottled(): Promise<void> {
+    if (!this.active) return;
+    const now = Date.now();
+    const elapsed = now - this.lastForcedRefreshTimestamp;
+
+    if (elapsed < 0 || elapsed >= FORCED_REFRESH_COOLDOWN_MS) {
+      if (this.pendingQuotaRefreshTimer) {
+        clearTimeout(this.pendingQuotaRefreshTimer);
+        this.pendingQuotaRefreshTimer = null;
+      }
+      this.lastForcedRefreshTimestamp = now;
+      const snapshot = await this.quotaClient.getQuotaSnapshot(true);
+      if (!this.active) return;
+      this.emit("quotaUpdated", snapshot);
+    } else {
+      // 冷卻期間回傳現有快取
+      const snapshot = await this.quotaClient.getQuotaSnapshot(false);
+      if (!this.active) return;
+      this.emit("quotaUpdated", snapshot);
+
+      // 排程在冷卻結束後執行尾隨刷新
+      if (this.active && !this.pendingQuotaRefreshTimer) {
+        const remainingTime = Math.max(0, FORCED_REFRESH_COOLDOWN_MS - elapsed);
+        this.pendingQuotaRefreshTimer = setTimeout(async () => {
+          this.pendingQuotaRefreshTimer = null;
+          if (!this.active) return;
+          try {
+            this.lastForcedRefreshTimestamp = Date.now();
+            const latestSnapshot = await this.quotaClient.getQuotaSnapshot(true);
+            if (!this.active) return;
+            this.emit("quotaUpdated", latestSnapshot);
+          } catch (caughtError: any) {
+            if (!this.active) return;
+            this.emit("error", caughtError);
+          }
+        }, remainingTime);
+      }
+    }
   }
 
   /**
@@ -55,8 +102,7 @@ export class SessionWatcher extends EventEmitter {
         const scanResult = this.indexer.indexRecent(1);
         if (scanResult.recordsInserted > 0) {
           this.emit("newRecords", scanResult.newRecords);
-          const quotaSnapshot = await this.quotaClient.getQuotaSnapshot(true);
-          this.emit("quotaUpdated", quotaSnapshot);
+          await this.refreshQuotaThrottled();
         } else {
           const quotaSnapshot = await this.quotaClient.getQuotaSnapshot(false);
           this.emit("quotaUpdated", quotaSnapshot);
@@ -128,9 +174,8 @@ export class SessionWatcher extends EventEmitter {
             if (insertedCount > 0 && newRecords.length > 0) {
               this.emit("newRecords", newRecords);
 
-              // 消耗 token 後立即重整即時配額
-              const snapshot = await this.quotaClient.getQuotaSnapshot(true);
-              this.emit("quotaUpdated", snapshot);
+              // 消耗 token 後以節流冷卻機制重整即時配額，防止 429
+              await this.refreshQuotaThrottled();
             }
           } catch (caughtError: any) {
             this.emit("error", caughtError);
@@ -166,6 +211,13 @@ export class SessionWatcher extends EventEmitter {
       clearTimeout(debounceTimer);
     }
     this.debounceTimers.clear();
+
+    if (this.pendingQuotaRefreshTimer) {
+      clearTimeout(this.pendingQuotaRefreshTimer);
+      this.pendingQuotaRefreshTimer = null;
+    }
+
+    this.lastForcedRefreshTimestamp = 0;
 
     if (this.pollInterval) {
       clearInterval(this.pollInterval);

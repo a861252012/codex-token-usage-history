@@ -19,6 +19,134 @@ const COLOR_RED = "\x1b[31m";
 const COLOR_CYAN = "\x1b[36m";
 const QUOTA_FRESHNESS_MS = 2 * 60 * 1000;
 
+const ANSI_REGEX = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+
+/**
+ * 剝離 ANSI 控制序列
+ */
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_REGEX, "");
+}
+
+/**
+ * 取得單一 Unicode 碼位的終端機顯示寬度
+ * ASCII / 半形字元 = 1，全形字元 / CJK 表意文字 = 2，控制字元 / 組合符號 = 0
+ */
+export function getCharacterWidth(codePoint: number): number {
+  if (codePoint < 32 || (codePoint >= 0x7f && codePoint < 0xa0)) {
+    return 0;
+  }
+  // 組合標記 / 零寬字元 (Combining marks, Zero Width characters)
+  if (
+    (codePoint >= 0x0300 && codePoint <= 0x036f) ||
+    (codePoint >= 0x1ab0 && codePoint <= 0x1aff) ||
+    (codePoint >= 0x1dc0 && codePoint <= 0x1dff) ||
+    (codePoint >= 0x20d0 && codePoint <= 0x20ff) ||
+    (codePoint >= 0xfe20 && codePoint <= 0xfe2f) ||
+    codePoint === 0x200b ||
+    codePoint === 0xfeff
+  ) {
+    return 0;
+  }
+  // East Asian Wide / Fullwidth (全形字元與 CJK)
+  if (
+    (codePoint >= 0x1100 && codePoint <= 0x115f) || // 諺文聲母
+    (codePoint >= 0x2e80 && codePoint <= 0x303e) || // CJK 部首、標點、符號 (含全形空白 0x3000)
+    (codePoint >= 0x3040 && codePoint <= 0x30ff) || // 平假名、片假名
+    (codePoint >= 0x3105 && codePoint <= 0x312f) || // 注音符號
+    (codePoint >= 0x3130 && codePoint <= 0x318f) || // 諺文相容字母
+    (codePoint >= 0x3400 && codePoint <= 0x4dbf) || // CJK 擴展 A
+    (codePoint >= 0x4e00 && codePoint <= 0x9fff) || // CJK 統一表意文字
+    (codePoint >= 0xa000 && codePoint <= 0xa4cf) || // 彝文
+    (codePoint >= 0xac00 && codePoint <= 0xd7a3) || // 諺文音節
+    (codePoint >= 0xf900 && codePoint <= 0xfaff) || // CJK 互換表意文字
+    (codePoint >= 0xfe10 && codePoint <= 0xfe19) || // 直排形式
+    (codePoint >= 0xfe30 && codePoint <= 0xfe6f) || // CJK 相容形式 (全形標點)
+    (codePoint >= 0xff01 && codePoint <= 0xff60) || // 全形 ASCII 變體
+    (codePoint >= 0xffe0 && codePoint <= 0xffe6) || // 全形符號
+    (codePoint >= 0x1f300 && codePoint <= 0x1f6ff) || // 表情符號與雜項圖形
+    (codePoint >= 0x1f900 && codePoint <= 0x1f9ff) || // 補充符號與圖形
+    (codePoint >= 0x20000 && codePoint <= 0x3fffd)    // CJK 擴展 B~I
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
+/**
+ * 計算字串於終端機中的真實顯示欄寬 (自動排除 ANSI 序列並依 East Asian Width 計量)
+ */
+export function getStringDisplayWidth(text: string): number {
+  const cleanText = stripAnsi(text);
+  let totalWidth = 0;
+  for (const char of cleanText) {
+    const codePoint = char.codePointAt(0) || 0;
+    totalWidth += getCharacterWidth(codePoint);
+  }
+  return totalWidth;
+}
+
+/**
+ * 依終端機顯示欄寬截斷字串，避免在全形字中間切斷導致顯示錯位
+ */
+export function truncateDisplay(text: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  let currentWidth = 0;
+  let result = "";
+  let hasAnsi = false;
+
+  const tokens = text.split(/(\x1b\[[0-9;?]*[ -/]*[@-~])/);
+  for (const token of tokens) {
+    if (!token) continue;
+    if (token.startsWith("\x1b[")) {
+      hasAnsi = true;
+      result += token;
+      continue;
+    }
+    for (const char of token) {
+      const codePoint = char.codePointAt(0) || 0;
+      const charWidth = getCharacterWidth(codePoint);
+      if (currentWidth + charWidth > maxWidth) {
+        if (hasAnsi && !result.endsWith(COLOR_RESET)) {
+          result += COLOR_RESET;
+        }
+        return result;
+      }
+      result += char;
+      currentWidth += charWidth;
+    }
+  }
+  return result;
+}
+
+/**
+ * 右側補白 (Pad End) 至指定顯示欄寬
+ */
+export function padEndDisplay(text: string, targetWidth: number, padChar = " "): string {
+  const currentWidth = getStringDisplayWidth(text);
+  if (currentWidth >= targetWidth) return text;
+  return text + padChar.repeat(targetWidth - currentWidth);
+}
+
+/**
+ * 左側補白 (Pad Start) 至指定顯示欄寬
+ */
+export function padStartDisplay(text: string, targetWidth: number, padChar = " "): string {
+  const currentWidth = getStringDisplayWidth(text);
+  if (currentWidth >= targetWidth) return text;
+  return padChar.repeat(targetWidth - currentWidth) + text;
+}
+
+/**
+ * 依目標欄寬進行安全截斷與補白，確保輸出精確吻合目標終端機寬度
+ */
+export function fitDisplay(text: string, targetWidth: number, align: "left" | "right" = "left"): string {
+  const truncated = truncateDisplay(text, targetWidth);
+  return align === "right"
+    ? padStartDisplay(truncated, targetWidth)
+    : padEndDisplay(truncated, targetWidth);
+}
+
 function isQuotaSnapshotFresh(snapshot: QuotaSnapshot): boolean {
   const ageMs = Date.now() - snapshot.updatedAt;
   return snapshot.source !== "fallback"
@@ -63,7 +191,7 @@ export function renderProgressBar(usedPercent: number, barLength = 20): string {
 
 export function renderWindowLine(title: string, quotaWindow: QuotaWindow | null): string {
   if (!quotaWindow) {
-    return `  ${title.padEnd(14)}: ${STYLE_DIM}無資料（無法判定）${COLOR_RESET}`;
+    return `  ${padEndDisplay(title, 14)}: ${STYLE_DIM}無資料（無法判定）${COLOR_RESET}`;
   }
   const progressBar = renderProgressBar(quotaWindow.usedPercent, 20);
 
@@ -72,7 +200,7 @@ export function renderWindowLine(title: string, quotaWindow: QuotaWindow | null)
   const dynamicCountdown = QuotaClient.formatCountdown(remainingSeconds);
   const countdownText = `${COLOR_CYAN}重設倒數: ${dynamicCountdown}${COLOR_RESET}`;
 
-  return `  ${STYLE_BOLD}${title.padEnd(14)}${COLOR_RESET}: ${progressBar} | ${countdownText}`;
+  return `  ${STYLE_BOLD}${padEndDisplay(title, 14)}${COLOR_RESET}: ${progressBar} | ${countdownText}`;
 }
 
 export function renderQuotaStatus(snapshot: QuotaSnapshot): string {
@@ -91,17 +219,17 @@ export function renderQuotaStatus(snapshot: QuotaSnapshot): string {
   lines.push(`${COLOR_CYAN}${divider}${COLOR_RESET}`);
 
   if (snapshot.source === "fallback") {
-    lines.push(`  連線狀態      : ${COLOR_YELLOW}離線或尚未登入，無法取得官方配額${COLOR_RESET}`);
+    lines.push(`  ${padEndDisplay("連線狀態", 14)}: ${COLOR_YELLOW}離線或尚未登入，無法取得官方配額${COLOR_RESET}`);
   } else if (snapshot.email) {
-    lines.push(`  帳號身份      : ${STYLE_BOLD}${snapshot.email}${COLOR_RESET} (方案: ${snapshot.planType || "一般"})`);
+    lines.push(`  ${padEndDisplay("帳號身份", 14)}: ${STYLE_BOLD}${snapshot.email}${COLOR_RESET} (方案: ${snapshot.planType || "一般"})`);
   } else {
-    lines.push(`  方案狀態      : ${snapshot.planType || "已連線"}`);
+    lines.push(`  ${padEndDisplay("方案狀態", 14)}: ${snapshot.planType || "已連線"}`);
   }
   if (snapshot.source !== "fallback" && snapshot.updatedAt > 0) {
-    lines.push(`  資料更新時間  : ${new Date(snapshot.updatedAt).toLocaleString("zh-TW", { hour12: false })}`);
+    lines.push(`  ${padEndDisplay("資料更新時間", 14)}: ${new Date(snapshot.updatedAt).toLocaleString("zh-TW", { hour12: false })}`);
   }
   if (snapshot.errorReason) {
-    lines.push(`  取得失敗原因  : ${COLOR_YELLOW}${snapshot.errorReason}${COLOR_RESET}`);
+    lines.push(`  ${padEndDisplay("取得失敗原因", 14)}: ${COLOR_YELLOW}${snapshot.errorReason}${COLOR_RESET}`);
   }
 
   lines.push("");
@@ -120,7 +248,7 @@ export function renderQuotaStatus(snapshot: QuotaSnapshot): string {
   }
 
   if (snapshot.resetCreditsKnown === true && snapshot.resetCredits > 0) {
-    lines.push(`  重設信用額度  : ${COLOR_GREEN}${snapshot.resetCredits} 次可用${COLOR_RESET}`);
+    lines.push(`  ${padEndDisplay("重設信用額度", 14)}: ${COLOR_GREEN}${snapshot.resetCredits} 次可用${COLOR_RESET}`);
   }
 
   lines.push(`${COLOR_CYAN}${divider}${COLOR_RESET}`);
@@ -147,24 +275,24 @@ export function renderUsageSummary(summary: UsageSummary, title = "近期 Token 
     lines.push(`${STYLE_BOLD}各模型消耗分佈:${COLOR_RESET}`);
 
     const header = [
-      "模型名稱".padEnd(24),
-      "紀錄數".padStart(8),
-      "總 Token 數".padStart(15),
-      "輸入 Token".padStart(13),
-      "輸出 Token".padStart(11),
-      "等值金額".padStart(10),
+      fitDisplay("模型名稱", 24),
+      padStartDisplay("紀錄數", 8),
+      padStartDisplay("總 Token 數", 15),
+      padStartDisplay("輸入 Token", 13),
+      padStartDisplay("輸出 Token", 11),
+      padStartDisplay("等值金額", 10),
     ].join("  ");
     lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
 
     for (const modelStats of summary.byModel) {
       const costText = `$${modelStats.costUsd.toFixed(2)}`;
       const row = [
-        modelStats.model.slice(0, 24).padEnd(24),
-        formatNumber(modelStats.requests).padStart(8),
-        formatNumber(modelStats.totalTokens).padStart(15),
-        formatNumber(modelStats.inputTokens).padStart(13),
-        formatNumber(modelStats.outputTokens).padStart(11),
-        costText.padStart(10),
+        fitDisplay(modelStats.model, 24),
+        padStartDisplay(formatNumber(modelStats.requests), 8),
+        padStartDisplay(formatNumber(modelStats.totalTokens), 15),
+        padStartDisplay(formatNumber(modelStats.inputTokens), 13),
+        padStartDisplay(formatNumber(modelStats.outputTokens), 11),
+        padStartDisplay(costText, 10),
       ].join("  ");
       lines.push(row);
     }
@@ -180,20 +308,20 @@ function formatLocalTimestamp(timestamp: number): string {
 
 export function renderRecentRecords(records: TokenRecord[], maxRows = 15): string {
   const lines: string[] = [];
-  const divider = "-".repeat(114);
+  const divider = "-".repeat(125);
 
   lines.push(`${STYLE_BOLD}近期 Token 消耗流水帳紀錄 (最新 ${Math.min(records.length, maxRows)} 筆):${COLOR_RESET}`);
   lines.push(divider);
 
   const header = [
-    "本機時間".padEnd(20),
-    "模型".padEnd(18),
-    "角色".padEnd(8),
-    "總 Token".padStart(11),
-    "輸入/輸出".padStart(15),
-    "金額(USD)".padStart(10),
-    "定價來源@版本".padEnd(22),
-    "週配額".padStart(7),
+    fitDisplay("本機時間", 20),
+    fitDisplay("模型", 18),
+    fitDisplay("角色", 8),
+    padStartDisplay("總 Token", 11),
+    padStartDisplay("輸入/輸出", 15),
+    padStartDisplay("金額(USD)", 10),
+    fitDisplay("定價來源@版本", 22),
+    padStartDisplay("週配額", 7),
   ].join("  ");
   lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
 
@@ -212,14 +340,14 @@ export function renderRecentRecords(records: TokenRecord[], maxRows = 15): strin
     const pricingText = `${record.pricingSource || "unknown"}@${record.pricingVersion || "unknown"}`;
 
     const row = [
-      localTimeString.padEnd(20),
-      record.model.slice(0, 18).padEnd(18),
-      roleText.slice(0, 8).padEnd(8),
-      formatNumber(record.totalTokens).padStart(11),
-      inOutText.padStart(15),
-      costText.padStart(10),
-      pricingText.slice(0, 22).padEnd(22),
-      quotaText.padStart(7),
+      fitDisplay(localTimeString, 20),
+      fitDisplay(record.model, 18),
+      fitDisplay(roleText, 8),
+      padStartDisplay(formatNumber(record.totalTokens), 11),
+      padStartDisplay(inOutText, 15),
+      padStartDisplay(costText, 10),
+      fitDisplay(pricingText, 22),
+      padStartDisplay(quotaText, 7),
     ].join("  ");
     lines.push(row);
   }
@@ -233,7 +361,7 @@ export function renderRecentRecords(records: TokenRecord[], maxRows = 15): strin
  */
 export function renderSettlementTable(records: SettlementRecord[], periodType: string): string {
   const lines: string[] = [];
-  const divider = "=".repeat(132);
+  const divider = "=".repeat(140);
 
   const periodTitleMap: Record<string, string> = {
     daily: "每日結算報表 (Daily)",
@@ -254,30 +382,30 @@ export function renderSettlementTable(records: SettlementRecord[], periodType: s
   }
 
   const header = [
-    "結算週期".padEnd(14),
-    "紀錄筆數".padStart(8),
-    "總 Token".padStart(14),
-    "主代理人".padStart(13),
-    "subAgent".padStart(12),
-    "未知角色".padStart(12),
-    "等值金額(USD)".padStart(13),
-    "定價來源".padEnd(24),
-    "主要模型".padEnd(16),
+    fitDisplay("結算週期", 14),
+    padStartDisplay("紀錄筆數", 8),
+    padStartDisplay("總 Token", 14),
+    padStartDisplay("主代理人", 13),
+    padStartDisplay("subAgent", 12),
+    padStartDisplay("未知角色", 12),
+    padStartDisplay("等值金額(USD)", 13),
+    fitDisplay("定價來源", 24),
+    fitDisplay("主要模型", 16),
   ].join("  ");
   lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
-  lines.push("-".repeat(132));
+  lines.push("-".repeat(140));
 
   for (const settlement of records) {
     const row = [
-      settlement.periodKey.padEnd(14),
-      formatNumber(settlement.requests).padStart(8),
-      formatNumber(settlement.totalTokens).padStart(14),
-      formatNumber(settlement.mainAgentTokens).padStart(13),
-      formatNumber(settlement.subAgentTokens).padStart(12),
-      formatNumber(settlement.unknownAgentTokens).padStart(12),
-      settlement.formattedCostUsd.padStart(13),
-      formatPricingProvenance(settlement.pricingProvenance).slice(0, 24).padEnd(24),
-      settlement.topModel.slice(0, 16).padEnd(16),
+      fitDisplay(settlement.periodKey, 14),
+      padStartDisplay(formatNumber(settlement.requests), 8),
+      padStartDisplay(formatNumber(settlement.totalTokens), 14),
+      padStartDisplay(formatNumber(settlement.mainAgentTokens), 13),
+      padStartDisplay(formatNumber(settlement.subAgentTokens), 12),
+      padStartDisplay(formatNumber(settlement.unknownAgentTokens), 12),
+      padStartDisplay(settlement.formattedCostUsd, 13),
+      fitDisplay(formatPricingProvenance(settlement.pricingProvenance), 24),
+      fitDisplay(settlement.topModel, 16),
     ].join("  ");
     lines.push(row);
   }
@@ -291,7 +419,7 @@ export function renderSettlementTable(records: SettlementRecord[], periodType: s
  */
 export function renderResetEventsTable(events: QuotaResetEvent[]): string {
   const lines: string[] = [];
-  const divider = "-".repeat(84);
+  const divider = "-".repeat(86);
 
   lines.push(`${STYLE_BOLD}OpenAI 配額重置與重置券變動歷史紀錄 (最新 ${events.length} 筆):${COLOR_RESET}`);
   lines.push(divider);
@@ -302,22 +430,22 @@ export function renderResetEventsTable(events: QuotaResetEvent[]): string {
   }
 
   const header = [
-    "發生時間 (本機)".padEnd(20),
-    "事件類型".padEnd(16),
-    "可用券數".padStart(8),
-    "券數變動".padStart(8),
-    "說明".padEnd(26),
+    fitDisplay("發生時間 (本機)", 20),
+    fitDisplay("事件類型", 16),
+    padStartDisplay("可用券數", 8),
+    padStartDisplay("券數變動", 8),
+    fitDisplay("說明", 26),
   ].join("  ");
   lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
 
   for (const event of events) {
     const deltaText = event.creditDelta > 0 ? `+${event.creditDelta}` : `${event.creditDelta}`;
     const row = [
-      formatLocalTimestamp(event.timestamp).padEnd(20),
-      event.eventType.slice(0, 16).padEnd(16),
-      formatNumber(event.availableCredits).padStart(8),
-      deltaText.padStart(8),
-      event.description.slice(0, 26).padEnd(26),
+      fitDisplay(formatLocalTimestamp(event.timestamp), 20),
+      fitDisplay(event.eventType, 16),
+      padStartDisplay(formatNumber(event.availableCredits), 8),
+      padStartDisplay(deltaText, 8),
+      fitDisplay(event.description, 26),
     ].join("  ");
     lines.push(row);
   }
@@ -331,7 +459,7 @@ export function renderResetEventsTable(events: QuotaResetEvent[]): string {
  */
 export function renderPlanChangeEventsTable(events: PlanChangeEvent[]): string {
   const lines: string[] = [];
-  const divider = "-".repeat(84);
+  const divider = "-".repeat(92);
 
   lines.push(`${STYLE_BOLD}OpenAI 帳號方案升降級歷程 (Plan Changes):${COLOR_RESET}`);
   lines.push(divider);
@@ -342,11 +470,11 @@ export function renderPlanChangeEventsTable(events: PlanChangeEvent[]): string {
   }
 
   const header = [
-    "異動時間 (本機)".padEnd(20),
-    "變更前方案".padEnd(14),
-    "變更後方案".padEnd(14),
-    "異動類型".padEnd(12),
-    "詳細說明".padEnd(22),
+    fitDisplay("異動時間 (本機)", 20),
+    fitDisplay("變更前方案", 14),
+    fitDisplay("變更後方案", 14),
+    fitDisplay("異動類型", 16),
+    fitDisplay("詳細說明", 22),
   ].join("  ");
   lines.push(`${STYLE_DIM}${header}${COLOR_RESET}`);
 
@@ -361,11 +489,11 @@ export function renderPlanChangeEventsTable(events: PlanChangeEvent[]): string {
     }
 
     const row = [
-      formatLocalTimestamp(event.timestamp).padEnd(20),
-      event.previousPlan.padEnd(14),
-      event.newPlan.padEnd(14),
-      typeColored.padEnd(21),
-      event.description.slice(0, 22).padEnd(22),
+      fitDisplay(formatLocalTimestamp(event.timestamp), 20),
+      fitDisplay(event.previousPlan, 14),
+      fitDisplay(event.newPlan, 14),
+      fitDisplay(typeColored, 16),
+      fitDisplay(event.description, 22),
     ].join("  ");
     lines.push(row);
   }

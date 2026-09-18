@@ -30,6 +30,8 @@ export interface QuotaSnapshot {
   updatedAt: number;
   /** 取得此快照的帳號；舊快取或來源未提供時無法確認。 */
   accountId?: string | null;
+  /** 取得此快照的憑證指紋，用於本地快取隔離與切換檢查。 */
+  authFingerprint?: string | null;
   /** 帳號 Email */
   email: string | null;
   /** 方案類型 (例: prolite, plus, pro, team) */
