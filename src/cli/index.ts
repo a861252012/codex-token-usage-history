@@ -90,6 +90,7 @@ function printHelpText(): void {
   console.log("可用命令:");
   console.log("  status      顯示即時配額與本日消耗概覽（預設）");
   console.log("  live        終端機即時動態監控");
+  console.log("  quota       取得配額 JSON（不掃描歷史資料）");
   console.log("  hud         啟動原生置頂懸浮列");
   console.log("  dashboard   啟動 Web 即時儀表板");
   console.log("  report      多週期結算報表");
@@ -110,7 +111,7 @@ async function main(): Promise<void> {
   const argumentList = process.argv.slice(2);
   const commandName = argumentList[0] && !argumentList[0].startsWith("-") ? argumentList[0] : "status";
 
-  if (!["help", "doctor", "status", "live", "watch", "hud", "bar", "pet", "mcp",
+  if (!["help", "doctor", "quota", "status", "live", "watch", "hud", "bar", "pet", "mcp",
     "report", "settle", "settlement", "resets", "credits", "plans", "tiers",
     "reprice", "recalculate-costs", "pricing", "price", "dashboard", "board", "web",
     "ui", "serve", "prompt", "index", "history"].includes(commandName)) {
@@ -155,6 +156,12 @@ async function main(): Promise<void> {
       for (const path of paths) console.log(`[${path.status}] ${path.path}`);
       for (const note of diagnostic.notes) console.log(`[說明] ${note}`);
     }
+    return;
+  }
+
+  if (commandName === "quota") {
+    const quotaClient = new QuotaClient();
+    console.log(JSON.stringify(await quotaClient.getQuotaSnapshot()));
     return;
   }
 

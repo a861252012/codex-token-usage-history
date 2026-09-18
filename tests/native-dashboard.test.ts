@@ -7,7 +7,7 @@ const menubar = readFileSync(new URL("../src/menubar/main.swift", import.meta.ur
 
 test.skipIf(process.platform !== "darwin")("native dashboard checks canonical profiles and launches the adjacent CLI without global installation", () => {
   const profileCheck = hud.slice(hud.indexOf("func dashboardMatchesProfile"), hud.indexOf("func acquireHudLock"));
-  const launcher = hud.slice(hud.indexOf("func makeDashboardProcess"), hud.indexOf("struct HudLoginItem"));
+  const launcher = hud.slice(hud.indexOf("func makeDashboardProcess"), hud.indexOf("func fetchStandaloneQuota"));
   const menuProfileCheck = menubar.slice(menubar.indexOf("func dashboardMatchesProfile"), menubar.indexOf("// 型別結構定義"));
   expect(menuProfileCheck.trim()).toBe(profileCheck.trim());
   const result = spawnSync("swift", ["-"], {

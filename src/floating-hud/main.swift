@@ -20,12 +20,12 @@ func acquireHudLock(at path: String) throws -> Int32? {
     throw NSError(domain: NSPOSIXErrorDomain, code: Int(error))
 }
 
-func makeDashboardProcess(executableURL: URL, codexDirectory: String) throws -> Process {
+func makeDashboardProcess(executableURL: URL, codexDirectory: String, arguments: [String] = ["dashboard"]) throws -> Process {
     let cli = executableURL.resolvingSymlinksInPath().deletingLastPathComponent().appendingPathComponent("codex-usage")
     guard FileManager.default.isExecutableFile(atPath: cli.path) else { throw CocoaError(.fileReadNoSuchFile) }
     let process = Process()
     process.executableURL = cli
-    process.arguments = ["dashboard"]
+    process.arguments = arguments
     var environment = ProcessInfo.processInfo.environment
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     environment["PATH"] = [environment["PATH"] ?? "", "\(home)/.bun/bin", "\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].filter { !$0.isEmpty }.joined(separator: ":")
@@ -34,6 +34,22 @@ func makeDashboardProcess(executableURL: URL, codexDirectory: String) throws -> 
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
     return process
+}
+
+func fetchStandaloneQuota(executableURL: URL, codexDirectory: String) throws -> QuotaSnapshotDTO? {
+    let process = try makeDashboardProcess(executableURL: executableURL, codexDirectory: codexDirectory, arguments: ["quota"])
+    let output = Pipe()
+    process.standardOutput = output
+    try process.run()
+    let timeout = DispatchWorkItem {
+        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+    }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: timeout)
+    defer { timeout.cancel() }
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { return nil }
+    return try JSONDecoder().decode(QuotaSnapshotDTO.self, from: data)
 }
 
 struct HudLoginItem {
@@ -763,6 +779,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var quotaDisplay = "both"
 
     private var cachedStatusData: FullStatusDTO?
+    private var isLoadingData = false
+    private var lastStandaloneAttempt = Date.distantPast
+    private var standaloneSnapshot: QuotaSnapshotDTO?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadUserConfiguration()
@@ -1205,9 +1224,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func loadLatestData() {
+        guard !isLoadingData else { return }
+        isLoadingData = true
         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
             guard let self = self else { return }
 
+            defer { DispatchQueue.main.async { self.isLoadingData = false } }
             var fetchedStatus: FullStatusDTO?
 
             let urlString = "http://127.0.0.1:10200/api/status"
@@ -1224,19 +1246,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     semaphore.signal()
                 }
                 task.resume()
-                _ = semaphore.wait(timeout: .now() + 0.8)
+                semaphore.wait()
             }
 
             if fetchedStatus == nil {
+                if Date().timeIntervalSince(self.lastStandaloneAttempt) >= 30 {
+                    self.lastStandaloneAttempt = Date()
+                    self.standaloneSnapshot = Bundle.main.executableURL.flatMap {
+                        try? fetchStandaloneQuota(executableURL: $0, codexDirectory: self.codexDirectoryPath)
+                    }
+                }
                 let cacheFilePath = "\(self.codexDirectoryPath)/codex_quota_snapshot.json"
-                if let rawData = try? Data(contentsOf: URL(fileURLWithPath: cacheFilePath)),
-                   let snapshot = try? JSONDecoder().decode(QuotaSnapshotDTO.self, from: rawData) {
+                let diskSnapshot = (try? Data(contentsOf: URL(fileURLWithPath: cacheFilePath))).flatMap {
+                    try? JSONDecoder().decode(QuotaSnapshotDTO.self, from: $0)
+                }
+                if let snapshot = self.standaloneSnapshot ?? diskSnapshot.map(self.asLocalCache) {
                     let sqliteTodaySummary = self.queryTodaySummaryFromDatabase()
                     let latestPlanChange = self.queryRecentPlanChangeFromDatabase()
                     let planChangeList = latestPlanChange != nil ? [latestPlanChange!] : []
 
                     fetchedStatus = FullStatusDTO(
-                        snapshot: self.asLocalCache(snapshot),
+                        snapshot: snapshot,
                         todaySummary: sqliteTodaySummary,
                         recentRecords: [],
                         recentPlanChanges: planChangeList
@@ -1358,10 +1388,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.75)
             secondaryTagLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.tagFontSize, weight: .bold)
 
-            if !isLive && snapshot.source != "cache" {
+            if !isLive {
                 switch snapshot.source {
                 case "fallback": secondaryTagLabel.stringValue = "OFFLINE"
-                case "wham": secondaryTagLabel.stringValue = "STALE"
+                case "wham", "cache": secondaryTagLabel.stringValue = "STALE"
                 default: secondaryTagLabel.stringValue = "UNKNOWN"
                 }
 
