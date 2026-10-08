@@ -27,6 +27,19 @@ function finiteNumber(value: unknown, minimum: number, maximum: number, fallback
     : fallback;
 }
 
+function parseCreditBalance(balance: unknown): number | null {
+  if (typeof balance === "number") {
+    return Number.isFinite(balance) && balance >= 0 && balance <= 1_000_000_000_000 ? balance : null;
+  }
+  if (typeof balance === "string") {
+    const trimmed = balance.trim();
+    if (trimmed.length === 0) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1_000_000_000_000 ? parsed : null;
+  }
+  return null;
+}
+
 export interface RawWhamResponse {
   user_id?: string;
   account_id?: string;
@@ -52,6 +65,11 @@ export interface RawWhamResponse {
     available_count?: number;
     applicable_available_count?: number;
   };
+  credits?: {
+    has_credits?: boolean;
+    unlimited?: boolean;
+    balance?: string | number | null;
+  } | null;
 }
 
 export interface RawWhamWindow {
@@ -442,10 +460,12 @@ export class QuotaClient {
     let weeklyWindow: QuotaWindow | null = null;
     let invalidWindow = false;
 
-    const inspectWindow = (rawWindow?: RawWhamWindow | null): QuotaWindow | null => {
+    const inspectWindow = (rawWindow?: RawWhamWindow | null, allowed?: boolean): QuotaWindow | null => {
       if (!rawWindow) return null;
       const usedPercent = finiteNumber(rawWindow.used_percent, 0, 100, NaN);
-      const remainingPercent = Math.max(0, 100 - usedPercent);
+      // Match the Codex app: a rounded 100% used does not mean exhausted when
+      // WHAM still allows usage. Only an explicit allowed=true gets the 1% floor.
+      const remainingPercent = Math.max(allowed === true ? 1 : 0, 100 - usedPercent);
       const limitWindowSeconds = finiteNumber(rawWindow.limit_window_seconds, 0, 366 * 86400);
       if (!Number.isFinite(usedPercent) || !Number.isSafeInteger(limitWindowSeconds) || limitWindowSeconds <= 0) {
         invalidWindow = true;
@@ -470,8 +490,8 @@ export class QuotaClient {
 
     // 檢查主配額 (rate_limit)
     if (responsePayload.rate_limit) {
-      const primaryWindow = inspectWindow(responsePayload.rate_limit.primary_window);
-      const secondaryWindow = inspectWindow(responsePayload.rate_limit.secondary_window);
+      const primaryWindow = inspectWindow(responsePayload.rate_limit.primary_window, responsePayload.rate_limit.allowed);
+      const secondaryWindow = inspectWindow(responsePayload.rate_limit.secondary_window, responsePayload.rate_limit.allowed);
 
       if (primaryWindow) {
         if (primaryWindow.limitWindowSeconds <= 86400 && primaryWindow.limitWindowSeconds > 0) {
@@ -511,6 +531,7 @@ export class QuotaClient {
     const rawCredits = responsePayload.rate_limit_reset_credits?.available_count;
     const resetCreditsKnown = typeof rawCredits === "number" && Number.isSafeInteger(rawCredits) && rawCredits >= 0 && rawCredits <= 1_000_000;
     const planType = boundedText(responsePayload.plan_type);
+    const creditBalance = parseCreditBalance(responsePayload.credits?.balance);
 
     return {
       updatedAt: currentTimeMs,
@@ -523,6 +544,7 @@ export class QuotaClient {
       additionalLimits,
       resetCredits,
       resetCreditsKnown,
+      creditBalance,
       source: "wham",
       ...((invalidWindow || (!fiveHourWindow && !weeklyWindow))
         ? { errorReason: invalidWindow ? "上游回傳無效配額視窗，無法確認目前剩餘額度" : "上游未回傳有效主配額視窗" }
@@ -568,6 +590,7 @@ export class QuotaClient {
       weekly: null,
       additionalLimits: [],
       resetCredits: 0,
+      creditBalance: null,
       source: "fallback",
       errorReason: reasonDescription,
     };

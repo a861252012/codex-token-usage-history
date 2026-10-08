@@ -409,6 +409,7 @@ struct QuotaSnapshotDTO: Codable {
     let weekly: WindowQuotaDTO?
     let resetCredits: Int?
     let resetCreditsKnown: Bool?
+    let creditBalance: Double?
     let source: String?
     let errorReason: String?
 }
@@ -436,7 +437,6 @@ struct TodaySummaryDTO: Codable {
     let inputTokens: Int
     let outputTokens: Int
     let hourlyBurnRate: Int
-    let formattedCostUsd: String?
 }
 
 struct TokenRecordDTO: Codable {
@@ -774,7 +774,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Display state
     // 0: Quota view
-    // 1: Today cost view
+    // 1: Remaining account credits view
     private var displayModeIndex: Int = 0
     private var quotaDisplay = "both"
 
@@ -1016,6 +1016,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             weekly: snapshot.weekly,
             resetCredits: snapshot.resetCredits,
             resetCreditsKnown: snapshot.resetCreditsKnown,
+            creditBalance: snapshot.creditBalance,
             source: "cache",
             errorReason: snapshot.errorReason?.isEmpty == false
                 ? snapshot.errorReason
@@ -1329,22 +1330,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func queryTodaySummaryFromDatabase() -> TodaySummaryDTO {
         let startOfDayTimestamp = Int64(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970 * 1000)
-        guard let columns = queryDatabaseRow("SELECT COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cost_usd), 0.0) FROM token_records WHERE timestamp >= \(startOfDayTimestamp);") else {
-            return TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0, formattedCostUsd: "$0.00")
+        guard let columns = queryDatabaseRow("SELECT COUNT(*), COALESCE(SUM(total_tokens), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) FROM token_records WHERE timestamp >= \(startOfDayTimestamp);") else {
+            return TodaySummaryDTO(requests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, hourlyBurnRate: 0)
         }
         return TodaySummaryDTO(
             requests: Int(columns[0]) ?? 0,
             totalTokens: Int(columns[1]) ?? 0,
             inputTokens: Int(columns[2]) ?? 0,
             outputTokens: Int(columns[3]) ?? 0,
-            hourlyBurnRate: 0,
-            formattedCostUsd: String(format: "$%.2f", Double(columns[4]) ?? 0)
+            hourlyBurnRate: 0
         )
     }
 
     private func updateUserInterface(with statusData: FullStatusDTO) {
         let snapshot = statusData.snapshot
-        let summary = statusData.todaySummary
         let sizePreset = getCurrentSizePreset()
 
         let weeklyRemaining = quotaDisplay == "five-hour" ? nil : snapshot.weekly.map { Int($0.remainingPercent) }
@@ -1376,11 +1375,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         primaryValueLabel.textColor = NSColor.white
 
         if displayModeIndex == 1 {
-            // View 1: Today estimated cost
-            secondaryTagLabel.stringValue = "COST"
+            // View 1: Remaining account credits
+            secondaryTagLabel.stringValue = "CREDITS"
             secondaryTagLabel.textColor = NSColor.white.withAlphaComponent(0.65)
             secondaryTagLabel.font = NSFont.systemFont(ofSize: sizePreset.tagFontSize - 1.0, weight: .bold)
-            primaryValueLabel.stringValue = summary.formattedCostUsd ?? "$0.00"
+            if let creditBalance = snapshot.creditBalance {
+                primaryValueLabel.stringValue = formatCreditBalance(creditBalance)
+            } else {
+                primaryValueLabel.stringValue = "--"
+            }
             primaryValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: sizePreset.valueFontSize - 2.0, weight: .bold)
         } else {
             // View 0: Primary quota view
@@ -1428,15 +1431,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func formatTokenCount(tokens: Int) -> String {
-        if tokens >= 1_000_000 {
-            let millions = Double(tokens) / 1_000_000.0
-            return String(format: "%.1fM", millions)
-        } else if tokens >= 1_000 {
-            let thousands = Double(tokens) / 1_000.0
-            return String(format: "%.1fk", thousands)
+    private func formatCreditBalance(_ balance: Double) -> String {
+        guard balance.isFinite && balance >= 0 else { return "--" }
+        if balance >= 1_000_000_000 {
+            return String(format: "%.1fB", balance / 1_000_000_000.0)
+        } else if balance >= 1_000_000 {
+            return String(format: "%.1fM", balance / 1_000_000.0)
+        } else if balance >= 1_000 {
+            return String(format: "%.1fk", balance / 1_000.0)
+        } else if balance >= 1.0 {
+            return "\(Int(balance))"
+        } else if balance > 0 {
+            return String(format: "%.1f", balance)
         }
-        return "\(tokens)"
+        return "0"
     }
 
     @objc private func terminateApplication() {

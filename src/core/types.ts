@@ -6,7 +6,7 @@
 export interface QuotaWindow {
   /** 已使用百分比 (0 - 100) */
   usedPercent: number;
-  /** 剩餘可用百分比 (0 - 100) */
+  /** 顯示用剩餘百分比 (0 - 100)；主配額仍 allowed 時依 Codex App 規則最低為 1，非精確餘額。 */
   remainingPercent: number;
   /** 限制視窗秒數 (例: 18000 代表 5 小時, 604800 代表 7 天) */
   limitWindowSeconds: number;
@@ -48,6 +48,8 @@ export interface QuotaSnapshot {
   resetCredits: number;
   /** 相容數值欄位保留 0；只有此值為 true 才代表來源確實回傳可用張數。 */
   resetCreditsKnown?: boolean;
+  /** 帳戶剩餘點數 (WHAM credits.balance)；來源未回傳或格式無效時為 null，舊快取可能沒有此欄 */
+  creditBalance?: number | null;
   /** 資料來源: "wham" (官方 API), "cache" (本機快取), "fallback" */
   source: "wham" | "cache" | "fallback";
   /** fallback 失敗原因 (成功快照可省略；舊快取可能沒有此欄) */
