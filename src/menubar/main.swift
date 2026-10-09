@@ -1,6 +1,56 @@
 import Cocoa
 import Foundation
 
+// The completion owns its result; a late response cannot overwrite CLI/cache fallback.
+private final class DashboardResponse: @unchecked Sendable {
+    let lock = NSLock()
+    var data: Data?
+}
+
+func loadDashboardData(url: URL, timeout: TimeInterval, session: URLSession = .shared) -> Data? {
+    var request = URLRequest(url: url)
+    request.timeoutInterval = timeout
+    let response = DashboardResponse()
+    let semaphore = DispatchSemaphore(value: 0)
+    let task = session.dataTask(with: request) { data, _, _ in
+        response.lock.lock()
+        response.data = data
+        response.lock.unlock()
+        semaphore.signal()
+    }
+    task.resume()
+    guard semaphore.wait(timeout: .now() + timeout + 0.2) == .success else {
+        task.cancel()
+        return nil
+    }
+    response.lock.lock()
+    defer { response.lock.unlock() }
+    return response.data
+}
+
+func fetchCLIStatus(cliPath: String, codexDirectory: String, timeoutSeconds: TimeInterval = 10) throws -> Data? {
+    let pipe = Pipe()
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: cliPath)
+    process.arguments = ["status", "--json"]
+    var environment = ProcessInfo.processInfo.environment
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    environment["PATH"] = [environment["PATH"] ?? "", "\(home)/.bun/bin", "\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].filter { !$0.isEmpty }.joined(separator: ":")
+    environment["CODEX_HOME"] = codexDirectory
+    process.environment = environment
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    let timeout = DispatchWorkItem {
+        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+    }
+    DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds, execute: timeout)
+    defer { timeout.cancel() }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return process.terminationStatus == 0 ? data : nil
+}
+
 func dashboardMatchesProfile(_ dataDirectory: String?, _ codexDirectory: String) -> Bool {
     guard let directory = dataDirectory, !directory.isEmpty else { return false }
     return URL(fileURLWithPath: directory).standardizedFileURL.resolvingSymlinksInPath().path
@@ -132,18 +182,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // 1. 優先請求一站式綜合狀態端點 (/api/status)
             if let url = URL(string: "http://127.0.0.1:10200/api/status") {
-                var request = URLRequest(url: url)
-                request.timeoutInterval = 1.0
-                let semaphore = DispatchSemaphore(value: 0)
-                let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-                    if let d = data, let fullStatus = try? JSONDecoder().decode(StatusOutputDTO.self, from: d),
-                       dashboardMatchesProfile(fullStatus.dataDirectory, self.codexDirectoryPath) {
-                        statusData = fullStatus
-                    }
-                    semaphore.signal()
+                if let d = loadDashboardData(url: url, timeout: 1.0),
+                   let fullStatus = try? JSONDecoder().decode(StatusOutputDTO.self, from: d),
+                   dashboardMatchesProfile(fullStatus.dataDirectory, self.codexDirectoryPath) {
+                    statusData = fullStatus
                 }
-                task.resume()
-                _ = semaphore.wait(timeout: .now() + 1.2)
             }
 
             // 2. 若背景伺服器未運行，以 CLI status --json 為備援快速取得完整資料
@@ -151,16 +194,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let adjacentCLI = Bundle.main.executableURL?.resolvingSymlinksInPath().deletingLastPathComponent().appendingPathComponent("codex-usage").path
                 let cliPath = [adjacentCLI, "\(self.homeDir)/.local/bin/codex-usage"].compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) } ?? ""
                 if FileManager.default.isExecutableFile(atPath: cliPath) {
-                    let pipe = Pipe()
-                    let proc = Process()
-                    proc.executableURL = URL(fileURLWithPath: cliPath)
-                    proc.arguments = ["status", "--json"]
-                    proc.standardOutput = pipe
-                    try? proc.run()
-                    proc.waitUntilExit()
-
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    if let fullStatus = try? JSONDecoder().decode(StatusOutputDTO.self, from: data) {
+                    if let data = try? fetchCLIStatus(cliPath: cliPath, codexDirectory: self.codexDirectoryPath),
+                       let fullStatus = try? JSONDecoder().decode(StatusOutputDTO.self, from: data) {
                         statusData = fullStatus
                     }
                 }

@@ -10,6 +10,7 @@ bin/codex-hud
 *.log
 *.tmp
 .DS_Store
+outputs/
 
 # SQLite databases
 *.sqlite

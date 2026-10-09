@@ -126,7 +126,12 @@ enabled = true
 
 `get_codex_quota` · `get_codex_usage_history` · `get_codex_settlement_report` · `get_codex_reset_events` · `get_codex_plan_changes` · `get_codex_pricing_info`
 
+MCP の履歴ツールは別プロセスで索引を作成します。1 秒以内に完了しない場合は、部分的な集計値ではなく `isError: true` と再試行の案内を返します。同時リクエストは処理を共有し、成功後 30 秒間は再スキャンしません。
+
 ## 使い方の補足
+
+- `sessions` と `archived_sessions` の `.jsonl`／`.jsonl.zst` に対応します。圧縮ファイルには PATH 内の `zstd` が必要です（macOS: `brew install zstd`）。展開用の一時ファイルは読み取り後に削除します。ツールの欠如、破損、展開のタイムアウトは `filesFailed`／`fileErrors`（最初の 10 件）に記録し、対象ファイルのカーソルは更新しません。CLI `index` はファイルの失敗時に非ゼロで終了します。zstd の導入後は `index --all --json` で再試行でき、`--force` は不要です。
+- `history --since` は有効な日付と非負の期間（`24h`、`1.5h`、`7d` など）を受け付け、無効な入力はエラーにします。
 
 - コストは標準 API 相当の推定値で、サブスクリプションの請求額ではありません。各レコードに価格ソースとバージョンを保存します。Fast、Batch、Flex、cache-write などのサービス別料金は含みません。確認できる料金がないモデルは `fallback` と表示し、そのモデルの公式料金を意味しません。
 - 内蔵の Astra、Sol、Terra、Luna 料金では、キャッシュを含む入力が 272,000 トークンを超えると、レコード全体の入力／キャッシュ料金を 2 倍、出力料金を 1.5 倍にします。他の内蔵モデル料金には、この閾値を自動適用しません。カスタム料金とコミュニティ料金は、提供された長文コンテキスト設定に従います。

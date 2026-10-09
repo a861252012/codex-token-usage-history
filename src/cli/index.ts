@@ -166,7 +166,8 @@ async function main(): Promise<void> {
   }
 
   // 背景靜默檢查遠端開源定價庫 (非阻塞，不影響前景效能)
-  if (commandName !== "mcp" && commandName !== "pricing" && commandName !== "prompt") {
+  if (commandName !== "mcp" && commandName !== "pricing" && commandName !== "prompt"
+    && !(commandName === "index" && process.env.CODEX_USAGE_MCP_INDEX === "1")) {
     triggerBackgroundPricingSync();
   }
 
@@ -536,8 +537,10 @@ async function main(): Promise<void> {
       console.log(`[資料範圍] ${diagnostics.scope} / ${diagnostics.dataDirectory}`);
       console.log(`[診斷] 讀取 ${diagnostics.filesRead}、未變更 ${diagnostics.filesUnchanged}、失敗 ${diagnostics.filesFailed}；無效行 ${diagnostics.invalidLines}、無效紀錄 ${diagnostics.invalidRecords}、其他事件 ${diagnostics.unsupportedEvents}`);
       if (diagnostics.missingDirectories.length) console.log(`[缺少目錄] ${diagnostics.missingDirectories.join(", ")}`);
+      for (const error of diagnostics.fileErrors) console.error(`[讀取失敗] ${error.filePath}: ${error.message}`);
       console.log("[說明] 零筆新增不代表沒有用量；請同時查看資料範圍、未變更與解析診斷。");
     }
+    if (diagnostics.filesFailed > 0) process.exitCode = 1;
     database.close();
     return;
   }
@@ -564,6 +567,19 @@ async function main(): Promise<void> {
       return;
     }
 
+    let sinceTimestampMs: number | undefined;
+    if (values.since !== undefined) {
+      const relative = /^(\d+(?:\.\d+)?)([hd])$/.exec(values.since);
+      sinceTimestampMs = relative
+        ? Date.now() - Number(relative[1]) * (relative[2] === "h" ? 3600 : 86400) * 1000
+        : /[hd]$/.test(values.since) ? NaN : new Date(values.since).getTime();
+      if (!Number.isFinite(sinceTimestampMs) || !Number.isFinite(new Date(sinceTimestampMs).getTime())) {
+        console.error("[錯誤] --since 必須為有效日期或非負時長，例如 2026-10-08、24h、7d。");
+        process.exitCode = 1;
+        return;
+      }
+    }
+
     const database = new HistoryDatabase();
     await database.init();
 
@@ -572,19 +588,6 @@ async function main(): Promise<void> {
     indexer.indexRecent(1);
 
     const limit = parseCappedLimit(values.limit, 25);
-    let sinceTimestampMs: number | undefined;
-
-    if (values.since) {
-      if (values.since.endsWith("h")) {
-        const hours = parseFloat(values.since);
-        sinceTimestampMs = Date.now() - hours * 3600 * 1000;
-      } else if (values.since.endsWith("d")) {
-        const days = parseFloat(values.since);
-        sinceTimestampMs = Date.now() - days * 86400 * 1000;
-      } else {
-        sinceTimestampMs = new Date(values.since).getTime();
-      }
-    }
 
     const { total, records } = database.queryRecords({
       limit,

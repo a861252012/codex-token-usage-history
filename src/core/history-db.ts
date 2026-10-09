@@ -788,6 +788,8 @@ export class HistoryDatabase {
         ${periodKeySql} as period_key,
         ${startDateSql} as start_date,
         MAX(datetime) as end_date,
+        MIN(timestamp) as min_timestamp,
+        MAX(timestamp) as max_timestamp,
         COUNT(*) as requests,
         COALESCE(SUM(total_tokens), 0) as total_tokens,
         COALESCE(SUM(input_tokens), 0) as input_tokens,
@@ -818,6 +820,10 @@ export class HistoryDatabase {
     for (let index = 0; index < periodKeys.length; index += BATCH_SIZE) {
       const chunkKeys = periodKeys.slice(index, index + BATCH_SIZE);
       const chunkPlaceholders = chunkKeys.map(() => "?").join(", ");
+      // Use actual record bounds, preserving local calendar/DST grouping semantics.
+      const chunkRows = rows.slice(index, index + BATCH_SIZE);
+      const minTimestamp = Math.min(...chunkRows.map((row: any) => Number(row.min_timestamp)));
+      const maxTimestamp = Math.max(...chunkRows.map((row: any) => Number(row.max_timestamp)));
 
       const pricingProvenanceRows = database.prepare(`
         SELECT
@@ -826,10 +832,10 @@ export class HistoryDatabase {
           pricing_version,
           COUNT(*) as records
         FROM token_records
-        WHERE ${periodKeySql} IN (${chunkPlaceholders})
+        WHERE timestamp >= ? AND timestamp <= ? AND ${periodKeySql} IN (${chunkPlaceholders})
         GROUP BY period_key, pricing_source, pricing_version
         ORDER BY period_key DESC, records DESC, pricing_source ASC, pricing_version ASC
-      `).all(...chunkKeys);
+      `).all(minTimestamp, maxTimestamp, ...chunkKeys);
       for (const item of pricingProvenanceRows) {
         const breakdown = pricingProvenanceMap.get(item.period_key) || [];
         breakdown.push(...mapPricingProvenanceRows([item]));
@@ -847,13 +853,13 @@ export class HistoryDatabase {
               ORDER BY SUM(total_tokens) DESC, model ASC
             ) as rank_num
           FROM token_records
-          WHERE ${periodKeySql} IN (${chunkPlaceholders})
+          WHERE timestamp >= ? AND timestamp <= ? AND ${periodKeySql} IN (${chunkPlaceholders})
           GROUP BY period_key, model
         )
         SELECT period_key, model
         FROM RankedModels
         WHERE rank_num = 1
-      `).all(...chunkKeys);
+      `).all(minTimestamp, maxTimestamp, ...chunkKeys);
 
       for (const item of topModelRows) {
         const normalizedModel = typeof item.model === "string" ? item.model.trim() : "";

@@ -1,7 +1,7 @@
 import readline from "node:readline";
 import { QuotaClient } from "../core/quota-client.js";
 import { HistoryDatabase } from "../core/history-db.js";
-import { SessionIndexer } from "../core/session-indexer.js";
+import { McpHistoryRefresh } from "./history-refresh.js";
 import {
   getActivePricingConfig,
   getEffectiveCatalogOverview,
@@ -36,20 +36,8 @@ export function parseMcpAgentRole(value: unknown): AgentRole | undefined {
 export async function runMcpServer(): Promise<void> {
   const database = new HistoryDatabase();
   await database.init();
-  const sessionIndexer = new SessionIndexer(database);
+  const historyRefresh = new McpHistoryRefresh();
   const quotaClient = new QuotaClient(undefined, database);
-  let lastIndexTime: number | null = null;
-  const refreshHistory = () => {
-    if (lastIndexTime === null) {
-      // Preserve first-query coverage of archived history without delaying the MCP handshake.
-      sessionIndexer.indexAll();
-    } else if (Date.now() - lastIndexTime >= 30_000) {
-      sessionIndexer.indexRecent(1);
-    } else {
-      return;
-    }
-    lastIndexTime = Date.now();
-  };
 
   const readlineInterface = readline.createInterface({
     input: process.stdin,
@@ -59,6 +47,32 @@ export async function runMcpServer(): Promise<void> {
 
   const sendResponse = (responsePayload: any) => {
     process.stdout.write(JSON.stringify(responsePayload) + "\n");
+  };
+  let inputClosed = false;
+  let activeHistoryCalls = 0;
+  readlineInterface.once("close", () => {
+    inputClosed = true;
+    if (activeHistoryCalls === 0) historyRefresh.stop();
+  });
+  process.once("exit", () => historyRefresh.stop());
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => { historyRefresh.stop(); process.exit(0); });
+  }
+  const refreshHistory = async (id: string | number): Promise<boolean> => {
+    activeHistoryCalls += 1;
+    try {
+      const ready = await historyRefresh.refresh();
+      if (!ready) {
+        sendResponse({ jsonrpc: "2.0", id, result: {
+          isError: true,
+          content: [{ type: "text", text: "History indexing is still running. Retry this tool shortly; no partial totals have been returned." }],
+        } });
+      }
+      return ready;
+    } finally {
+      activeHistoryCalls -= 1;
+      if (inputClosed && activeHistoryCalls === 0) historyRefresh.stop();
+    }
   };
 
   readlineInterface.on("line", async (inputLine: string) => {
@@ -251,7 +265,7 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_usage_history") {
         try {
-          refreshHistory();
+          if (!await refreshHistory(id)) return;
           const recordLimit = parseMcpLimit(toolArguments.limit, 10);
           const requestedRole = parseMcpAgentRole(toolArguments.agent_role);
           const { records, total } = database.queryRecords({
@@ -292,7 +306,7 @@ export async function runMcpServer(): Promise<void> {
 
       if (toolName === "get_codex_settlement_report") {
         try {
-          refreshHistory();
+          if (!await refreshHistory(id)) return;
           const settlementPeriod = toolArguments.period === "weekly" || toolArguments.period === "monthly" || toolArguments.period === "yearly"
             ? toolArguments.period
             : "daily";

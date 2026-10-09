@@ -4,6 +4,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
+test("history rejects invalid since filters before database creation and accepts supported forms", () => {
+  const directory = mkdtempSync(join(tmpdir(), "codex-cli-since-"));
+  try {
+    for (const since of ["abc", "", "1garbageh", "-2d", "NaNh", "Infinityd", "999999999999999999999h"]) {
+      const result = spawnSync(process.execPath, ["src/cli/index.ts", "history", "--json", `--since=${since}`], {
+        cwd: join(import.meta.dir, ".."), env: { ...process.env, CODEX_HOME: directory }, encoding: "utf8", timeout: 5000,
+      });
+      expect(result.status, since).toBe(1);
+      expect(result.stderr).toContain("--since 必須");
+      expect(result.stdout).toBe("");
+      expect(existsSync(join(directory, "token_usage_history.sqlite"))).toBe(false);
+    }
+    for (const since of ["0h", "1.5h", "7d", "2026-10-08", "2026-10-08T12:30:00+08:00"]) {
+      const result = spawnSync(process.execPath, ["src/cli/index.ts", "history", "--json", `--since=${since}`], {
+        cwd: join(import.meta.dir, ".."), env: { ...process.env, CODEX_HOME: directory }, encoding: "utf8", timeout: 5000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout).total).toBe(0);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("dashboard rejects malformed ports before opening a listener", () => {
   const directory = mkdtempSync(join(tmpdir(), "codex-cli-options-"));
   writeFileSync(join(directory, "pricing_cache.json"), JSON.stringify({ schemaVersion: 2, updatedAtMs: Date.now(), models: [] }));

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +28,20 @@ test("Node-only compiled CLI, MCP, and dashboard use isolated synthetic data", {
     const history = JSON.parse(execFileSync(process.execPath, [...cli, "history", "--json"], { cwd, env, encoding: "utf8" }));
     assert.equal(history.total, 1);
     assert.equal(history.records[0].totalTokens, 3);
+    mkdirSync(join(directory, "archived_sessions"));
+    execFileSync("zstd", ["-q", join(directory, "sessions", "sample.jsonl"), "-o", join(directory, "archived_sessions", "sample.jsonl.zst")]);
+    const indexed = JSON.parse(execFileSync(process.execPath, [...cli, "index", "--all", "--json"], { cwd, env, encoding: "utf8" }));
+    assert.equal(indexed.diagnostics.filesDiscovered, 2);
+    assert.equal(indexed.diagnostics.filesFailed, 0);
+    assert.equal(indexed.recordsInserted, 0);
+    const mcpHistory = JSON.parse(execFileSync(process.execPath, [...cli, "mcp"], {
+      cwd, env, encoding: "utf8", input: JSON.stringify({ jsonrpc: "2.0", id: "history", method: "tools/call", params: { name: "get_codex_usage_history" } }) + "\n",
+    }));
+    assert.equal(JSON.parse(mcpHistory.result.content[0].text).recentRecordsTotal, 1);
+    assert.throws(() => execFileSync(process.execPath, [...cli, "history", "--since=abc", "--json"], {
+      cwd, env: { ...env, CODEX_HOME: join(directory, "invalid-since") }, encoding: "utf8", stdio: "pipe",
+    }), (error) => error.status === 1 && error.stderr.includes("--since"));
+    assert.equal(existsSync(join(directory, "invalid-since", "token_usage_history.sqlite")), false);
     const report = JSON.parse(execFileSync(process.execPath, [...cli, "report", "--period", "weekly", "--json"], { cwd, env, encoding: "utf8" }));
     assert.equal(report.settlements.length, 1);
     const ping = JSON.parse(execFileSync(process.execPath, [...cli, "mcp"], {

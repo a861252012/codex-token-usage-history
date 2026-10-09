@@ -23,6 +23,44 @@ describe("HistoryDatabase", () => {
     } catch {}
   });
 
+  test("settlement secondary queries use timestamp indexes and retain each period's full breakdown", () => {
+    const connection = (db as any).databaseInstance;
+    const prepare = connection.prepare.bind(connection);
+    const plans: string[] = [];
+    connection.prepare = (sql: string) => {
+      const statement = prepare(sql);
+      if (!sql.includes("WHERE timestamp >= ? AND timestamp <= ?")) return statement;
+      return { ...statement, all: (...args: any[]) => {
+        plans.push(prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args).map((row: any) => row.detail).join("\n"));
+        return statement.all(...args);
+      } };
+    };
+    for (let day = 0; day < 510; day++) {
+      const timestamp = Date.UTC(2026, 0, 1) + day * 86400000;
+      for (let model = 0; model < 2; model++) db.insertRecord({
+        timestamp: timestamp + model, datetime: new Date(timestamp + model).toISOString(),
+        sessionId: `s-${day}`, threadId: "thread", turnId: `t-${model}`, model: `m-${model}`,
+        inputTokens: model + 1, cachedInputTokens: 0, outputTokens: 0,
+        reasoningOutputTokens: 0, totalTokens: model + 1,
+        costUsd: 0.001, pricingSource: "builtin", pricingVersion: `v-${model}`, agentRole: "main",
+      });
+    }
+    for (const period of ["daily", "weekly", "monthly", "yearly"] as const) {
+      const records = db.getSettlementRecords(period, 510);
+      expect(records.reduce((total, record) => total + record.totalTokens, 0)).toBe(510 * 3);
+      for (const record of records) {
+        expect(record.topModel).toBe("m-1");
+        expect(record.pricingProvenance).toHaveLength(2);
+        expect(record.pricingProvenance.reduce((total, item) => total + item.records, 0)).toBe(record.requests);
+      }
+    }
+    expect(plans).toHaveLength(10); // daily spans two 500-period chunks; other periods one.
+    for (const plan of plans) {
+      expect(plan).toContain("SEARCH token_records USING INDEX idx_token_records_timestamp");
+      expect(plan).not.toContain("SCAN token_records");
+    }
+  });
+
   test("restricts new and existing WAL sidecars while another connection stays open", async () => {
     const paths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
     for (const path of paths) expect(statSync(path).mode & 0o777).toBe(0o600);

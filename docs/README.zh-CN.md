@@ -126,7 +126,12 @@ enabled = true
 
 `get_codex_quota` · `get_codex_usage_history` · `get_codex_settlement_report` · `get_codex_reset_events` · `get_codex_plan_changes` · `get_codex_pricing_info`
 
+MCP 历史工具在独立子进程中建立索引；等待 1 秒仍未完成时，返回 `isError: true` 和稍后重试提示，不返回部分总数。同一轮并发请求共享索引任务，成功后 30 秒内不重复扫描。
+
 ## 使用说明
+
+- 历史索引支持 `sessions` 与 `archived_sessions` 下的 `.jsonl`／`.jsonl.zst`。压缩文件需要 PATH 中的 `zstd`（macOS 可用 `brew install zstd`），解压临时文件在读取后删除。缺少工具、文件损坏或解压超时计入 `filesFailed`／`fileErrors`（最多显示前 10 个错误），不更新该文件游标；CLI `index` 遇到文件失败时以非零状态退出。安裝工具后运行 `index --all --json` 即可重试，无需 `--force`。
+- `history --since` 支持有效日期及非负时长（如 `24h`、`1.5h`、`7d`）；无效输入会报告错误。
 
 - 金额为标准 API 等值估算，不是订阅账单；每条记录保留定价来源与版本。Fast、Batch、Flex、cache-write 等不同服务费率未计入。无可核实费率的模型标示为 `fallback`，不代表该模型的官方价格。
 - 内置 Astra、Sol、Terra、Luna 费率在输入（含缓存）超过 272,000 Tokens 时，整条输入／缓存采用 2 倍、输出采用 1.5 倍费率；其他内置模型不默认套用此阈值。自定义或社区费率依其提供的长上下文设置计算。

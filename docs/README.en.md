@@ -126,7 +126,12 @@ enabled = true
 
 `get_codex_quota` · `get_codex_usage_history` · `get_codex_settlement_report` · `get_codex_reset_events` · `get_codex_plan_changes` · `get_codex_pricing_info`
 
+MCP history tools index in a separate process. If indexing exceeds a one-second wait, they return `isError: true` with a retry message instead of partial totals. Concurrent calls share the scan; successful scans are reused for 30 seconds.
+
 ## Usage notes
+
+- History indexing reads `.jsonl` and `.jsonl.zst` in `sessions` and `archived_sessions`. Compressed files require `zstd` in PATH (`brew install zstd` on macOS); temporary decoded files are removed after reading. Missing tools, corrupt files, and decompression timeouts appear in `filesFailed` / `fileErrors` (first 10 errors), without advancing those cursors. CLI `index` exits nonzero on file failures. After installing zstd, run `index --all --json` to retry; `--force` is unnecessary.
+- `history --since` accepts valid dates and nonnegative durations such as `24h`, `1.5h`, or `7d`; invalid values fail with an error.
 
 - Costs are standard API-equivalent estimates, not subscription bills. Each record retains its pricing source and version. Fast, Batch, Flex, cache-write, and other service-specific rates are not included. Models without verified rates are marked `fallback`; that is not their official price.
 - Built-in Astra, Sol, Terra, and Luna pricing applies 2× input/cached-input and 1.5× output rates to the entire record when input, including cached tokens, exceeds 272,000 tokens. Other built-in model rates do not assume this threshold. Custom and community rates use their supplied long-context settings.

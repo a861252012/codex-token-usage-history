@@ -1,7 +1,8 @@
-import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, type Stats } from "node:fs";
+import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, mkdtempSync, rmSync, type Stats } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { HistoryDatabase } from "./history-db.js";
 import { calculateTokenCost } from "./pricing-calculator.js";
 import type { TokenRecord } from "./types.js";
@@ -75,6 +76,37 @@ function* readJsonlLines(filePath: string, fileSize: number): Generator<string> 
   }
 }
 
+function* readSessionLines(filePath: string, fileSize: number): Generator<string> {
+  if (!filePath.endsWith(".jsonl.zst")) {
+    yield* readJsonlLines(filePath, fileSize);
+    return;
+  }
+  // Stream decompression to a private temporary file, avoiding spawnSync's stdout
+  // buffer limit. Parse from the beginning to retain session/turn context.
+  const directory = mkdtempSync(join(tmpdir(), "codex-session-zstd-"));
+  const decodedPath = join(directory, "session.jsonl");
+  try {
+    const descriptor = openSync(decodedPath, "wx", 0o600);
+    try {
+      const result = spawnSync("zstd", ["-d", "-q", "-c", "--", filePath], {
+        stdio: ["ignore", descriptor, "pipe"], env: process.env, timeout: 60_000, killSignal: "SIGKILL",
+      });
+      if (result.error) {
+        if ((result.error as NodeJS.ErrnoException).code === "ENOENT") {
+          throw new Error("zstd executable not found in PATH; install zstd to read .jsonl.zst sessions");
+        }
+        throw new Error(`zstd decompression failed: ${result.error.message}`);
+      }
+      if (result.status !== 0) throw new Error(`zstd decompression failed (exit ${result.status}, signal ${result.signal})`);
+    } finally {
+      closeSync(descriptor);
+    }
+    yield* readJsonlLines(decodedPath, statSync(decodedPath).size);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 export class SessionIndexer {
   private codexHome: string;
   private database: HistoryDatabase;
@@ -91,6 +123,7 @@ export class SessionIndexer {
     return Object.freeze({
       ...this.diagnostics,
       missingDirectories: Object.freeze([...this.diagnostics.missingDirectories]),
+      fileErrors: Object.freeze(this.diagnostics.fileErrors.map((error) => Object.freeze({ ...error }))),
     });
   }
 
@@ -110,6 +143,7 @@ export class SessionIndexer {
       unsupportedEvents: 0,
       invalidRecords: 0,
       missingDirectories: [],
+      fileErrors: [],
       dataStartMs: null,
       dataEndMs: null,
     };
@@ -141,7 +175,7 @@ export class SessionIndexer {
   }
 
   /**
-   * 遞迴尋找指定目錄下的所有 .jsonl 檔案
+   * 遞迴尋找指定目錄下的 .jsonl 與 .jsonl.zst 檔案
    */
   public findJsonlFiles(targetDirectory: string, sinceMilliseconds?: number): string[] {
     return this.discoverJsonlFiles(targetDirectory, sinceMilliseconds).map((file) => file.filePath);
@@ -171,7 +205,7 @@ export class SessionIndexer {
         const fullPath = join(currentDirectory, entry.name);
         if (entry.isDirectory()) {
           walkDirectory(fullPath);
-        } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+        } else if (entry.isFile() && (entry.name.endsWith(".jsonl") || entry.name.endsWith(".jsonl.zst"))) {
           try {
             const status = statSync(fullPath);
             if (sinceMilliseconds === undefined || status.mtimeMs >= sinceMilliseconds) results.push({ filePath: fullPath, status });
@@ -195,6 +229,7 @@ export class SessionIndexer {
     const parsedFile = this.parseFileDetailed(filePath);
     if (parsedFile.readSucceeded) diagnostics.filesRead = 1;
     else diagnostics.filesFailed = 1;
+    if (parsedFile.error) diagnostics.fileErrors.push({ filePath, message: parsedFile.error });
     this.mergeParseDiagnostics(diagnostics, parsedFile);
     this.finishDiagnostics(diagnostics);
     return {
@@ -235,7 +270,7 @@ export class SessionIndexer {
     const supportedEventTypes = new Set(["session_meta", "turn_context", "event_msg", "token_usage_record"]);
 
     try {
-      for (const singleLine of readJsonlLines(filePath, fileStatus.size)) {
+      for (const singleLine of readSessionLines(filePath, fileStatus.size)) {
         if (!singleLine.trim()) continue;
 
         let parsedPayload: any;
@@ -441,8 +476,8 @@ export class SessionIndexer {
           dataEndMs = dataEndMs === null ? timestampMilliseconds : Math.max(dataEndMs, timestampMilliseconds);
         }
       }
-    } catch {
-      return createFailedParsedFile(fileStatus.mtimeMs, fileStatus.size);
+    } catch (error) {
+      return createFailedParsedFile(fileStatus.mtimeMs, fileStatus.size, error instanceof Error ? error.message : String(error));
     }
 
     return {
@@ -488,6 +523,9 @@ export class SessionIndexer {
       this.mergeParseDiagnostics(diagnostics, parsedFile);
       if (!parsedFile.readSucceeded) {
         diagnostics.filesFailed += 1;
+        if (parsedFile.error && diagnostics.fileErrors.length < 10) {
+          diagnostics.fileErrors.push({ filePath, message: parsedFile.error });
+        }
         return { insertedCount: 0, newRecords: [] };
       }
 
@@ -584,15 +622,19 @@ export interface SessionIndexDiagnostics {
   unsupportedEvents: number;
   invalidRecords: number;
   missingDirectories: readonly string[];
+  /** First ten file read/decompression errors; filesFailed retains the full count. */
+  fileErrors: readonly Readonly<{ filePath: string; message: string }>[];
   dataStartMs: number | null;
   dataEndMs: number | null;
 }
 
-type MutableSessionIndexDiagnostics = Omit<SessionIndexDiagnostics, "missingDirectories"> & {
+type MutableSessionIndexDiagnostics = Omit<SessionIndexDiagnostics, "missingDirectories" | "fileErrors"> & {
   missingDirectories: string[];
+  fileErrors: { filePath: string; message: string }[];
 };
 
 interface ParsedFileResult {
+  error?: string;
   records: TokenRecord[];
   fileMtime: number;
   fileSize: number;
@@ -604,8 +646,9 @@ interface ParsedFileResult {
   dataEndMs: number | null;
 }
 
-function createFailedParsedFile(fileMtime = 0, fileSize = 0): ParsedFileResult {
+function createFailedParsedFile(fileMtime = 0, fileSize = 0, error?: string): ParsedFileResult {
   return {
+    error,
     records: [],
     fileMtime,
     fileSize,

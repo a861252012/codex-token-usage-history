@@ -4,6 +4,33 @@ import Foundation
 import QuartzCore
 import Darwin
 
+// The completion owns its result; a late response cannot overwrite CLI/cache fallback.
+private final class DashboardResponse: @unchecked Sendable {
+    let lock = NSLock()
+    var data: Data?
+}
+
+func loadDashboardData(url: URL, timeout: TimeInterval, session: URLSession = .shared) -> Data? {
+    var request = URLRequest(url: url)
+    request.timeoutInterval = timeout
+    let response = DashboardResponse()
+    let semaphore = DispatchSemaphore(value: 0)
+    let task = session.dataTask(with: request) { data, _, _ in
+        response.lock.lock()
+        response.data = data
+        response.lock.unlock()
+        semaphore.signal()
+    }
+    task.resume()
+    guard semaphore.wait(timeout: .now() + timeout + 0.2) == .success else {
+        task.cancel()
+        return nil
+    }
+    response.lock.lock()
+    defer { response.lock.unlock() }
+    return response.data
+}
+
 func dashboardMatchesProfile(_ dataDirectory: String?, _ codexDirectory: String) -> Bool {
     guard let directory = dataDirectory, !directory.isEmpty else { return false }
     return URL(fileURLWithPath: directory).standardizedFileURL.resolvingSymlinksInPath().path
@@ -1235,19 +1262,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             let urlString = "http://127.0.0.1:10200/api/status"
             if let serverUrl = URL(string: urlString) {
-                var request = URLRequest(url: serverUrl)
-                request.timeoutInterval = 0.8
-                let semaphore = DispatchSemaphore(value: 0)
-
-                let task = URLSession.shared.dataTask(with: request) { data, _, _ in
-                    if let rawData = data, let decodedStatus = try? JSONDecoder().decode(FullStatusDTO.self, from: rawData),
-                       dashboardMatchesProfile(decodedStatus.dataDirectory, self.codexDirectoryPath) {
-                        fetchedStatus = decodedStatus
-                    }
-                    semaphore.signal()
+                if let rawData = loadDashboardData(url: serverUrl, timeout: 0.8),
+                   let decodedStatus = try? JSONDecoder().decode(FullStatusDTO.self, from: rawData),
+                   dashboardMatchesProfile(decodedStatus.dataDirectory, self.codexDirectoryPath) {
+                    fetchedStatus = decodedStatus
                 }
-                task.resume()
-                semaphore.wait()
             }
 
             if fetchedStatus == nil {

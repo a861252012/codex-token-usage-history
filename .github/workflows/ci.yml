@@ -21,7 +21,9 @@ jobs:
           bun-version: latest
 
       - name: Install Development Dependencies
-        run: bun install --frozen-lockfile
+        run: |
+          bun install --frozen-lockfile
+          brew list zstd >/dev/null 2>&1 || brew install zstd
 
       - name: Typecheck and Test
         run: |
@@ -55,6 +57,8 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Compile with TypeScript and verify Node CLI and dashboard
         run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
           npm install --ignore-scripts
           npx tsc
           npm run test:node
